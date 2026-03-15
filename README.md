@@ -1,5 +1,10 @@
 # Dakera Go SDK
 
+[![CI](https://github.com/dakera-ai/dakera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/dakera-ai/dakera-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/dakera-ai/dakera-go.svg)](https://pkg.go.dev/github.com/dakera-ai/dakera-go)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8)](https://go.dev/)
+
 Official Go client for [Dakera](https://github.com/dakera/dakera) - a high-performance vector database.
 
 ## Installation
@@ -367,6 +372,18 @@ go fmt ./...
 # Lint
 golangci-lint run
 ```
+
+## Related Repositories
+
+| Repository | Description |
+|------------|-------------|
+| [dakera](https://github.com/dakera-ai/dakera) | Core vector database engine (Rust) |
+| [dakera-py](https://github.com/dakera-ai/dakera-py) | Python SDK |
+| [dakera-js](https://github.com/dakera-ai/dakera-js) | TypeScript/JavaScript SDK |
+| [dakera-mcp](https://github.com/dakera-ai/dakera-mcp) | MCP Server for AI agent memory |
+| [dakera-docs](https://github.com/dakera-ai/dakera-docs) | Documentation |
+| [dakera-deploy](https://github.com/dakera-ai/dakera-deploy) | Deployment configs and Docker Compose |
+| [dakera-cortex](https://github.com/dakera-ai/dakera-cortex) | Flagship demo with AI agents |
 
 ## License
 
