@@ -380,7 +380,10 @@ golangci-lint run
 | [dakera](https://github.com/dakera-ai/dakera) | Core vector database engine (Rust) |
 | [dakera-py](https://github.com/dakera-ai/dakera-py) | Python SDK |
 | [dakera-js](https://github.com/dakera-ai/dakera-js) | TypeScript/JavaScript SDK |
+| [dakera-rs](https://github.com/dakera-ai/dakera-rs) | Rust SDK |
+| [dakera-cli](https://github.com/dakera-ai/dakera-cli) | Command-line interface |
 | [dakera-mcp](https://github.com/dakera-ai/dakera-mcp) | MCP Server for AI agent memory |
+| [dakera-dashboard](https://github.com/dakera-ai/dakera-dashboard) | Admin dashboard (Leptos/WASM) |
 | [dakera-docs](https://github.com/dakera-ai/dakera-docs) | Documentation |
 | [dakera-deploy](https://github.com/dakera-ai/dakera-deploy) | Deployment configs and Docker Compose |
 | [dakera-cortex](https://github.com/dakera-ai/dakera-cortex) | Flagship demo with AI agents |
