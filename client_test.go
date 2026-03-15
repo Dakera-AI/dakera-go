@@ -1,0 +1,503 @@
+package dakera
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNewClient(t *testing.T) {
+	client := NewClient("http://localhost:3000")
+	assert.NotNil(t, client)
+}
+
+func TestNewClientWithOptions(t *testing.T) {
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL:    "http://localhost:3000/",
+		APIKey:     "test-key",
+		MaxRetries: 5,
+	})
+	assert.NotNil(t, client)
+	assert.Equal(t, "http://localhost:3000", client.baseURL)
+	assert.Equal(t, "test-key", client.apiKey)
+	assert.Equal(t, 5, client.maxRetries)
+}
+
+func TestUpsert(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/vectors", r.URL.Path)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		vectors := body["vectors"].([]interface{})
+		assert.Len(t, vectors, 2)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"upsertedCount": 2,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	resp, err := client.Upsert(context.Background(), "test-ns", []VectorInput{
+		{ID: "vec1", Values: []float32{0.1, 0.2, 0.3}},
+		{ID: "vec2", Values: []float32{0.4, 0.5, 0.6}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, resp.UpsertedCount)
+}
+
+func TestQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/query", r.URL.Path)
+
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.NotNil(t, body["vector"])
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{
+				{"id": "vec1", "score": 0.95, "metadata": map[string]interface{}{"label": "a"}},
+				{"id": "vec2", "score": 0.85},
+			},
+			"totalSearched": 100,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	resp, err := client.Query(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, &QueryOptions{
+		TopK: 10,
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 2)
+	assert.Equal(t, "vec1", resp.Results[0].ID)
+	assert.Equal(t, float32(0.95), resp.Results[0].Score)
+}
+
+func TestQueryWithFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.NotNil(t, body["filter"])
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	_, err := client.Query(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, &QueryOptions{
+		Filter: map[string]interface{}{
+			"category": Eq("test"),
+		},
+	})
+
+	require.NoError(t, err)
+}
+
+func TestDelete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/delete", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"deletedCount": 2,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	resp, err := client.Delete(context.Background(), "test-ns", DeleteOptions{
+		IDs: []string{"vec1", "vec2"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, resp.DeletedCount)
+}
+
+func TestDeleteByFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.NotNil(t, body["filter"])
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"deletedCount": 5,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	resp, err := client.Delete(context.Background(), "test-ns", DeleteOptions{
+		Filter: map[string]interface{}{
+			"status": Eq("obsolete"),
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 5, resp.DeletedCount)
+}
+
+func TestFetch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/fetch", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"vectors": []map[string]interface{}{
+				{"id": "vec1", "values": []float32{0.1, 0.2, 0.3}},
+				{"id": "vec2", "values": []float32{0.4, 0.5, 0.6}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	vectors, err := client.Fetch(context.Background(), "test-ns", []string{"vec1", "vec2"}, nil)
+
+	require.NoError(t, err)
+	assert.Len(t, vectors, 2)
+	assert.Equal(t, "vec1", vectors[0].ID)
+}
+
+func TestBatchQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/batch-query", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{
+				{"results": []map[string]interface{}{{"id": "vec1", "score": 0.9}}},
+				{"results": []map[string]interface{}{{"id": "vec2", "score": 0.8}}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	results, err := client.BatchQuery(context.Background(), "test-ns", []BatchQuerySpec{
+		{Vector: []float32{0.1, 0.2, 0.3}, TopK: 1},
+		{Vector: []float32{0.4, 0.5, 0.6}, TopK: 1},
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
+
+func TestIndexDocuments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/fulltext/index", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"indexedCount": 2,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	resp, err := client.IndexDocuments(context.Background(), "test-ns", []DocumentInput{
+		{ID: "doc1", Content: "Hello world"},
+		{ID: "doc2", Content: "Goodbye world"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, resp.IndexedCount)
+}
+
+func TestFulltextSearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/fulltext/search", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{
+				{"id": "doc1", "score": 2.5, "content": "Hello world"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	results, err := client.FulltextSearch(context.Background(), "test-ns", "hello", nil)
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "doc1", results[0].ID)
+}
+
+func TestHybridSearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/fulltext/hybrid", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{
+				{"id": "doc1", "score": 0.85, "vectorScore": 0.9, "textScore": 0.8},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	results, err := client.HybridSearch(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, "hello", &HybridSearchOptions{
+		Alpha: 0.5,
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, float32(0.9), results[0].VectorScore)
+	assert.Equal(t, float32(0.8), results[0].TextScore)
+}
+
+func TestListNamespaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/v1/namespaces", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"namespaces": []map[string]interface{}{
+				{"name": "ns1", "vectorCount": 100},
+				{"name": "ns2", "vectorCount": 200},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	namespaces, err := client.ListNamespaces(context.Background())
+
+	require.NoError(t, err)
+	assert.Len(t, namespaces, 2)
+	assert.Equal(t, "ns1", namespaces[0].Name)
+}
+
+func TestGetNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"name":        "test-ns",
+			"vectorCount": 1000,
+			"dimensions":  384,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	info, err := client.GetNamespace(context.Background(), "test-ns")
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-ns", info.Name)
+	assert.Equal(t, int64(1000), info.VectorCount)
+}
+
+func TestCreateNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"name":        "new-ns",
+			"vectorCount": 0,
+			"dimensions":  384,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	info, err := client.CreateNamespace(context.Background(), "new-ns", &CreateNamespaceOptions{
+		Dimensions: 384,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "new-ns", info.Name)
+}
+
+func TestDeleteNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "DELETE", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	err := client.DeleteNamespace(context.Background(), "test-ns")
+
+	require.NoError(t, err)
+}
+
+func TestHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/health", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "healthy",
+			"version": "0.1.0",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	health, err := client.Health(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "healthy", health.Status)
+}
+
+func TestErrorHandling(t *testing.T) {
+	t.Run("NotFoundError", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Namespace not found",
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		_, err := client.GetNamespace(context.Background(), "nonexistent")
+
+		require.Error(t, err)
+		assert.True(t, IsNotFoundError(err))
+	})
+
+	t.Run("ValidationError", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Invalid vector dimensions",
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		_, err := client.Query(context.Background(), "test-ns", []float32{0.1}, nil)
+
+		require.Error(t, err)
+		assert.True(t, IsValidationError(err))
+	})
+
+	t.Run("ServerError", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Internal server error",
+			})
+		}))
+		defer server.Close()
+
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL:    server.URL,
+			MaxRetries: 1,
+		})
+		_, err := client.Health(context.Background())
+
+		require.Error(t, err)
+		assert.True(t, IsServerError(err))
+	})
+
+	t.Run("RateLimitError", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Rate limit exceeded",
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		_, err := client.Query(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, nil)
+
+		require.Error(t, err)
+		assert.True(t, IsRateLimitError(err))
+
+		rateLimitErr := err.(*RateLimitError)
+		assert.Equal(t, 60, rateLimitErr.RetryAfter)
+	})
+}
+
+func TestFilterHelpers(t *testing.T) {
+	t.Run("Eq", func(t *testing.T) {
+		filter := Eq("value")
+		assert.Equal(t, map[string]interface{}{OpEq: "value"}, filter)
+	})
+
+	t.Run("Gt", func(t *testing.T) {
+		filter := Gt(100)
+		assert.Equal(t, map[string]interface{}{OpGt: 100}, filter)
+	})
+
+	t.Run("In", func(t *testing.T) {
+		filter := In("a", "b", "c")
+		assert.Equal(t, map[string]interface{}{OpIn: []interface{}{"a", "b", "c"}}, filter)
+	})
+
+	t.Run("And", func(t *testing.T) {
+		filter := And(
+			map[string]interface{}{"status": Eq("active")},
+			map[string]interface{}{"price": Lt(1000)},
+		)
+		expected := map[string]interface{}{
+			OpAnd: []map[string]interface{}{
+				{"status": map[string]interface{}{OpEq: "active"}},
+				{"price": map[string]interface{}{OpLt: 1000}},
+			},
+		}
+		assert.Equal(t, expected, filter)
+	})
+}
+
+func TestAuthorizationHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "healthy",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: server.URL,
+		APIKey:  "test-api-key",
+	})
+	_, err := client.Health(context.Background())
+
+	require.NoError(t, err)
+}

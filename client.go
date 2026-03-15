@@ -1,0 +1,1513 @@
+// Package dakera provides a Go client for Dakera AI memory platform.
+//
+// Example usage:
+//
+//	client := dakera.NewClient("http://localhost:3000")
+//
+//	// Upsert vectors
+//	resp, err := client.Upsert(ctx, "my-namespace", []dakera.VectorInput{
+//	    {ID: "vec1", Values: []float32{0.1, 0.2, 0.3}},
+//	})
+//
+//	// Query similar vectors
+//	results, err := client.Query(ctx, "my-namespace", []float32{0.1, 0.2, 0.3}, nil)
+package dakera
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	defaultTimeout    = 30 * time.Second
+	defaultMaxRetries = 3
+)
+
+// Client is the Dakera client for interacting with the vector database.
+type Client struct {
+	baseURL    string
+	apiKey     string
+	timeout    time.Duration
+	maxRetries int
+	headers    map[string]string
+	httpClient *http.Client
+}
+
+// NewClient creates a new Dakera client with the given base URL.
+func NewClient(baseURL string) *Client {
+	return NewClientWithOptions(ClientOptions{
+		BaseURL: baseURL,
+	})
+}
+
+// NewClientWithOptions creates a new Dakera client with custom options.
+func NewClientWithOptions(opts ClientOptions) *Client {
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+
+	maxRetries := opts.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = defaultMaxRetries
+	}
+
+	baseURL := strings.TrimSuffix(opts.BaseURL, "/")
+
+	return &Client{
+		baseURL:    baseURL,
+		apiKey:     opts.APIKey,
+		timeout:    timeout,
+		maxRetries: maxRetries,
+		headers:    opts.Headers,
+		httpClient: &http.Client{
+			Timeout: timeout,
+		},
+	}
+}
+
+// request makes an HTTP request with retry logic.
+func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
+	url := c.baseURL + path
+	var lastErr error
+
+	for attempt := 0; attempt < c.maxRetries; attempt++ {
+		var reqBody io.Reader
+		if body != nil {
+			jsonBody, err := json.Marshal(body)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal request body: %w", err)
+			}
+			reqBody = bytes.NewReader(jsonBody)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+		for k, v := range c.headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
+			}
+			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
+			if attempt < c.maxRetries-1 {
+				time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+				continue
+			}
+			return nil, lastErr
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", err)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return respBody, nil
+		}
+
+		// Parse error response
+		var errResp map[string]interface{}
+		json.Unmarshal(respBody, &errResp)
+
+		errMsg := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		if msg, ok := errResp["error"].(string); ok {
+			errMsg = msg
+		}
+
+		switch resp.StatusCode {
+		case 400:
+			return nil, NewValidationError(errMsg, resp.StatusCode, errResp)
+		case 401:
+			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errResp)
+		case 404:
+			return nil, NewNotFoundError(errMsg, resp.StatusCode, errResp)
+		case 429:
+			retryAfter := 0
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				retryAfter, _ = strconv.Atoi(ra)
+			}
+			return nil, NewRateLimitError("Rate limit exceeded", resp.StatusCode, errResp, retryAfter)
+		default:
+			if resp.StatusCode >= 500 {
+				lastErr = NewServerError(errMsg, resp.StatusCode, errResp)
+				if attempt < c.maxRetries-1 {
+					time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+					continue
+				}
+				return nil, lastErr
+			}
+			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, ResponseBody: errResp}
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, &DakeraError{Message: "request failed after retries"}
+}
+
+// ===========================================================================
+// Vector Operations
+// ===========================================================================
+
+// Upsert inserts or updates vectors in a namespace.
+func (c *Client) Upsert(ctx context.Context, namespace string, vectors []VectorInput) (*UpsertResponse, error) {
+	body := map[string]interface{}{
+		"vectors": vectors,
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp UpsertResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Query searches for similar vectors in a namespace.
+func (c *Client) Query(ctx context.Context, namespace string, vector []float32, opts *QueryOptions) (*SearchResult, error) {
+	body := map[string]interface{}{
+		"vector": vector,
+	}
+
+	if opts != nil {
+		if opts.TopK > 0 {
+			body["top_k"] = opts.TopK
+		}
+		if opts.Filter != nil {
+			body["filter"] = opts.Filter
+		}
+		body["include_values"] = opts.IncludeValues
+		body["include_metadata"] = opts.IncludeMetadata
+	} else {
+		body["top_k"] = 10
+		body["include_metadata"] = true
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp SearchResult
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Delete removes vectors from a namespace.
+func (c *Client) Delete(ctx context.Context, namespace string, opts DeleteOptions) (*DeleteResponse, error) {
+	body := make(map[string]interface{})
+	if opts.IDs != nil {
+		body["ids"] = opts.IDs
+	}
+	if opts.Filter != nil {
+		body["filter"] = opts.Filter
+	}
+	if opts.DeleteAll {
+		body["delete_all"] = true
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/delete", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp DeleteResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Fetch retrieves vectors by ID from a namespace.
+func (c *Client) Fetch(ctx context.Context, namespace string, ids []string, opts *FetchOptions) ([]Vector, error) {
+	body := map[string]interface{}{
+		"ids": ids,
+	}
+
+	if opts != nil {
+		body["include_values"] = opts.IncludeValues
+		body["include_metadata"] = opts.IncludeMetadata
+	} else {
+		body["include_values"] = true
+		body["include_metadata"] = true
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fetch", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Vectors []Vector `json:"vectors"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return resp.Vectors, nil
+}
+
+// BatchQuery executes multiple queries in a single request.
+func (c *Client) BatchQuery(ctx context.Context, namespace string, queries []BatchQuerySpec) ([]SearchResult, error) {
+	reqQueries := make([]map[string]interface{}, len(queries))
+	for i, q := range queries {
+		reqQuery := map[string]interface{}{
+			"vector": q.Vector,
+		}
+		if q.TopK > 0 {
+			reqQuery["top_k"] = q.TopK
+		} else {
+			reqQuery["top_k"] = 10
+		}
+		if q.Filter != nil {
+			reqQuery["filter"] = q.Filter
+		}
+		reqQuery["include_values"] = q.IncludeValues
+		reqQuery["include_metadata"] = q.IncludeMetadata
+		reqQueries[i] = reqQuery
+	}
+
+	body := map[string]interface{}{
+		"queries": reqQueries,
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []SearchResult `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return resp.Results, nil
+}
+
+// ===========================================================================
+// Text-Based Inference Operations (Auto-Embedding)
+// ===========================================================================
+
+// UpsertText upserts text documents with automatic embedding generation.
+// The text is embedded using the specified model (default: MiniLM) and stored as vectors.
+func (c *Client) UpsertText(ctx context.Context, namespace string, documents []TextDocument, opts *TextUpsertOptions) (*TextUpsertResponse, error) {
+	body := map[string]interface{}{
+		"documents": documents,
+	}
+
+	if opts != nil && opts.Model != "" {
+		body["model"] = opts.Model
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/upsert-text", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp TextUpsertResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// QueryText queries using natural language text with automatic embedding.
+// The query text is embedded and used for similarity search.
+func (c *Client) QueryText(ctx context.Context, namespace string, text string, opts *TextQueryOptions) (*TextQueryResponse, error) {
+	body := map[string]interface{}{
+		"text": text,
+	}
+
+	if opts != nil {
+		if opts.TopK > 0 {
+			body["top_k"] = opts.TopK
+		} else {
+			body["top_k"] = 10
+		}
+		body["include_text"] = opts.IncludeText
+		body["include_vectors"] = opts.IncludeVectors
+		if opts.Filter != nil {
+			body["filter"] = opts.Filter
+		}
+		if opts.Model != "" {
+			body["model"] = opts.Model
+		}
+	} else {
+		body["top_k"] = 10
+		body["include_text"] = true
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query-text", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp TextQueryResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// BatchQueryText executes multiple text queries with automatic embedding in a single request.
+func (c *Client) BatchQueryText(ctx context.Context, namespace string, queries []string, opts *BatchTextQueryOptions) (*BatchTextQueryResponse, error) {
+	body := map[string]interface{}{
+		"queries": queries,
+	}
+
+	if opts != nil {
+		if opts.TopK > 0 {
+			body["top_k"] = opts.TopK
+		} else {
+			body["top_k"] = 10
+		}
+		body["include_vectors"] = opts.IncludeVectors
+		if opts.Filter != nil {
+			body["filter"] = opts.Filter
+		}
+		if opts.Model != "" {
+			body["model"] = opts.Model
+		}
+	} else {
+		body["top_k"] = 10
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query-text", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp BatchTextQueryResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// ===========================================================================
+// Full-Text Search Operations
+// ===========================================================================
+
+// IndexDocuments indexes documents for full-text search.
+func (c *Client) IndexDocuments(ctx context.Context, namespace string, documents []DocumentInput) (*IndexDocumentsResponse, error) {
+	body := map[string]interface{}{
+		"documents": documents,
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/index", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp IndexDocumentsResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// FulltextSearch performs a full-text search.
+func (c *Client) FulltextSearch(ctx context.Context, namespace string, query string, opts *FullTextSearchOptions) ([]FullTextSearchResult, error) {
+	body := map[string]interface{}{
+		"query": query,
+	}
+
+	if opts != nil {
+		if opts.TopK > 0 {
+			body["top_k"] = opts.TopK
+		}
+		if opts.Filter != nil {
+			body["filter"] = opts.Filter
+		}
+	} else {
+		body["top_k"] = 10
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/search", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []FullTextSearchResult `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return resp.Results, nil
+}
+
+// HybridSearch performs a hybrid search combining vector and full-text.
+func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []float32, query string, opts *HybridSearchOptions) ([]HybridSearchResult, error) {
+	body := map[string]interface{}{
+		"vector": vector,
+		"query":  query,
+	}
+
+	if opts != nil {
+		if opts.TopK > 0 {
+			body["top_k"] = opts.TopK
+		}
+		if opts.Alpha > 0 {
+			body["alpha"] = opts.Alpha
+		}
+		if opts.Filter != nil {
+			body["filter"] = opts.Filter
+		}
+	} else {
+		body["top_k"] = 10
+		body["alpha"] = 0.5
+	}
+
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/hybrid", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []HybridSearchResult `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return resp.Results, nil
+}
+
+// ===========================================================================
+// Namespace Operations
+// ===========================================================================
+
+// ListNamespaces returns all namespaces.
+func (c *Client) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/namespaces", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Namespaces []NamespaceInfo `json:"namespaces"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return resp.Namespaces, nil
+}
+
+// GetNamespace returns information about a specific namespace.
+func (c *Client) GetNamespace(ctx context.Context, namespace string) (*NamespaceInfo, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp NamespaceInfo
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// CreateNamespace creates a new namespace.
+func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *CreateNamespaceOptions) (*NamespaceInfo, error) {
+	body := map[string]interface{}{
+		"name": namespace,
+	}
+
+	if opts != nil {
+		if opts.Dimensions > 0 {
+			body["dimensions"] = opts.Dimensions
+		}
+		if opts.IndexType != "" {
+			body["index_type"] = opts.IndexType
+		}
+		if opts.Metadata != nil {
+			body["metadata"] = opts.Metadata
+		}
+	}
+
+	respBody, err := c.request(ctx, "POST", "/v1/namespaces", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp NamespaceInfo
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// DeleteNamespace deletes a namespace.
+func (c *Client) DeleteNamespace(ctx context.Context, namespace string) error {
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s", namespace), nil)
+	return err
+}
+
+// ===========================================================================
+// Admin Operations
+// ===========================================================================
+
+// Health checks the server health.
+func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
+	respBody, err := c.request(ctx, "GET", "/health", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp HealthResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// GetIndexStats returns index statistics for a namespace.
+func (c *Client) GetIndexStats(ctx context.Context, namespace string) (*IndexStats, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/stats", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp IndexStats
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Compact triggers compaction for a namespace.
+func (c *Client) Compact(ctx context.Context, namespace string) (*StatusResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/compact", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp StatusResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Flush flushes pending writes for a namespace.
+func (c *Client) Flush(ctx context.Context, namespace string) (*StatusResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/flush", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp StatusResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// ===========================================================================
+// Memory Operations
+// ===========================================================================
+
+// StoreMemory stores a memory for an agent.
+func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemoryRequest) (*StoreMemoryResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories", agentID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result StoreMemoryResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// Recall recalls memories for an agent.
+func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) ([]RecalledMemory, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/recall", agentID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Memories []RecalledMemory `json:"memories"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
+		// Try direct array
+		var memories []RecalledMemory
+		if err2 := json.Unmarshal(respBody, &memories); err2 != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		return memories, nil
+	}
+	return wrapper.Memories, nil
+}
+
+// GetMemory gets a specific memory.
+func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Memory
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateMemory updates an existing memory.
+func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req UpdateMemoryRequest) (*StoreMemoryResponse, error) {
+	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result StoreMemoryResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// Forget deletes a memory.
+func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	return err
+}
+
+// SearchMemories searches memories for an agent.
+func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchMemoriesRequest) ([]RecalledMemory, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/search", agentID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Memories []RecalledMemory `json:"memories"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
+		var memories []RecalledMemory
+		if err2 := json.Unmarshal(respBody, &memories); err2 != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		return memories, nil
+	}
+	return wrapper.Memories, nil
+}
+
+// UpdateImportance updates the importance of memories.
+func (c *Client) UpdateImportance(ctx context.Context, agentID string, req UpdateImportanceRequest) error {
+	_, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/importance", agentID), req)
+	return err
+}
+
+// Consolidate consolidates memories for an agent.
+func (c *Client) Consolidate(ctx context.Context, agentID string, req ConsolidateRequest) (*ConsolidateResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/consolidate", agentID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ConsolidateResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// MemoryFeedback submits feedback on a memory recall.
+func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryFeedbackRequest) (*MemoryFeedbackResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/feedback", agentID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MemoryFeedbackResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Session Operations
+// ===========================================================================
+
+// StartSession starts a new session.
+func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Session, error) {
+	respBody, err := c.request(ctx, "POST", "/v1/sessions/start", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Session
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// EndSession ends a session.
+func (c *Client) EndSession(ctx context.Context, sessionID string) error {
+	_, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), nil)
+	return err
+}
+
+// GetSession gets session details.
+func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/sessions/%s", sessionID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Session
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListSessions lists sessions with optional filters.
+func (c *Client) ListSessions(ctx context.Context, opts *ListSessionsOptions) ([]Session, error) {
+	path := "/v1/sessions"
+	if opts != nil {
+		params := url.Values{}
+		if opts.AgentID != "" {
+			params.Set("agent_id", opts.AgentID)
+		}
+		if opts.ActiveOnly != nil {
+			params.Set("active_only", fmt.Sprintf("%v", *opts.ActiveOnly))
+		}
+		if opts.Limit != nil {
+			params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		}
+		if opts.Offset != nil {
+			params.Set("offset", fmt.Sprintf("%d", *opts.Offset))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Session
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// SessionMemories gets memories for a session.
+func (c *Client) SessionMemories(ctx context.Context, sessionID string) ([]RecalledMemory, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/sessions/%s/memories", sessionID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []RecalledMemory
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ===========================================================================
+// Agent Operations
+// ===========================================================================
+
+// ListAgents lists all agents.
+func (c *Client) ListAgents(ctx context.Context) ([]AgentSummary, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/agents", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []AgentSummary
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// AgentMemories gets memories for an agent.
+func (c *Client) AgentMemories(ctx context.Context, agentID string, opts *AgentMemoriesOptions) ([]RecalledMemory, error) {
+	path := fmt.Sprintf("/v1/agents/%s/memories", agentID)
+	if opts != nil {
+		params := url.Values{}
+		if opts.MemoryType != "" {
+			params.Set("memory_type", opts.MemoryType)
+		}
+		if opts.Limit != nil {
+			params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []RecalledMemory
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// AgentStats gets stats for an agent.
+func (c *Client) AgentStats(ctx context.Context, agentID string) (*AgentStats, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/stats", agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AgentStats
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// AgentSessions gets sessions for an agent.
+func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentSessionsOptions) ([]Session, error) {
+	path := fmt.Sprintf("/v1/agents/%s/sessions", agentID)
+	if opts != nil {
+		params := url.Values{}
+		if opts.ActiveOnly != nil {
+			params.Set("active_only", fmt.Sprintf("%v", *opts.ActiveOnly))
+		}
+		if opts.Limit != nil {
+			params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Session
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ===========================================================================
+// Knowledge Graph Operations
+// ===========================================================================
+
+// KnowledgeGraph builds a knowledge graph from a seed memory.
+func (c *Client) KnowledgeGraph(ctx context.Context, req KnowledgeGraphRequest) (*KnowledgeGraphResponse, error) {
+	data, err := c.request(ctx, "POST", "/v1/knowledge/graph", req)
+	if err != nil {
+		return nil, err
+	}
+	var result KnowledgeGraphResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// FullKnowledgeGraph builds a full knowledge graph for an agent.
+func (c *Client) FullKnowledgeGraph(ctx context.Context, req FullKnowledgeGraphRequest) (*KnowledgeGraphResponse, error) {
+	data, err := c.request(ctx, "POST", "/v1/knowledge/graph/full", req)
+	if err != nil {
+		return nil, err
+	}
+	var result KnowledgeGraphResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Summarize summarizes memories.
+func (c *Client) Summarize(ctx context.Context, req SummarizeRequest) (*SummarizeResponse, error) {
+	data, err := c.request(ctx, "POST", "/v1/knowledge/summarize", req)
+	if err != nil {
+		return nil, err
+	}
+	var result SummarizeResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Deduplicate deduplicates memories.
+func (c *Client) Deduplicate(ctx context.Context, req DeduplicateRequest) (*DeduplicateResponse, error) {
+	data, err := c.request(ctx, "POST", "/v1/knowledge/deduplicate", req)
+	if err != nil {
+		return nil, err
+	}
+	var result DeduplicateResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Analytics Operations
+// ===========================================================================
+
+// AnalyticsOverview gets the analytics overview.
+func (c *Client) AnalyticsOverview(ctx context.Context, opts *AnalyticsOptions) (*AnalyticsOverview, error) {
+	path := "/v1/analytics/overview"
+	if opts != nil {
+		params := url.Values{}
+		if opts.Period != "" {
+			params.Set("period", opts.Period)
+		}
+		if opts.Namespace != "" {
+			params.Set("namespace", opts.Namespace)
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	data, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AnalyticsOverview
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AnalyticsLatency gets latency analytics.
+func (c *Client) AnalyticsLatency(ctx context.Context, opts *AnalyticsOptions) (*LatencyAnalytics, error) {
+	path := "/v1/analytics/latency"
+	if opts != nil {
+		params := url.Values{}
+		if opts.Period != "" {
+			params.Set("period", opts.Period)
+		}
+		if opts.Namespace != "" {
+			params.Set("namespace", opts.Namespace)
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	data, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result LatencyAnalytics
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AnalyticsThroughput gets throughput analytics.
+func (c *Client) AnalyticsThroughput(ctx context.Context, opts *AnalyticsOptions) (*ThroughputAnalytics, error) {
+	path := "/v1/analytics/throughput"
+	if opts != nil {
+		params := url.Values{}
+		if opts.Period != "" {
+			params.Set("period", opts.Period)
+		}
+		if opts.Namespace != "" {
+			params.Set("namespace", opts.Namespace)
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	data, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ThroughputAnalytics
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AnalyticsStorage gets storage analytics.
+func (c *Client) AnalyticsStorage(ctx context.Context, namespace string) (*StorageAnalytics, error) {
+	path := "/v1/analytics/storage"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
+	data, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StorageAnalytics
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Advanced Search Operations
+// ===========================================================================
+
+// MultiVectorSearch performs a multi-vector search with positive/negative vectors and optional MMR.
+func (c *Client) MultiVectorSearch(ctx context.Context, namespace string, req MultiVectorSearchRequest) (*MultiVectorSearchResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/multi-vector", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result MultiVectorSearchResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal multi-vector search response: %w", err)
+	}
+	return &result, nil
+}
+
+// UnifiedQuery performs a unified query combining vector and text search.
+func (c *Client) UnifiedQuery(ctx context.Context, namespace string, req UnifiedQueryRequest) (*UnifiedQueryResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/unified-query", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result UnifiedQueryResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal unified query response: %w", err)
+	}
+	return &result, nil
+}
+
+// Aggregate performs aggregation with grouping.
+func (c *Client) Aggregate(ctx context.Context, namespace string, req AggregationRequest) (*AggregationResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/aggregate", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result AggregationResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal aggregation response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExportVectors exports vectors with pagination.
+func (c *Client) ExportVectors(ctx context.Context, namespace string, req ExportRequest) (*ExportResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/export", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result ExportResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal export response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExplainQuery explains a query execution plan and returns timing information.
+func (c *Client) ExplainQuery(ctx context.Context, namespace string, req QueryExplainRequest) (*QueryExplainResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/explain", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result QueryExplainResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal explain response: %w", err)
+	}
+	return &result, nil
+}
+
+// UpsertColumns performs a column-format upsert for efficient bulk operations.
+func (c *Client) UpsertColumns(ctx context.Context, namespace string, req ColumnUpsertRequest) (*UpsertResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/upsert-columns", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result UpsertResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal upsert columns response: %w", err)
+	}
+	return &result, nil
+}
+
+// WarmCache warms the cache for vectors in a namespace.
+func (c *Client) WarmCache(ctx context.Context, namespace string, req WarmCacheRequest) (*WarmCacheResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/cache/warm", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result WarmCacheResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal warm cache response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Admin Operations (Extended)
+// ===========================================================================
+
+// ClusterStatus gets the cluster status.
+func (c *Client) ClusterStatus(ctx context.Context) (*ClusterStatus, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/cluster/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ClusterStatus
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster status: %w", err)
+	}
+	return &result, nil
+}
+
+// ClusterNodes gets the cluster nodes.
+func (c *Client) ClusterNodes(ctx context.Context) ([]ClusterNode, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/cluster/nodes", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []ClusterNode
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster nodes: %w", err)
+	}
+	return result, nil
+}
+
+// OptimizeNamespace optimizes a namespace.
+func (c *Client) OptimizeNamespace(ctx context.Context, namespace string) (*StatusResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/optimize", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StatusResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminIndexStats gets index stats for a namespace via admin endpoint.
+func (c *Client) AdminIndexStats(ctx context.Context, namespace string) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/namespaces/%s/index/stats", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal index stats: %w", err)
+	}
+	return result, nil
+}
+
+// RebuildIndexes rebuilds indexes for a namespace.
+func (c *Client) RebuildIndexes(ctx context.Context, namespace string) (*StatusResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/index/rebuild", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StatusResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &result, nil
+}
+
+// CacheStats gets cache statistics.
+func (c *Client) CacheStats(ctx context.Context) (*CacheStats, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/cache/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result CacheStats
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cache stats: %w", err)
+	}
+	return &result, nil
+}
+
+// CacheClear clears cache, optionally for a specific namespace.
+func (c *Client) CacheClear(ctx context.Context, namespace string) (*StatusResponse, error) {
+	var body interface{}
+	if namespace != "" {
+		body = map[string]string{"namespace": namespace}
+	}
+	data, err := c.request(ctx, "POST", "/v1/admin/cache/clear", body)
+	if err != nil {
+		return nil, err
+	}
+	var result StatusResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetConfig gets the server configuration.
+func (c *Client) GetConfig(ctx context.Context) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+	return result, nil
+}
+
+// UpdateConfig updates the server configuration.
+func (c *Client) UpdateConfig(ctx context.Context, config map[string]interface{}) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "PUT", "/v1/admin/config", config)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+	return result, nil
+}
+
+// GetQuotas gets quota settings.
+func (c *Client) GetQuotas(ctx context.Context) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/quotas", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal quotas: %w", err)
+	}
+	return result, nil
+}
+
+// UpdateQuotas updates quota settings.
+func (c *Client) UpdateQuotas(ctx context.Context, quotas map[string]interface{}) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "PUT", "/v1/admin/quotas", quotas)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal quotas: %w", err)
+	}
+	return result, nil
+}
+
+// SlowQueries gets slow queries.
+func (c *Client) SlowQueries(ctx context.Context, opts *SlowQueryOptions) ([]SlowQuery, error) {
+	path := "/v1/admin/slow-queries"
+	if opts != nil {
+		params := url.Values{}
+		if opts.Limit > 0 {
+			params.Set("limit", strconv.Itoa(opts.Limit))
+		}
+		if opts.MinDurationMs > 0 {
+			params.Set("min_duration_ms", strconv.Itoa(opts.MinDurationMs))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	data, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []SlowQuery
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal slow queries: %w", err)
+	}
+	return result, nil
+}
+
+// CreateBackup creates a backup.
+func (c *Client) CreateBackup(ctx context.Context, includeData bool) (*BackupInfo, error) {
+	body := map[string]interface{}{"include_data": includeData}
+	data, err := c.request(ctx, "POST", "/v1/admin/backups", body)
+	if err != nil {
+		return nil, err
+	}
+	var result BackupInfo
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup info: %w", err)
+	}
+	return &result, nil
+}
+
+// ListBackups lists all backups.
+func (c *Client) ListBackups(ctx context.Context) ([]BackupInfo, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/backups", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []BackupInfo
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backups: %w", err)
+	}
+	return result, nil
+}
+
+// RestoreBackup restores a backup.
+func (c *Client) RestoreBackup(ctx context.Context, backupID string) (*StatusResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/backups/%s/restore", url.PathEscape(backupID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StatusResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteBackup deletes a backup.
+func (c *Client) DeleteBackup(ctx context.Context, backupID string) error {
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/backups/%s", url.PathEscape(backupID)), nil)
+	return err
+}
+
+// ConfigureTTL configures TTL for a namespace.
+func (c *Client) ConfigureTTL(ctx context.Context, namespace string, ttlSeconds int, strategy string) (*TtlConfig, error) {
+	body := map[string]interface{}{
+		"ttl_seconds": ttlSeconds,
+	}
+	if strategy != "" {
+		body["strategy"] = strategy
+	}
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/ttl", url.PathEscape(namespace)), body)
+	if err != nil {
+		return nil, err
+	}
+	var result TtlConfig
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ttl config: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// API Key Operations
+// ===========================================================================
+
+// CreateKey creates a new API key.
+func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*ApiKey, error) {
+	data, err := c.request(ctx, "POST", "/v1/keys", req)
+	if err != nil {
+		return nil, err
+	}
+	var result ApiKey
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal api key: %w", err)
+	}
+	return &result, nil
+}
+
+// ListKeys lists all API keys.
+func (c *Client) ListKeys(ctx context.Context) ([]ApiKey, error) {
+	data, err := c.request(ctx, "GET", "/v1/keys", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []ApiKey
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal api keys: %w", err)
+	}
+	return result, nil
+}
+
+// GetKey gets an API key by ID.
+func (c *Client) GetKey(ctx context.Context, keyID string) (*ApiKey, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/keys/%s", url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ApiKey
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal api key: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteKey deletes an API key.
+func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/keys/%s", url.PathEscape(keyID)), nil)
+	return err
+}
+
+// DeactivateKey deactivates an API key.
+func (c *Client) DeactivateKey(ctx context.Context, keyID string) (*ApiKey, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/keys/%s/deactivate", url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ApiKey
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal api key: %w", err)
+	}
+	return &result, nil
+}
+
+// RotateKey rotates an API key.
+func (c *Client) RotateKey(ctx context.Context, keyID string) (*ApiKey, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/keys/%s/rotate", url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ApiKey
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal api key: %w", err)
+	}
+	return &result, nil
+}
+
+// KeyUsage gets usage statistics for an API key.
+func (c *Client) KeyUsage(ctx context.Context, keyID string) (*KeyUsage, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/keys/%s/usage", url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KeyUsage
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal key usage: %w", err)
+	}
+	return &result, nil
+}
