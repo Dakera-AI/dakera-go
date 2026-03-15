@@ -5,7 +5,7 @@ Official Go client for [Dakera](https://github.com/dakera/dakera) - a high-perfo
 ## Installation
 
 ```bash
-go get github.com/dakera/dakera-go
+go get github.com/dakera-ai/dakera-go
 ```
 
 ## Quick Start
@@ -18,7 +18,7 @@ import (
     "fmt"
     "log"
 
-    dakera "github.com/dakera/dakera-go"
+    dakera "github.com/dakera-ai/dakera-go"
 )
 
 func main() {
@@ -71,7 +71,7 @@ import (
     "context"
     "log"
 
-    dakera "github.com/dakera/dakera-go"
+    dakera "github.com/dakera-ai/dakera-go"
 )
 
 func main() {
@@ -256,7 +256,7 @@ results, err := client.Query(ctx, "products", queryVector, &dakera.QueryOptions{
 
 ```go
 import (
-    dakera "github.com/dakera/dakera-go"
+    dakera "github.com/dakera-ai/dakera-go"
 )
 
 results, err := client.Query(ctx, "nonexistent", []float32{0.1, 0.2}, nil)

@@ -1,4 +1,4 @@
-module github.com/dakera/dakera-go
+module github.com/dakera-ai/dakera-go
 
 go 1.21
 

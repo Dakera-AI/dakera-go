@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	dakera "github.com/dakera/dakera-go"
+	dakera "github.com/dakera-ai/dakera-go"
 )
 
 func main() {
