@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-19
+
+### Added
+- `StreamNamespaceEvents(ctx, namespace)` — SSE streaming for namespace-scoped events (CE-1 / SDK-4)
+- `StreamGlobalEvents(ctx)` — SSE streaming for admin-scoped global events (CE-1 / SDK-4)
+- `DakeraEvent`, `OpStatus`, `VectorMutationOp`, `EventResult` types in `types.go`
+- `events.go` — SSE client implementation using `bufio.Scanner` over HTTP streaming
+
 ## [0.3.0] - 2026-03-19
 
 ### Added
