@@ -867,3 +867,61 @@ type KeyUsage struct {
 	LastUsed           string           `json:"last_used,omitempty"`
 	RequestsByEndpoint map[string]int64 `json:"requests_by_endpoint,omitempty"`
 }
+
+// ===========================================================================
+// SSE Streaming Event Types (CE-1)
+// ===========================================================================
+
+// OpStatus is the operation status for OperationProgress events.
+type OpStatus string
+
+const (
+	OpStatusPending   OpStatus = "pending"
+	OpStatusRunning   OpStatus = "running"
+	OpStatusCompleted OpStatus = "completed"
+	OpStatusFailed    OpStatus = "failed"
+)
+
+// VectorMutationOp is the mutation type for VectorsMutated events.
+type VectorMutationOp string
+
+const (
+	VectorMutationUpserted VectorMutationOp = "upserted"
+	VectorMutationDeleted  VectorMutationOp = "deleted"
+)
+
+// DakeraEvent is an event received from a Dakera SSE stream.
+//
+// The Type field identifies the event variant; only the fields relevant to
+// that variant will be populated.
+//
+//   - "namespace_created"    → Namespace, Dimension
+//   - "namespace_deleted"    → Namespace
+//   - "operation_progress"   → OperationID, Namespace, OpType, Progress, Status, Message, UpdatedAt
+//   - "job_progress"         → JobID, JobType, Namespace, Progress, Status
+//   - "vectors_mutated"      → Namespace, Op, Count
+//   - "stream_lagged"        → Dropped, Hint
+type DakeraEvent struct {
+	Type string `json:"type"`
+
+	// namespace_created / namespace_deleted / vectors_mutated / operation_progress / job_progress
+	Namespace string `json:"namespace,omitempty"`
+	// namespace_created
+	Dimension int `json:"dimension,omitempty"`
+	// operation_progress
+	OperationID string   `json:"operation_id,omitempty"`
+	OpType      string   `json:"op_type,omitempty"`
+	Progress    int      `json:"progress,omitempty"`
+	Status      string   `json:"status,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	// job_progress
+	JobID   string `json:"job_id,omitempty"`
+	JobType string `json:"job_type,omitempty"`
+	// vectors_mutated
+	Op    VectorMutationOp `json:"op,omitempty"`
+	Count int              `json:"count,omitempty"`
+	// stream_lagged
+	Dropped int64  `json:"dropped,omitempty"`
+	Hint    string `json:"hint,omitempty"`
+}
