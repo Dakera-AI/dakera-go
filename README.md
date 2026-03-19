@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8)](https://go.dev/)
 
-Official Go client for [Dakera](https://github.com/dakera/dakera) - a high-performance vector database.
+Official Go client for [Dakera](https://dakera.ai) — a high-performance vector database for AI agent memory.
 
 ## Installation
 
@@ -56,11 +56,12 @@ func main() {
 
 ## Features
 
-- **Full Go Support**: Idiomatic Go with proper error handling and context support
+- **Idiomatic Go**: Proper error handling, context support, and Go conventions
 - **Vector Operations**: Upsert, query, delete, fetch vectors
 - **Full-Text Search**: Index documents and perform BM25 search
 - **Hybrid Search**: Combine vector and text search with configurable weights
 - **Namespace Management**: Create, list, delete namespaces
+- **Agent Memory**: Store, recall, and manage memories for AI agents
 - **Metadata Filtering**: Filter queries by metadata fields with helper functions
 - **Automatic Retries**: Built-in retry logic with exponential backoff
 - **Error Handling**: Typed errors for different error scenarios
@@ -386,7 +387,6 @@ golangci-lint run
 | [dakera-dashboard](https://github.com/dakera-ai/dakera-dashboard) | Admin dashboard (Leptos/WASM) |
 | [dakera-docs](https://github.com/dakera-ai/dakera-docs) | Documentation |
 | [dakera-deploy](https://github.com/dakera-ai/dakera-deploy) | Deployment configs and Docker Compose |
-| [dakera-cortex](https://github.com/dakera-ai/dakera-cortex) | Flagship demo with AI agents |
 
 ## License
 
