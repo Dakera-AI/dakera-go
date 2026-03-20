@@ -16,6 +16,24 @@ type EventResult struct {
 	Err   error
 }
 
+// MemoryEvent is a memory lifecycle event from GET /v1/events/stream.
+type MemoryEvent struct {
+	EventType  string   `json:"event_type"`
+	AgentID    string   `json:"agent_id"`
+	Timestamp  int64    `json:"timestamp"`
+	MemoryID   *string  `json:"memory_id,omitempty"`
+	Content    *string  `json:"content,omitempty"`
+	Importance *float32 `json:"importance,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	SessionID  *string  `json:"session_id,omitempty"`
+}
+
+// MemoryEventResult wraps a MemoryEvent or an error from the memory event SSE stream.
+type MemoryEventResult struct {
+	Event *MemoryEvent
+	Err   error
+}
+
 // StreamNamespaceEvents subscribes to namespace-scoped SSE events.
 //
 // It opens a long-lived connection to GET /v1/namespaces/{namespace}/events
@@ -50,6 +68,106 @@ func (c *Client) StreamNamespaceEvents(ctx context.Context, namespace string) (<
 // Requires an Admin-scoped API key.
 func (c *Client) StreamGlobalEvents(ctx context.Context) (<-chan EventResult, error) {
 	return c.streamSSE(ctx, "/ops/events")
+}
+
+// StreamMemoryEvents subscribes to memory lifecycle SSE events.
+//
+// It opens a long-lived connection to GET /v1/events/stream and sends
+// [MemoryEventResult] values to the returned channel.  The channel is closed
+// when the server closes the stream or ctx is cancelled.
+//
+// Requires a Read-scoped API key.
+func (c *Client) StreamMemoryEvents(ctx context.Context) (<-chan MemoryEventResult, error) {
+	return c.streamMemorySSE(ctx, "/v1/events/stream")
+}
+
+// streamMemorySSE opens an SSE connection and pumps MemoryEvent values into a channel.
+func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan MemoryEventResult, error) {
+	rawURL := c.baseURL + path
+
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("dakera: failed to create SSE request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+
+	sseClient := &http.Client{}
+	resp, err := sseClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dakera: SSE connection failed: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("dakera: SSE connection returned HTTP %d", resp.StatusCode)
+	}
+
+	ch := make(chan MemoryEventResult, 64)
+
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+
+		scanner := bufio.NewScanner(resp.Body)
+		var dataLines []string
+
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			line := scanner.Text()
+
+			if strings.HasPrefix(line, ":") {
+				continue // SSE comment / heartbeat
+			}
+
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimPrefix(line, "data:")
+				dataLines = append(dataLines, strings.TrimPrefix(data, " "))
+				continue
+			}
+
+			if line == "" {
+				if len(dataLines) > 0 {
+					payload := strings.Join(dataLines, "\n")
+					dataLines = dataLines[:0]
+
+					var event MemoryEvent
+					if jsonErr := json.Unmarshal([]byte(payload), &event); jsonErr != nil {
+						select {
+						case ch <- MemoryEventResult{Err: fmt.Errorf("dakera: SSE parse error: %w", jsonErr)}:
+						case <-ctx.Done():
+							return
+						}
+						continue
+					}
+					select {
+					case ch <- MemoryEventResult{Event: &event}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			select {
+			case ch <- MemoryEventResult{Err: fmt.Errorf("dakera: SSE read error: %w", err)}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return ch, nil
 }
 
 // streamSSE opens an SSE connection and pumps events into a channel.

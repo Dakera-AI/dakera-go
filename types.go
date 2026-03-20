@@ -869,6 +869,68 @@ type KeyUsage struct {
 }
 
 // ===========================================================================
+// Cross-Agent Network Types (DASH-A)
+// ===========================================================================
+
+// CrossAgentNetworkRequest configures the cross-agent similarity graph query.
+// All fields are optional; zero values use server defaults.
+type CrossAgentNetworkRequest struct {
+	// Specific agent IDs to include. nil or empty means all agents.
+	AgentIDs []string `json:"agent_ids,omitempty"`
+	// Minimum cosine similarity for a cross-agent edge (default 0.3).
+	MinSimilarity float32 `json:"min_similarity,omitempty"`
+	// Maximum memories per agent, by descending importance (default 50).
+	MaxNodesPerAgent int `json:"max_nodes_per_agent,omitempty"`
+	// Minimum importance score for a memory to be included (default 0.0).
+	MinImportance float32 `json:"min_importance,omitempty"`
+	// Maximum cross-agent edges to return (default 200).
+	MaxCrossEdges int `json:"max_cross_edges,omitempty"`
+}
+
+// AgentNetworkInfo is summary information for one agent.
+type AgentNetworkInfo struct {
+	AgentID       string  `json:"agent_id"`
+	MemoryCount   int     `json:"memory_count"`
+	AvgImportance float32 `json:"avg_importance"`
+}
+
+// AgentNetworkNode is a memory node in the cross-agent network graph.
+type AgentNetworkNode struct {
+	ID         string   `json:"id"`
+	AgentID    string   `json:"agent_id"`
+	Content    string   `json:"content"`
+	Importance float32  `json:"importance"`
+	Tags       []string `json:"tags"`
+	MemoryType string   `json:"memory_type"`
+	CreatedAt  int64    `json:"created_at"`
+}
+
+// AgentNetworkEdge is a similarity edge between memories from two different agents.
+type AgentNetworkEdge struct {
+	Source      string  `json:"source"`
+	Target      string  `json:"target"`
+	SourceAgent string  `json:"source_agent"`
+	TargetAgent string  `json:"target_agent"`
+	Similarity  float32 `json:"similarity"`
+}
+
+// AgentNetworkStats contains network-level statistics.
+type AgentNetworkStats struct {
+	TotalAgents     int     `json:"total_agents"`
+	TotalNodes      int     `json:"total_nodes"`
+	TotalCrossEdges int     `json:"total_cross_edges"`
+	Density         float32 `json:"density"`
+}
+
+// CrossAgentNetworkResponse is returned by CrossAgentNetwork.
+type CrossAgentNetworkResponse struct {
+	Agents []AgentNetworkInfo `json:"agents"`
+	Nodes  []AgentNetworkNode `json:"nodes"`
+	Edges  []AgentNetworkEdge `json:"edges"`
+	Stats  AgentNetworkStats  `json:"stats"`
+}
+
+// ===========================================================================
 // SSE Streaming Event Types (CE-1)
 // ===========================================================================
 
