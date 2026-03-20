@@ -127,37 +127,46 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 		}
 
 		// Parse error response
-		var errResp map[string]interface{}
-		json.Unmarshal(respBody, &errResp)
-
-		errMsg := fmt.Sprintf("HTTP %d", resp.StatusCode)
-		if msg, ok := errResp["error"].(string); ok {
-			errMsg = msg
+		var errBody struct {
+			Error   string    `json:"error"`
+			Code    ErrorCode `json:"code"`
+			Details string    `json:"details"`
+		}
+		json.Unmarshal(respBody, &errBody)
+		errMsg := errBody.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		errorCode := errBody.Code
+		if errorCode == "" {
+			errorCode = ErrorCodeUnknown
 		}
 
 		switch resp.StatusCode {
 		case 400:
-			return nil, NewValidationError(errMsg, resp.StatusCode, errResp)
+			return nil, NewValidationError(errMsg, resp.StatusCode, errBody, errorCode)
 		case 401:
-			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errResp)
+			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
+		case 403:
+			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
 		case 404:
-			return nil, NewNotFoundError(errMsg, resp.StatusCode, errResp)
+			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
 		case 429:
 			retryAfter := 0
 			if ra := resp.Header.Get("Retry-After"); ra != "" {
 				retryAfter, _ = strconv.Atoi(ra)
 			}
-			return nil, NewRateLimitError("Rate limit exceeded", resp.StatusCode, errResp, retryAfter)
+			return nil, NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfter)
 		default:
 			if resp.StatusCode >= 500 {
-				lastErr = NewServerError(errMsg, resp.StatusCode, errResp)
+				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
 				if attempt < c.maxRetries-1 {
 					time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
 					continue
 				}
 				return nil, lastErr
 			}
-			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, ResponseBody: errResp}
+			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, Code: errorCode, ResponseBody: errBody}
 		}
 	}
 

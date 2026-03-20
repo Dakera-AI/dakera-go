@@ -2,14 +2,42 @@ package dakera
 
 import "fmt"
 
+// ErrorCode represents a typed server error code from the Dakera API.
+type ErrorCode string
+
+const (
+	ErrorCodeNamespaceNotFound      ErrorCode = "NAMESPACE_NOT_FOUND"
+	ErrorCodeVectorNotFound         ErrorCode = "VECTOR_NOT_FOUND"
+	ErrorCodeDimensionMismatch      ErrorCode = "DIMENSION_MISMATCH"
+	ErrorCodeEmptyVector            ErrorCode = "EMPTY_VECTOR"
+	ErrorCodeInvalidRequest         ErrorCode = "INVALID_REQUEST"
+	ErrorCodeStorageError           ErrorCode = "STORAGE_ERROR"
+	ErrorCodeInternalError          ErrorCode = "INTERNAL_ERROR"
+	ErrorCodeQuotaExceeded          ErrorCode = "QUOTA_EXCEEDED"
+	ErrorCodeServiceUnavailable     ErrorCode = "SERVICE_UNAVAILABLE"
+	ErrorCodeAuthenticationRequired ErrorCode = "AUTHENTICATION_REQUIRED"
+	ErrorCodeInvalidApiKey          ErrorCode = "INVALID_API_KEY"
+	ErrorCodeApiKeyExpired          ErrorCode = "API_KEY_EXPIRED"
+	ErrorCodeInsufficientScope      ErrorCode = "INSUFFICIENT_SCOPE"
+	ErrorCodeNamespaceAccessDenied  ErrorCode = "NAMESPACE_ACCESS_DENIED"
+	ErrorCodeUnknown                ErrorCode = "UNKNOWN"
+)
+
 // DakeraError is the base error type for all Dakera errors.
 type DakeraError struct {
 	Message      string
 	StatusCode   int
+	Code         ErrorCode
 	ResponseBody interface{}
 }
 
 func (e *DakeraError) Error() string {
+	if e.Code != "" && e.Code != ErrorCodeUnknown {
+		if e.StatusCode > 0 {
+			return fmt.Sprintf("DakeraError: %s (status: %d, code: %s)", e.Message, e.StatusCode, e.Code)
+		}
+		return fmt.Sprintf("DakeraError: %s (code: %s)", e.Message, e.Code)
+	}
 	if e.StatusCode > 0 {
 		return fmt.Sprintf("DakeraError: %s (status: %d)", e.Message, e.StatusCode)
 	}
@@ -36,11 +64,12 @@ type NotFoundError struct {
 	DakeraError
 }
 
-func NewNotFoundError(message string, statusCode int, body interface{}) *NotFoundError {
+func NewNotFoundError(message string, statusCode int, body interface{}, code ErrorCode) *NotFoundError {
 	return &NotFoundError{
 		DakeraError: DakeraError{
 			Message:      message,
 			StatusCode:   statusCode,
+			Code:         code,
 			ResponseBody: body,
 		},
 	}
@@ -55,11 +84,12 @@ type ValidationError struct {
 	DakeraError
 }
 
-func NewValidationError(message string, statusCode int, body interface{}) *ValidationError {
+func NewValidationError(message string, statusCode int, body interface{}, code ErrorCode) *ValidationError {
 	return &ValidationError{
 		DakeraError: DakeraError{
 			Message:      message,
 			StatusCode:   statusCode,
+			Code:         code,
 			ResponseBody: body,
 		},
 	}
@@ -75,11 +105,12 @@ type RateLimitError struct {
 	RetryAfter int
 }
 
-func NewRateLimitError(message string, statusCode int, body interface{}, retryAfter int) *RateLimitError {
+func NewRateLimitError(message string, statusCode int, body interface{}, code ErrorCode, retryAfter int) *RateLimitError {
 	return &RateLimitError{
 		DakeraError: DakeraError{
 			Message:      message,
 			StatusCode:   statusCode,
+			Code:         code,
 			ResponseBody: body,
 		},
 		RetryAfter: retryAfter,
@@ -98,11 +129,12 @@ type ServerError struct {
 	DakeraError
 }
 
-func NewServerError(message string, statusCode int, body interface{}) *ServerError {
+func NewServerError(message string, statusCode int, body interface{}, code ErrorCode) *ServerError {
 	return &ServerError{
 		DakeraError: DakeraError{
 			Message:      message,
 			StatusCode:   statusCode,
+			Code:         code,
 			ResponseBody: body,
 		},
 	}
@@ -117,11 +149,12 @@ type AuthenticationError struct {
 	DakeraError
 }
 
-func NewAuthenticationError(message string, statusCode int, body interface{}) *AuthenticationError {
+func NewAuthenticationError(message string, statusCode int, body interface{}, code ErrorCode) *AuthenticationError {
 	return &AuthenticationError{
 		DakeraError: DakeraError{
 			Message:      message,
 			StatusCode:   statusCode,
+			Code:         code,
 			ResponseBody: body,
 		},
 	}
@@ -129,6 +162,26 @@ func NewAuthenticationError(message string, statusCode int, body interface{}) *A
 
 func (e *AuthenticationError) Error() string {
 	return fmt.Sprintf("AuthenticationError: %s", e.Message)
+}
+
+// AuthorizationError is raised when the server returns a 403 Forbidden response.
+type AuthorizationError struct {
+	DakeraError
+}
+
+func NewAuthorizationError(message string, statusCode int, code ErrorCode, body interface{}) *AuthorizationError {
+	return &AuthorizationError{
+		DakeraError: DakeraError{
+			Message:      message,
+			StatusCode:   statusCode,
+			Code:         code,
+			ResponseBody: body,
+		},
+	}
+}
+
+func (e *AuthorizationError) Error() string {
+	return fmt.Sprintf("AuthorizationError: %s", e.Message)
 }
 
 // TimeoutError is raised when a request times out.
@@ -173,6 +226,12 @@ func IsServerError(err error) bool {
 // IsAuthenticationError checks if an error is an AuthenticationError.
 func IsAuthenticationError(err error) bool {
 	_, ok := err.(*AuthenticationError)
+	return ok
+}
+
+// IsAuthorizationError checks if an error is an AuthorizationError.
+func IsAuthorizationError(err error) bool {
+	_, ok := err.(*AuthorizationError)
 	return ok
 }
 
