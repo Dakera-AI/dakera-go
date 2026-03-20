@@ -162,6 +162,40 @@ type CreateNamespaceOptions struct {
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// DistanceMetric represents the distance metric for similarity search.
+// Valid values: "cosine", "euclidean", "dot_product".
+type DistanceMetric string
+
+const (
+	DistanceMetricCosine     DistanceMetric = "cosine"
+	DistanceMetricEuclidean  DistanceMetric = "euclidean"
+	DistanceMetricDotProduct DistanceMetric = "dot_product"
+)
+
+// ConfigureNamespaceRequest is the request body for PUT /v1/namespaces/:namespace.
+//
+// Uses upsert semantics: creates the namespace if it does not exist, or
+// updates its configuration if it already exists (v0.6.0).
+type ConfigureNamespaceRequest struct {
+	// Dimension is the vector dimension. Required on first creation;
+	// must match the existing dimension on subsequent calls.
+	Dimension int `json:"dimension"`
+	// Distance is the distance metric. Defaults to cosine when omitted.
+	Distance DistanceMetric `json:"distance,omitempty"`
+}
+
+// ConfigureNamespaceResponse is the response from PUT /v1/namespaces/:namespace.
+type ConfigureNamespaceResponse struct {
+	// Namespace is the namespace name.
+	Namespace string `json:"namespace"`
+	// Dimension is the vector dimension.
+	Dimension int `json:"dimension"`
+	// Distance is the distance metric in use.
+	Distance DistanceMetric `json:"distance"`
+	// Created is true if the namespace was newly created; false if it already existed.
+	Created bool `json:"created"`
+}
+
 // ClientOptions represents options for the Dakera client.
 type ClientOptions struct {
 	// BaseURL is the Dakera server URL.
@@ -279,16 +313,16 @@ type TextSearchResult struct {
 
 // TextUpsertResponse represents the response from a text upsert operation.
 type TextUpsertResponse struct {
-	UpsertedCount   int    `json:"upserted_count"`
-	TokensProcessed int    `json:"tokens_processed"`
-	Model           string `json:"model"`
-	EmbeddingTimeMs int64  `json:"embedding_time_ms"`
+	UpsertedCount   int            `json:"upserted_count"`
+	TokensProcessed int            `json:"tokens_processed"`
+	Model           EmbeddingModel `json:"model"`
+	EmbeddingTimeMs int64          `json:"embedding_time_ms"`
 }
 
 // TextQueryResponse represents the response from a text query operation.
 type TextQueryResponse struct {
 	Results         []TextSearchResult `json:"results"`
-	Model           string             `json:"model"`
+	Model           EmbeddingModel     `json:"model"`
 	EmbeddingTimeMs int64              `json:"embedding_time_ms"`
 	SearchTimeMs    int64              `json:"search_time_ms"`
 }
@@ -296,7 +330,7 @@ type TextQueryResponse struct {
 // BatchTextQueryResponse represents the response from a batch text query operation.
 type BatchTextQueryResponse struct {
 	Results         [][]TextSearchResult `json:"results"`
-	Model           string               `json:"model"`
+	Model           EmbeddingModel       `json:"model"`
 	EmbeddingTimeMs int64                `json:"embedding_time_ms"`
 	SearchTimeMs    int64                `json:"search_time_ms"`
 }
