@@ -1511,3 +1511,21 @@ func (c *Client) KeyUsage(ctx context.Context, keyID string) (*KeyUsage, error) 
 	}
 	return &result, nil
 }
+
+// ===========================================================================
+// Cross-Agent Network Operations (DASH-A)
+// ===========================================================================
+
+// CrossAgentNetwork builds the cross-agent memory similarity network.
+// POST /v1/knowledge/network/cross-agent — requires Admin scope.
+func (c *Client) CrossAgentNetwork(ctx context.Context, req CrossAgentNetworkRequest) (*CrossAgentNetworkResponse, error) {
+	data, err := c.request(ctx, "POST", "/v1/knowledge/network/cross-agent", req)
+	if err != nil {
+		return nil, err
+	}
+	var result CrossAgentNetworkResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cross-agent network response: %w", err)
+	}
+	return &result, nil
+}
