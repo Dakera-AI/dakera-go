@@ -565,6 +565,24 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 	return &resp, nil
 }
 
+// ConfigureNamespace creates or updates a namespace configuration (upsert semantics — v0.6.0).
+//
+// Creates the namespace if it does not exist, or updates its distance-metric
+// configuration if it already exists. Dimension changes are rejected by the
+// server to prevent silent data corruption. Requires Write scope.
+func (c *Client) ConfigureNamespace(ctx context.Context, namespace string, req ConfigureNamespaceRequest) (*ConfigureNamespaceResponse, error) {
+	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s", namespace), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp ConfigureNamespaceResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
 // DeleteNamespace deletes a namespace.
 func (c *Client) DeleteNamespace(ctx context.Context, namespace string) error {
 	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s", namespace), nil)
