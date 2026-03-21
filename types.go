@@ -958,10 +958,11 @@ type AgentNetworkStats struct {
 
 // CrossAgentNetworkResponse is returned by CrossAgentNetwork.
 type CrossAgentNetworkResponse struct {
-	Agents []AgentNetworkInfo `json:"agents"`
-	Nodes  []AgentNetworkNode `json:"nodes"`
-	Edges  []AgentNetworkEdge `json:"edges"`
-	Stats  AgentNetworkStats  `json:"stats"`
+	Agents    []AgentNetworkInfo `json:"agents"`
+	Nodes     []AgentNetworkNode `json:"nodes"`
+	Edges     []AgentNetworkEdge `json:"edges"`
+	Stats     AgentNetworkStats  `json:"stats"`
+	NodeCount int                `json:"node_count"` // Total memory nodes in the network (server v0.6.2+).
 }
 
 // ===========================================================================

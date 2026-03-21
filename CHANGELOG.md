@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-03-21
+
+### Added
+- `CrossAgentNetworkResponse.NodeCount` (`int`, `json:"node_count"`) — reflects the `node_count`
+  field added in dakera server v0.6.2 (PR #26). Defaults to `0` when absent so responses from
+  older server versions remain valid.
+- SSE endpoints now support `?api_key=<key>` query-parameter authentication in addition to
+  the `Authorization: Bearer` header. Useful when constructing streaming URLs for clients that
+  cannot send custom headers (e.g. browser-native `EventSource`).
+
 ## [0.5.0] - 2026-03-20
 
 ### Added
