@@ -19,6 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,19 +29,15 @@ import (
 	"time"
 )
 
-const (
-	defaultTimeout    = 30 * time.Second
-	defaultMaxRetries = 3
-)
+const defaultTimeout = 30 * time.Second
 
 // Client is the Dakera client for interacting with the vector database.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	timeout    time.Duration
-	maxRetries int
-	headers    map[string]string
-	httpClient *http.Client
+	baseURL     string
+	apiKey      string
+	retryConfig RetryConfig
+	headers     map[string]string
+	httpClient  *http.Client
 }
 
 // NewClient creates a new Dakera client with the given base URL.
@@ -55,31 +54,68 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 		timeout = defaultTimeout
 	}
 
-	maxRetries := opts.MaxRetries
-	if maxRetries == 0 {
-		maxRetries = defaultMaxRetries
+	connectTimeout := opts.ConnectTimeout
+	if connectTimeout == 0 {
+		connectTimeout = timeout
+	}
+
+	// Build retry config: RetryBackoff wins over MaxRetries
+	rc := DefaultRetryConfig()
+	if opts.RetryBackoff != nil {
+		rc = *opts.RetryBackoff
+		if rc.MaxRetries == 0 {
+			rc.MaxRetries = DefaultRetryConfig().MaxRetries
+		}
+		if rc.BaseDelay == 0 {
+			rc.BaseDelay = DefaultRetryConfig().BaseDelay
+		}
+		if rc.MaxDelay == 0 {
+			rc.MaxDelay = DefaultRetryConfig().MaxDelay
+		}
+	} else if opts.MaxRetries > 0 {
+		rc.MaxRetries = opts.MaxRetries
 	}
 
 	baseURL := strings.TrimSuffix(opts.BaseURL, "/")
 
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: connectTimeout,
+		}).DialContext,
+	}
+
 	return &Client{
-		baseURL:    baseURL,
-		apiKey:     opts.APIKey,
-		timeout:    timeout,
-		maxRetries: maxRetries,
-		headers:    opts.Headers,
+		baseURL:     baseURL,
+		apiKey:      opts.APIKey,
+		retryConfig: rc,
+		headers:     opts.Headers,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: transport,
 		},
 	}
 }
 
+// computeBackoff returns the wait duration for a given attempt number.
+func (c *Client) computeBackoff(attempt int) time.Duration {
+	rc := c.retryConfig
+	backoff := float64(rc.BaseDelay) * math.Pow(2, float64(attempt))
+	if backoff > float64(rc.MaxDelay) {
+		backoff = float64(rc.MaxDelay)
+	}
+	if rc.Jitter {
+		backoff *= 0.5 + rand.Float64()
+	}
+	return time.Duration(backoff)
+}
+
 // request makes an HTTP request with retry logic.
 func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
-	url := c.baseURL + path
+	reqURL := c.baseURL + path
+	rc := c.retryConfig
 	var lastErr error
 
-	for attempt := 0; attempt < c.maxRetries; attempt++ {
+	for attempt := 0; attempt < rc.MaxRetries; attempt++ {
 		var reqBody io.Reader
 		if body != nil {
 			jsonBody, err := json.Marshal(body)
@@ -89,7 +125,7 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 			reqBody = bytes.NewReader(jsonBody)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -108,8 +144,8 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
 			}
 			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
-			if attempt < c.maxRetries-1 {
-				time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+			if attempt < rc.MaxRetries-1 {
+				time.Sleep(c.computeBackoff(attempt))
 				continue
 			}
 			return nil, lastErr
@@ -152,16 +188,28 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 		case 404:
 			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
 		case 429:
-			retryAfter := 0
+			retryAfterSecs := -1
 			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				retryAfter, _ = strconv.Atoi(ra)
+				retryAfterSecs, _ = strconv.Atoi(ra)
 			}
-			return nil, NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfter)
+			rlErr := NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfterSecs)
+			if attempt < rc.MaxRetries-1 {
+				var wait time.Duration
+				if retryAfterSecs >= 0 {
+					wait = time.Duration(retryAfterSecs) * time.Second
+				} else {
+					wait = c.computeBackoff(attempt)
+				}
+				time.Sleep(wait)
+				lastErr = rlErr
+				continue
+			}
+			return nil, rlErr
 		default:
 			if resp.StatusCode >= 500 {
 				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
-				if attempt < c.maxRetries-1 {
-					time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+				if attempt < rc.MaxRetries-1 {
+					time.Sleep(c.computeBackoff(attempt))
 					continue
 				}
 				return nil, lastErr

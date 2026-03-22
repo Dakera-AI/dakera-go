@@ -196,6 +196,32 @@ type ConfigureNamespaceResponse struct {
 	Created bool `json:"created"`
 }
 
+// RetryConfig holds exponential-backoff retry parameters.
+type RetryConfig struct {
+	// MaxRetries is the maximum number of attempts (including the initial one).
+	// Defaults to 3.
+	MaxRetries int
+
+	// BaseDelay is the initial backoff duration. Defaults to 100ms.
+	BaseDelay time.Duration
+
+	// MaxDelay is the upper bound on backoff duration. Defaults to 60s.
+	MaxDelay time.Duration
+
+	// Jitter, when true, randomises the delay ±50%. Defaults to true.
+	Jitter bool
+}
+
+// DefaultRetryConfig returns a RetryConfig with sensible defaults.
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxRetries: 3,
+		BaseDelay:  100 * time.Millisecond,
+		MaxDelay:   60 * time.Second,
+		Jitter:     true,
+	}
+}
+
 // ClientOptions represents options for the Dakera client.
 type ClientOptions struct {
 	// BaseURL is the Dakera server URL.
@@ -204,11 +230,20 @@ type ClientOptions struct {
 	// APIKey is the optional API key for authentication.
 	APIKey string
 
-	// Timeout is the request timeout duration.
+	// Timeout is the request timeout duration. Defaults to 30s.
 	Timeout time.Duration
 
-	// MaxRetries is the maximum number of retries for failed requests.
+	// ConnectTimeout is the TCP connection establishment timeout.
+	// Defaults to Timeout when not set.
+	ConnectTimeout time.Duration
+
+	// MaxRetries is the maximum number of retries. Deprecated: use RetryBackoff.
+	// When both are set, RetryBackoff takes precedence.
 	MaxRetries int
+
+	// RetryBackoff allows fine-grained retry configuration.
+	// When set, MaxRetries is ignored.
+	RetryBackoff *RetryConfig
 
 	// Headers are additional HTTP headers to include in requests.
 	Headers map[string]string
