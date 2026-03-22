@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-22
+
+### Added
+- `RetryConfig` struct with `MaxRetries`, `BaseDelay`, `MaxDelay`, and `Jitter` fields for
+  fine-grained exponential-backoff control.
+- `ClientOptions.RetryBackoff` (`*RetryConfig`) — overrides `MaxRetries` when set.
+- `ClientOptions.ConnectTimeout` — sets the TCP dial timeout independently of the overall
+  request timeout via `net/http.Transport` + `net.Dialer`.
+- HTTP 429 responses now respect the `Retry-After` header: if `Retry-After: N` is present the
+  client waits exactly N seconds before retrying (including `Retry-After: 0` for instant retry).
+  Falls back to exponential backoff when the header is absent.
+- 5xx responses are retried up to `MaxRetries` times; 4xx responses (except 429) are never
+  retried.
+
 ## [0.6.2] - 2026-03-21
 
 ### Added

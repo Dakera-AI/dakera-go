@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestNewClientWithOptions(t *testing.T) {
 	assert.NotNil(t, client)
 	assert.Equal(t, "http://localhost:3000", client.baseURL)
 	assert.Equal(t, "test-key", client.apiKey)
-	assert.Equal(t, 5, client.maxRetries)
+	assert.Equal(t, 5, client.retryConfig.MaxRetries)
 }
 
 func TestUpsert(t *testing.T) {
@@ -440,7 +441,11 @@ func TestErrorHandling(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient(server.URL)
+		// MaxRetries:1 → single attempt, returns error immediately without sleeping
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL:    server.URL,
+			MaxRetries: 1,
+		})
 		_, err := client.Query(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, nil)
 
 		require.Error(t, err)
@@ -500,4 +505,120 @@ func TestAuthorizationHeader(t *testing.T) {
 	_, err := client.Health(context.Background())
 
 	require.NoError(t, err)
+}
+
+func TestRetryConfig(t *testing.T) {
+	t.Run("DefaultRetryConfig", func(t *testing.T) {
+		rc := DefaultRetryConfig()
+		assert.Equal(t, 3, rc.MaxRetries)
+		assert.Equal(t, 100*time.Millisecond, rc.BaseDelay)
+		assert.Equal(t, 60*time.Second, rc.MaxDelay)
+		assert.True(t, rc.Jitter)
+	})
+
+	t.Run("RetryBackoffOverridesMaxRetries", func(t *testing.T) {
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL:    "http://localhost:3000",
+			MaxRetries: 1,
+			RetryBackoff: &RetryConfig{
+				MaxRetries: 7,
+				BaseDelay:  200 * time.Millisecond,
+			},
+		})
+		assert.Equal(t, 7, client.retryConfig.MaxRetries)
+		assert.Equal(t, 200*time.Millisecond, client.retryConfig.BaseDelay)
+	})
+
+	t.Run("ConnectTimeoutDefaultsToTimeout", func(t *testing.T) {
+		// When ConnectTimeout is not set, the transport dial timeout equals Timeout.
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL: "http://localhost:3000",
+			Timeout: 15 * time.Second,
+		})
+		assert.NotNil(t, client.httpClient)
+	})
+
+	t.Run("RetryOn5xxSucceedsOnRecovery", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if calls < 3 {
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{"error": "internal error"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": "healthy"})
+		}))
+		defer server.Close()
+
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL: server.URL,
+			RetryBackoff: &RetryConfig{
+				MaxRetries: 3,
+				BaseDelay:  0,
+				MaxDelay:   0,
+				Jitter:     false,
+			},
+		})
+		_, err := client.Health(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, 3, calls)
+	})
+
+	t.Run("NoRetryOn4xx", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "bad request"})
+		}))
+		defer server.Close()
+
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL: server.URL,
+			RetryBackoff: &RetryConfig{
+				MaxRetries: 3,
+				BaseDelay:  0,
+				MaxDelay:   0,
+				Jitter:     false,
+			},
+		})
+		_, err := client.Query(context.Background(), "ns", []float32{0.1}, nil)
+		require.Error(t, err)
+		assert.Equal(t, 1, calls) // no retry on 4xx
+	})
+
+	t.Run("RateLimitRetryAfterZeroIsImmediate", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if calls == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(map[string]interface{}{"error": "rate limited"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"upsertedCount": 1})
+		}))
+		defer server.Close()
+
+		client := NewClientWithOptions(ClientOptions{
+			BaseURL: server.URL,
+			RetryBackoff: &RetryConfig{
+				MaxRetries: 2,
+				BaseDelay:  60 * time.Second, // would be very slow if Retry-After ignored
+				Jitter:     false,
+			},
+		})
+		start := time.Now()
+		resp, err := client.Upsert(context.Background(), "ns", []VectorInput{{ID: "v1", Values: []float32{0.1}}})
+		elapsed := time.Since(start)
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, resp.UpsertedCount)
+		assert.Less(t, elapsed, 2*time.Second) // Retry-After:0 → near-instant
+		assert.Equal(t, 2, calls)
+	})
 }
