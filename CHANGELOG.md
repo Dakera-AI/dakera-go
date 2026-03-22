@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-03-22
+
+### Added
+- `BatchMemoryFilter` / `BatchRecallRequest` / `BatchRecallResponse` / `BatchForgetRequest` /
+  `BatchForgetResponse` — typed structs for batch memory operations
+- `Client.BatchRecall()` — `POST /v1/memories/recall/batch` — recall memories for
+  multiple agents in a single request
+- `Client.BatchForget()` — `DELETE /v1/memories/forget/batch` — forget memories for
+  multiple agents in a single request
+- `RateLimitHeaders` struct + `Client.LastRateLimitHeaders()` method — exposes
+  `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` from the last response
+
 ## [0.7.0] - 2026-03-22
 
 ### Added
