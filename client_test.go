@@ -622,3 +622,154 @@ func TestRetryConfig(t *testing.T) {
 		assert.Equal(t, 2, calls)
 	})
 }
+
+// ---------------------------------------------------------------------------
+// CE-2: Batch Recall / Forget (v0.7.0)
+// ---------------------------------------------------------------------------
+
+func TestBatchRecall(t *testing.T) {
+	t.Run("POSTsToCorrectEndpoint", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "POST", r.Method)
+			assert.Equal(t, "/v1/memories/recall/batch", r.URL.Path)
+
+			var body map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, "qa", body["agent_id"])
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"memories": []map[string]interface{}{
+					{
+						"id":         "mem_1",
+						"content":    "test memory",
+						"memory_type": "episodic",
+						"importance": 0.8,
+						"score":      0.9,
+					},
+				},
+				"total":    10,
+				"filtered": 1,
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		req := BatchRecallRequest{
+			AgentID: "qa",
+			Filter:  BatchMemoryFilter{Tags: []string{"test"}},
+			Limit:   50,
+		}
+		resp, err := client.BatchRecall(context.Background(), req)
+
+		require.NoError(t, err)
+		assert.Equal(t, 10, resp.Total)
+		assert.Equal(t, 1, resp.Filtered)
+		assert.Len(t, resp.Memories, 1)
+		assert.Equal(t, "mem_1", resp.Memories[0].ID)
+	})
+
+	t.Run("EmptyFilterReturnsAll", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"memories": []interface{}{},
+				"total":    0,
+				"filtered": 0,
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		resp, err := client.BatchRecall(context.Background(), BatchRecallRequest{AgentID: "agent-x"})
+
+		require.NoError(t, err)
+		assert.Equal(t, 0, resp.Total)
+		assert.Equal(t, 0, resp.Filtered)
+		assert.Empty(t, resp.Memories)
+	})
+}
+
+func TestBatchForget(t *testing.T) {
+	t.Run("DELETEsToCorrectEndpoint", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "DELETE", r.Method)
+			assert.Equal(t, "/v1/memories/forget/batch", r.URL.Path)
+
+			var body map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, "qa", body["agent_id"])
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"deleted_count": 5,
+			})
+		}))
+		defer server.Close()
+
+		ts := int64(1700000000)
+		client := NewClient(server.URL)
+		req := BatchForgetRequest{
+			AgentID: "qa",
+			Filter:  BatchMemoryFilter{CreatedBefore: &ts},
+		}
+		resp, err := client.BatchForget(context.Background(), req)
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, resp.DeletedCount)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// OPS-1: Rate-Limit Headers (v0.7.0)
+// ---------------------------------------------------------------------------
+
+func TestLastRateLimitHeaders(t *testing.T) {
+	t.Run("NilBeforeAnyRequest", func(t *testing.T) {
+		client := NewClient("http://localhost:3000")
+		assert.Nil(t, client.LastRateLimitHeaders())
+	})
+
+	t.Run("PopulatedAfterRequestWithHeaders", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-RateLimit-Limit", "500")
+			w.Header().Set("X-RateLimit-Remaining", "499")
+			w.Header().Set("X-RateLimit-Reset", "1700000120")
+			w.Header().Set("X-Quota-Used", "100")
+			w.Header().Set("X-Quota-Limit", "10000")
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": "healthy", "version": "0.7.0"})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		_, err := client.Health(context.Background())
+		require.NoError(t, err)
+
+		rl := client.LastRateLimitHeaders()
+		require.NotNil(t, rl)
+		assert.Equal(t, int64(500), rl.Limit)
+		assert.Equal(t, int64(499), rl.Remaining)
+		assert.Equal(t, int64(1700000120), rl.Reset)
+		assert.Equal(t, int64(100), rl.QuotaUsed)
+		assert.Equal(t, int64(10000), rl.QuotaLimit)
+	})
+
+	t.Run("ZeroValuesWhenHeadersAbsent", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": "healthy"})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		_, err := client.Health(context.Background())
+		require.NoError(t, err)
+
+		rl := client.LastRateLimitHeaders()
+		require.NotNil(t, rl)
+		assert.Equal(t, int64(0), rl.Limit)
+		assert.Equal(t, int64(0), rl.Remaining)
+		assert.Equal(t, int64(0), rl.Reset)
+	})
+}
