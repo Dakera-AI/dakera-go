@@ -1057,3 +1057,81 @@ type DakeraEvent struct {
 	Dropped int64  `json:"dropped,omitempty"`
 	Hint    string `json:"hint,omitempty"`
 }
+
+// ---------------------------------------------------------------------------
+// OPS-1: Rate-Limit Headers
+// ---------------------------------------------------------------------------
+
+// RateLimitHeaders holds rate-limit and quota headers from an API response.
+//
+// Fields are zero when the server does not include the header (e.g.
+// non-namespaced endpoints where quota does not apply).
+type RateLimitHeaders struct {
+	// Limit is X-RateLimit-Limit — max requests allowed in the current window (0 = not present).
+	Limit int64
+	// Remaining is X-RateLimit-Remaining — requests left in the current window (0 = not present).
+	Remaining int64
+	// Reset is X-RateLimit-Reset — Unix timestamp (seconds) when the window resets (0 = not present).
+	Reset int64
+	// QuotaUsed is X-Quota-Used — namespace vectors / storage consumed (0 = not present).
+	QuotaUsed int64
+	// QuotaLimit is X-Quota-Limit — namespace quota ceiling (0 = not present).
+	QuotaLimit int64
+}
+
+// ---------------------------------------------------------------------------
+// CE-2: Batch Recall / Forget
+// ---------------------------------------------------------------------------
+
+// BatchMemoryFilter holds filter predicates for batch memory operations (CE-2).
+//
+// All fields are optional.  For BatchForget at least one must be set
+// (server-side safety guard).
+type BatchMemoryFilter struct {
+	// Tags restricts to memories that carry all listed tags.
+	Tags []string `json:"tags,omitempty"`
+	// MinImportance is the minimum importance (inclusive).
+	MinImportance *float32 `json:"min_importance,omitempty"`
+	// MaxImportance is the maximum importance (inclusive).
+	MaxImportance *float32 `json:"max_importance,omitempty"`
+	// CreatedAfter restricts to memories created at or after this Unix timestamp (seconds).
+	CreatedAfter *int64 `json:"created_after,omitempty"`
+	// CreatedBefore restricts to memories created before or at this Unix timestamp (seconds).
+	CreatedBefore *int64 `json:"created_before,omitempty"`
+	// MemoryType restricts to a specific memory type (e.g. "episodic").
+	MemoryType string `json:"memory_type,omitempty"`
+	// SessionID restricts to memories from a specific session.
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// BatchRecallRequest is the request body for POST /v1/memories/recall/batch.
+type BatchRecallRequest struct {
+	// AgentID is the agent whose memory namespace to search.
+	AgentID string `json:"agent_id"`
+	// Filter contains the filter predicates to apply.
+	Filter BatchMemoryFilter `json:"filter"`
+	// Limit is the maximum number of results to return (default: 100).
+	Limit int `json:"limit,omitempty"`
+}
+
+// BatchRecallResponse is the response from POST /v1/memories/recall/batch.
+type BatchRecallResponse struct {
+	Memories []RecalledMemory `json:"memories"`
+	// Total is the total memories in the agent namespace.
+	Total int `json:"total"`
+	// Filtered is the number of memories that passed the filter.
+	Filtered int `json:"filtered"`
+}
+
+// BatchForgetRequest is the request body for DELETE /v1/memories/forget/batch.
+type BatchForgetRequest struct {
+	// AgentID is the agent whose memory namespace to purge from.
+	AgentID string `json:"agent_id"`
+	// Filter contains the filter predicates — at least one must be set (server safety guard).
+	Filter BatchMemoryFilter `json:"filter"`
+}
+
+// BatchForgetResponse is the response from DELETE /v1/memories/forget/batch.
+type BatchForgetResponse struct {
+	DeletedCount int `json:"deleted_count"`
+}

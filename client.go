@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,6 +39,22 @@ type Client struct {
 	retryConfig RetryConfig
 	headers     map[string]string
 	httpClient  *http.Client
+
+	// OPS-1: last seen rate-limit headers
+	rlMu                sync.Mutex
+	lastRateLimitHeaders *RateLimitHeaders
+}
+
+// LastRateLimitHeaders returns the rate-limit headers from the most recent
+// API response (OPS-1).  Returns nil until the first request has been made.
+func (c *Client) LastRateLimitHeaders() *RateLimitHeaders {
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	if c.lastRateLimitHeaders == nil {
+		return nil
+	}
+	cp := *c.lastRateLimitHeaders
+	return &cp
 }
 
 // NewClient creates a new Dakera client with the given base URL.
@@ -109,6 +126,28 @@ func (c *Client) computeBackoff(attempt int) time.Duration {
 	return time.Duration(backoff)
 }
 
+// parseRateLimitHeaders extracts OPS-1 rate-limit and quota headers.
+func parseRateLimitHeaders(h http.Header) *RateLimitHeaders {
+	parseI := func(name string) int64 {
+		v := h.Get(name)
+		if v == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	return &RateLimitHeaders{
+		Limit:      parseI("X-RateLimit-Limit"),
+		Remaining:  parseI("X-RateLimit-Remaining"),
+		Reset:      parseI("X-RateLimit-Reset"),
+		QuotaUsed:  parseI("X-Quota-Used"),
+		QuotaLimit: parseI("X-Quota-Limit"),
+	}
+}
+
 // request makes an HTTP request with retry logic.
 func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
 	reqURL := c.baseURL + path
@@ -151,6 +190,11 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 			return nil, lastErr
 		}
 		defer resp.Body.Close()
+
+		// OPS-1: capture rate-limit headers on every response
+		c.rlMu.Lock()
+		c.lastRateLimitHeaders = parseRateLimitHeaders(resp.Header)
+		c.rlMu.Unlock()
 
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -777,6 +821,56 @@ func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req
 func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
 	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
 	return err
+}
+
+// BatchRecall bulk-recalls memories using filter predicates (CE-2).
+//
+// Uses POST /v1/memories/recall/batch — no embedding required.
+//
+// Example:
+//
+//	minImp := float32(0.7)
+//	resp, err := client.BatchRecall(ctx, BatchRecallRequest{
+//	    AgentID: "agent-1",
+//	    Filter:  BatchMemoryFilter{MinImportance: &minImp},
+//	    Limit:   50,
+//	})
+func (c *Client) BatchRecall(ctx context.Context, req BatchRecallRequest) (*BatchRecallResponse, error) {
+	respBody, err := c.request(ctx, "POST", "/v1/memories/recall/batch", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchRecallResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse batch recall response: %w", err)
+	}
+	return &result, nil
+}
+
+// BatchForget bulk-deletes memories using filter predicates (CE-2).
+//
+// Uses DELETE /v1/memories/forget/batch.  At least one filter predicate must
+// be set (server safety guard).
+//
+// Example:
+//
+//	ts := time.Now().Add(-24 * time.Hour).Unix()
+//	resp, err := client.BatchForget(ctx, BatchForgetRequest{
+//	    AgentID: "agent-1",
+//	    Filter:  BatchMemoryFilter{CreatedBefore: &ts},
+//	})
+func (c *Client) BatchForget(ctx context.Context, req BatchForgetRequest) (*BatchForgetResponse, error) {
+	respBody, err := c.request(ctx, "DELETE", "/v1/memories/forget/batch", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchForgetResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse batch forget response: %w", err)
+	}
+	return &result, nil
 }
 
 // SearchMemories searches memories for an agent.
