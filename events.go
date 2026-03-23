@@ -17,6 +17,16 @@ type EventResult struct {
 }
 
 // MemoryEvent is a memory lifecycle event from GET /v1/events/stream.
+//
+// EventType values:
+//   - "connected"           — emitted on subscribe to confirm the stream is live; AgentID will be ""
+//   - "stored"              — memory stored (Content, Importance, Tags present)
+//   - "recalled"            — memory recalled
+//   - "forgotten"           — memory deleted
+//   - "consolidated"        — memories merged
+//   - "importance_updated"  — importance changed
+//   - "session_started" / "session_ended" — agent session lifecycle
+//   - "stream_lagged"       — consumer fell behind; some events were dropped
 type MemoryEvent struct {
 	EventType  string   `json:"event_type"`
 	AgentID    string   `json:"agent_id"`
@@ -116,6 +126,7 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 
 		scanner := bufio.NewScanner(resp.Body)
 		var dataLines []string
+		var sseEventType string
 
 		for scanner.Scan() {
 			select {
@@ -130,6 +141,11 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 				continue // SSE comment / heartbeat
 			}
 
+			if strings.HasPrefix(line, "event:") {
+				sseEventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
+
 			if strings.HasPrefix(line, "data:") {
 				data := strings.TrimPrefix(line, "data:")
 				dataLines = append(dataLines, strings.TrimPrefix(data, " "))
@@ -140,6 +156,8 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 				if len(dataLines) > 0 {
 					payload := strings.Join(dataLines, "\n")
 					dataLines = dataLines[:0]
+					evtType := sseEventType
+					sseEventType = ""
 
 					var event MemoryEvent
 					if jsonErr := json.Unmarshal([]byte(payload), &event); jsonErr != nil {
@@ -150,11 +168,18 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 						}
 						continue
 					}
+					// Populate EventType from the SSE event: field when the JSON
+					// payload does not carry it (e.g. the connected handshake).
+					if event.EventType == "" && evtType != "" {
+						event.EventType = evtType
+					}
 					select {
 					case ch <- MemoryEventResult{Event: &event}:
 					case <-ctx.Done():
 						return
 					}
+				} else {
+					sseEventType = ""
 				}
 			}
 		}
