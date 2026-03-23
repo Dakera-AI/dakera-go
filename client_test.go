@@ -277,6 +277,8 @@ func TestHybridSearch(t *testing.T) {
 func TestHybridSearchBM25Only(t *testing.T) {
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/namespaces/test-ns/hybrid", r.URL.Path)
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
