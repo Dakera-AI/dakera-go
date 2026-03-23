@@ -1639,6 +1639,50 @@ func (c *Client) AutopilotTrigger(ctx context.Context, action string) (*AutoPilo
 	return &result, nil
 }
 
+// DecayConfig returns the current decay engine configuration (DECAY-1).
+// Requires Admin scope.
+func (c *Client) DecayConfig(ctx context.Context) (*DecayConfigResponse, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/decay/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DecayConfigResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decay config response: %w", err)
+	}
+	return &result, nil
+}
+
+// DecayUpdateConfig updates the decay engine configuration at runtime (DECAY-1).
+// Changes take effect on the next decay cycle — no restart required.
+// All fields in req are optional; omit any to keep its current value.
+// Requires Admin scope.
+func (c *Client) DecayUpdateConfig(ctx context.Context, req DecayConfigUpdateRequest) (*DecayConfigUpdateResponse, error) {
+	data, err := c.request(ctx, "PUT", "/v1/admin/decay/config", req)
+	if err != nil {
+		return nil, err
+	}
+	var result DecayConfigUpdateResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decay config update response: %w", err)
+	}
+	return &result, nil
+}
+
+// DecayStats returns cumulative decay counters and a last-cycle snapshot (DECAY-2).
+// Requires Admin scope.
+func (c *Client) DecayStats(ctx context.Context) (*DecayStatsResponse, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/decay/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DecayStatsResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decay stats response: %w", err)
+	}
+	return &result, nil
+}
+
 // ===========================================================================
 // API Key Operations
 // ===========================================================================

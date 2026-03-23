@@ -402,9 +402,15 @@ type StoreMemoryRequest struct {
 	MemoryType string                 `json:"memory_type,omitempty"`
 	Importance *float32               `json:"importance,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	TTLSeconds *int                   `json:"ttl_seconds,omitempty"`
-	SessionID  string                 `json:"session_id,omitempty"`
-	Embedding  []float32              `json:"embedding,omitempty"`
+	// TTLSeconds is an optional TTL in seconds. The memory is hard-deleted after
+	// this many seconds from creation.
+	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+	// ExpiresAt is an optional explicit expiry Unix timestamp (seconds). Takes
+	// precedence over TTLSeconds when both are set. The memory is hard-deleted
+	// by the decay engine on expiry (DECAY-3).
+	ExpiresAt *int64  `json:"expires_at,omitempty"`
+	SessionID string  `json:"session_id,omitempty"`
+	Embedding []float32 `json:"embedding,omitempty"`
 }
 
 // StoreMemoryResponse represents the response from storing a memory.
@@ -979,6 +985,61 @@ type AutoPilotTriggerResponse struct {
 	Dedup         *AutoPilotDedupResult         `json:"dedup,omitempty"`
 	Consolidation *AutoPilotConsolidationResult `json:"consolidation,omitempty"`
 	Message       string                        `json:"message"`
+}
+
+// ===========================================================================
+// Decay Engine Types (DECAY-1 / DECAY-2)
+// ===========================================================================
+
+// DecayConfigResponse is returned by GET /v1/admin/decay/config (DECAY-1).
+type DecayConfigResponse struct {
+	// Strategy is the decay strategy: "exponential", "linear", or "step".
+	Strategy string `json:"strategy"`
+	// HalfLifeHours is the half-life in hours.
+	HalfLifeHours float64 `json:"half_life_hours"`
+	// MinImportance is the minimum importance threshold; memories below are
+	// hard-deleted on the next decay cycle.
+	MinImportance float32 `json:"min_importance"`
+}
+
+// DecayConfigUpdateRequest is the request for PUT /v1/admin/decay/config (DECAY-1).
+// All fields are optional — omit any to keep its current value.
+type DecayConfigUpdateRequest struct {
+	// Strategy is the decay strategy: "exponential", "linear", or "step".
+	Strategy *string `json:"strategy,omitempty"`
+	// HalfLifeHours must be > 0.
+	HalfLifeHours *float64 `json:"half_life_hours,omitempty"`
+	// MinImportance must be 0.0–1.0.
+	MinImportance *float32 `json:"min_importance,omitempty"`
+}
+
+// DecayConfigUpdateResponse is returned by PUT /v1/admin/decay/config (DECAY-1).
+type DecayConfigUpdateResponse struct {
+	Success bool                `json:"success"`
+	Config  DecayConfigResponse `json:"config"`
+	Message string              `json:"message"`
+}
+
+// LastDecayCycleStats holds per-cycle statistics from a single decay run.
+type LastDecayCycleStats struct {
+	NamespacesProcessed int `json:"namespaces_processed"`
+	MemoriesProcessed   int `json:"memories_processed"`
+	MemoriesDecayed     int `json:"memories_decayed"`
+	MemoriesDeleted     int `json:"memories_deleted"`
+}
+
+// DecayStatsResponse is returned by GET /v1/admin/decay/stats (DECAY-2).
+type DecayStatsResponse struct {
+	// TotalDecayed is the all-time count of memories whose importance was lowered.
+	TotalDecayed uint64 `json:"total_decayed"`
+	// TotalDeleted is the all-time count of memories hard-deleted by decay or TTL.
+	TotalDeleted uint64 `json:"total_deleted"`
+	// LastRunAt is the Unix timestamp of the last decay cycle (nil if never run).
+	LastRunAt *uint64 `json:"last_run_at,omitempty"`
+	// CyclesRun is the number of decay cycles completed since startup.
+	CyclesRun uint64 `json:"cycles_run"`
+	// LastCycle holds stats from the most recent decay cycle (nil if never run).
+	LastCycle *LastDecayCycleStats `json:"last_cycle,omitempty"`
 }
 
 // ===========================================================================

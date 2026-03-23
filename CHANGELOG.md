@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-03-23
+
+### Added
+- `StoreMemoryRequest.ExpiresAt *int64` — optional explicit expiry Unix timestamp (seconds);
+  takes precedence over `TTLSeconds`; memory is hard-deleted by the decay engine on expiry (DECAY-3)
+- `DecayConfigResponse`, `DecayConfigUpdateRequest`, `DecayConfigUpdateResponse` structs (DECAY-1)
+- `LastDecayCycleStats`, `DecayStatsResponse` structs (DECAY-2)
+- `Client.DecayConfig()` — `GET /v1/admin/decay/config` — current strategy, half-life,
+  and min-importance threshold (DECAY-1). Requires Admin scope.
+- `Client.DecayUpdateConfig()` — `PUT /v1/admin/decay/config` — live config update with
+  no restart required (DECAY-1). All fields optional.
+- `Client.DecayStats()` — `GET /v1/admin/decay/stats` — cumulative counters and
+  last-cycle snapshot (DECAY-2). Requires Admin scope.
+
 ## [0.7.2] - 2026-03-23
 
 ### Added
