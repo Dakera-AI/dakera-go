@@ -1162,6 +1162,7 @@ const (
 // The Type field identifies the event variant; only the fields relevant to
 // that variant will be populated.
 //
+//   - "connected"            → Timestamp (connection confirmed, emitted on subscribe)
 //   - "namespace_created"    → Namespace, Dimension
 //   - "namespace_deleted"    → Namespace
 //   - "operation_progress"   → OperationID, Namespace, OpType, Progress, Status, Message, UpdatedAt
@@ -1171,6 +1172,8 @@ const (
 type DakeraEvent struct {
 	Type string `json:"type"`
 
+	// connected
+	Timestamp int64 `json:"timestamp,omitempty"`
 	// namespace_created / namespace_deleted / vectors_mutated / operation_progress / job_progress
 	Namespace string `json:"namespace,omitempty"`
 	// namespace_created

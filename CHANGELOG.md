@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-03-23
+
+### Added
+- `DakeraEvent.Timestamp` — new field populated by the `connected` handshake event
+  (`Type == "connected"`). Clients can use this to distinguish connected-and-idle
+  from not-yet-connected (core DAK-720).
+- `MemoryEvent`: `streamMemorySSE` now parses the SSE `event:` field. For the
+  `connected` handshake (`event: connected`), callers receive a `MemoryEvent`
+  with `EventType = "connected"` and `AgentID = ""` (core DAK-720).
+- `StoreMemoryRequest.ExpiresAt` — optional explicit expiry Unix timestamp (seconds).
+  Takes precedence over `TTLSeconds` when both are set (core DECAY-3 / DAK-740).
+
 ## [0.8.1] - 2026-03-23
 
 ### Fixed
