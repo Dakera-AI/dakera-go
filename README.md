@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8)](https://go.dev/)
 
-Official Go client for [Dakera](https://dakera.ai) — a high-performance vector database for AI agent memory.
+Official Go client for [Dakera](https://dakera.ai) — an AI agent memory platform.
 
 ## Installation
 
@@ -378,7 +378,7 @@ golangci-lint run
 
 | Repository | Description |
 |------------|-------------|
-| [dakera](https://github.com/dakera-ai/dakera) | Core vector database engine (Rust) |
+| [dakera](https://github.com/dakera-ai/dakera) | Core AI agent memory engine (Rust) |
 | [dakera-py](https://github.com/dakera-ai/dakera-py) | Python SDK |
 | [dakera-js](https://github.com/dakera-ai/dakera-js) | TypeScript/JavaScript SDK |
 | [dakera-rs](https://github.com/dakera-ai/dakera-rs) | Rust SDK |
