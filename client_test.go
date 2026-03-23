@@ -3,6 +3,7 @@ package dakera
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -271,6 +272,31 @@ func TestHybridSearch(t *testing.T) {
 	assert.Len(t, results, 1)
 	assert.Equal(t, float32(0.9), results[0].VectorScore)
 	assert.Equal(t, float32(0.8), results[0].TextScore)
+}
+
+func TestHybridSearchBM25Only(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{
+				{"id": "doc2", "score": 0.75},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	results, err := client.HybridSearch(context.Background(), "test-ns", nil, "hello", nil)
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	// vector must not be present in the request body
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(capturedBody, &body))
+	_, hasVector := body["vector"]
+	assert.False(t, hasVector, "vector field must be absent in BM25-only request")
 }
 
 func TestListNamespaces(t *testing.T) {
