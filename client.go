@@ -593,7 +593,7 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 		body["alpha"] = 0.5
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/hybrid", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/hybrid", namespace), body)
 	if err != nil {
 		return nil, err
 	}

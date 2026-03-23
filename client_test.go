@@ -252,7 +252,7 @@ func TestFulltextSearch(t *testing.T) {
 func TestHybridSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/fulltext/hybrid", r.URL.Path)
+		assert.Equal(t, "/v1/namespaces/test-ns/hybrid", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
