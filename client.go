@@ -1594,6 +1594,52 @@ func (c *Client) ConfigureTTL(ctx context.Context, namespace string, ttlSeconds 
 }
 
 // ===========================================================================
+// AutoPilot Management (PILOT-1 / PILOT-2 / PILOT-3)
+// ===========================================================================
+
+// AutopilotStatus returns the current AutoPilot config and last-run statistics (PILOT-1).
+func (c *Client) AutopilotStatus(ctx context.Context) (*AutoPilotStatusResponse, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/autopilot/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AutoPilotStatusResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal autopilot status: %w", err)
+	}
+	return &result, nil
+}
+
+// AutopilotUpdateConfig updates the AutoPilot configuration at runtime (PILOT-2).
+// All fields in req are optional — nil means "keep current value".
+func (c *Client) AutopilotUpdateConfig(ctx context.Context, req AutoPilotConfigRequest) (*AutoPilotConfigResponse, error) {
+	data, err := c.request(ctx, "PUT", "/v1/admin/autopilot/config", req)
+	if err != nil {
+		return nil, err
+	}
+	var result AutoPilotConfigResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal autopilot config response: %w", err)
+	}
+	return &result, nil
+}
+
+// AutopilotTrigger manually triggers an AutoPilot dedup or consolidation cycle (PILOT-3).
+// action must be one of "dedup", "consolidate", or "all".
+func (c *Client) AutopilotTrigger(ctx context.Context, action string) (*AutoPilotTriggerResponse, error) {
+	body := map[string]string{"action": action}
+	data, err := c.request(ctx, "POST", "/v1/admin/autopilot/trigger", body)
+	if err != nil {
+		return nil, err
+	}
+	var result AutoPilotTriggerResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal autopilot trigger response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // API Key Operations
 // ===========================================================================
 

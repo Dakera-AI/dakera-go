@@ -907,6 +907,80 @@ type SlowQueryOptions struct {
 	MinDurationMs int `json:"min_duration_ms,omitempty"`
 }
 
+// AutoPilotConfig represents the AutoPilot configuration.
+type AutoPilotConfig struct {
+	Enabled                      bool    `json:"enabled"`
+	DedupThreshold               float32 `json:"dedup_threshold"`
+	DedupIntervalHours           uint64  `json:"dedup_interval_hours"`
+	ConsolidationIntervalHours   uint64  `json:"consolidation_interval_hours"`
+}
+
+// DedupResultSnapshot is the result from a deduplication cycle.
+type DedupResultSnapshot struct {
+	NamespacesProcessed int `json:"namespaces_processed"`
+	MemoriesScanned     int `json:"memories_scanned"`
+	DuplicatesRemoved   int `json:"duplicates_removed"`
+}
+
+// ConsolidationResultSnapshot is the result from a consolidation cycle.
+type ConsolidationResultSnapshot struct {
+	NamespacesProcessed  int `json:"namespaces_processed"`
+	MemoriesScanned      int `json:"memories_scanned"`
+	ClustersMerged       int `json:"clusters_merged"`
+	MemoriesConsolidated int `json:"memories_consolidated"`
+}
+
+// AutoPilotStatusResponse is returned by GET /v1/admin/autopilot/status (PILOT-1).
+type AutoPilotStatusResponse struct {
+	Config                AutoPilotConfig              `json:"config"`
+	LastDedupAt           *uint64                      `json:"last_dedup_at,omitempty"`
+	LastConsolidationAt   *uint64                      `json:"last_consolidation_at,omitempty"`
+	LastDedup             *DedupResultSnapshot          `json:"last_dedup,omitempty"`
+	LastConsolidation     *ConsolidationResultSnapshot  `json:"last_consolidation,omitempty"`
+	TotalDedupRemoved     uint64                       `json:"total_dedup_removed"`
+	TotalConsolidated     uint64                       `json:"total_consolidated"`
+}
+
+// AutoPilotConfigRequest is the request for PUT /v1/admin/autopilot/config (PILOT-2).
+// All fields are optional — nil means "keep current value".
+type AutoPilotConfigRequest struct {
+	Enabled                    *bool    `json:"enabled,omitempty"`
+	DedupThreshold             *float32 `json:"dedup_threshold,omitempty"`
+	DedupIntervalHours         *uint64  `json:"dedup_interval_hours,omitempty"`
+	ConsolidationIntervalHours *uint64  `json:"consolidation_interval_hours,omitempty"`
+}
+
+// AutoPilotConfigResponse is returned by PUT /v1/admin/autopilot/config (PILOT-2).
+type AutoPilotConfigResponse struct {
+	Success bool            `json:"success"`
+	Config  AutoPilotConfig `json:"config"`
+	Message string          `json:"message"`
+}
+
+// AutoPilotDedupResult is the dedup result from a manual trigger.
+type AutoPilotDedupResult struct {
+	NamespacesProcessed int `json:"namespaces_processed"`
+	MemoriesScanned     int `json:"memories_scanned"`
+	DuplicatesRemoved   int `json:"duplicates_removed"`
+}
+
+// AutoPilotConsolidationResult is the consolidation result from a manual trigger.
+type AutoPilotConsolidationResult struct {
+	NamespacesProcessed  int `json:"namespaces_processed"`
+	MemoriesScanned      int `json:"memories_scanned"`
+	ClustersMerged       int `json:"clusters_merged"`
+	MemoriesConsolidated int `json:"memories_consolidated"`
+}
+
+// AutoPilotTriggerResponse is returned by POST /v1/admin/autopilot/trigger (PILOT-3).
+type AutoPilotTriggerResponse struct {
+	Success       bool                          `json:"success"`
+	Action        string                        `json:"action"`
+	Dedup         *AutoPilotDedupResult         `json:"dedup,omitempty"`
+	Consolidation *AutoPilotConsolidationResult `json:"consolidation,omitempty"`
+	Message       string                        `json:"message"`
+}
+
 // ===========================================================================
 // API Key Types
 // ===========================================================================
