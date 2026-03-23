@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-03-23
+
+### Added
+- `AutoPilotConfig`, `AutoPilotStatusResponse`, `DedupResultSnapshot`, `ConsolidationResultSnapshot`
+  structs for AutoPilot status data
+- `AutoPilotConfigRequest`, `AutoPilotConfigResponse` structs for runtime configuration updates
+- `AutoPilotDedupResult`, `AutoPilotConsolidationResult`, `AutoPilotTriggerResponse` structs
+- `Client.AutopilotStatus()` — `GET /v1/admin/autopilot/status` (PILOT-1)
+- `Client.AutopilotUpdateConfig()` — `PUT /v1/admin/autopilot/config` (PILOT-2)
+- `Client.AutopilotTrigger()` — `POST /v1/admin/autopilot/trigger` (PILOT-3)
+
 ## [0.7.1] - 2026-03-22
 
 ### Added
