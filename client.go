@@ -567,10 +567,15 @@ func (c *Client) FulltextSearch(ctx context.Context, namespace string, query str
 }
 
 // HybridSearch performs a hybrid search combining vector and full-text.
+//
+// When vector is nil the server falls back to BM25-only full-text search.
+// When provided, results are blended with vector similarity according to opts.Alpha.
 func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []float32, query string, opts *HybridSearchOptions) ([]HybridSearchResult, error) {
 	body := map[string]interface{}{
-		"vector": vector,
-		"query":  query,
+		"query": query,
+	}
+	if vector != nil {
+		body["vector"] = vector
 	}
 
 	if opts != nil {
