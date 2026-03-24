@@ -3,6 +3,7 @@ package dakera
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1153,4 +1154,111 @@ func TestLastRateLimitHeaders(t *testing.T) {
 		assert.Equal(t, int64(0), rl.Remaining)
 		assert.Equal(t, int64(0), rl.Reset)
 	})
+}
+
+// =============================================================================
+// SSE Connected Event (DAK-720) — v0.8.3
+// =============================================================================
+
+func TestDakeraEventConnectedJSONDeserialization(t *testing.T) {
+	payload := `{"type":"connected","timestamp":1700000000000}`
+	var event DakeraEvent
+	err := json.Unmarshal([]byte(payload), &event)
+	require.NoError(t, err)
+	assert.Equal(t, "connected", event.Type)
+	assert.Equal(t, int64(1700000000000), event.Timestamp)
+	// All other fields should be zero/empty for a connected event.
+	assert.Empty(t, event.Namespace)
+	assert.Equal(t, 0, event.Dimension)
+}
+
+func TestDakeraEventConnectedDistinctFromOtherTypes(t *testing.T) {
+	// namespace_created must NOT be mistaken for connected.
+	payload := `{"type":"namespace_created","namespace":"my-ns","dimension":384}`
+	var event DakeraEvent
+	err := json.Unmarshal([]byte(payload), &event)
+	require.NoError(t, err)
+	assert.Equal(t, "namespace_created", event.Type)
+	assert.NotEqual(t, "connected", event.Type)
+	assert.Equal(t, "my-ns", event.Namespace)
+	assert.Equal(t, 384, event.Dimension)
+}
+
+func TestMemoryEventConnectedNormalization(t *testing.T) {
+	// connected handshake uses "event_type": "connected" (or via SSE event: field).
+	payload := `{"event_type":"connected","agent_id":"","timestamp":1700000000000}`
+	var event MemoryEvent
+	err := json.Unmarshal([]byte(payload), &event)
+	require.NoError(t, err)
+	assert.Equal(t, "connected", event.EventType)
+	assert.Equal(t, "", event.AgentID)
+	assert.Equal(t, int64(1700000000000), event.Timestamp)
+	assert.Nil(t, event.MemoryID)
+	assert.Nil(t, event.Content)
+}
+
+func TestStreamNamespaceEventsConnectedEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/namespaces/test-ns/events", r.URL.Path)
+		assert.Equal(t, "text/event-stream", r.Header.Get("Accept"))
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			fmt.Fprintf(w, "data: {\"type\":\"connected\",\"timestamp\":1700000000000}\n\n")
+			f.Flush()
+		}
+		// Block until the client cancels.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := client.StreamNamespaceEvents(ctx, "test-ns")
+	require.NoError(t, err)
+
+	result := <-ch
+	cancel()
+
+	require.NoError(t, result.Err)
+	require.NotNil(t, result.Event)
+	assert.Equal(t, "connected", result.Event.Type)
+	assert.Equal(t, int64(1700000000000), result.Event.Timestamp)
+}
+
+func TestStreamMemoryEventsConnectedEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/events/stream", r.URL.Path)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			// connected handshake — uses event: field + JSON body
+			fmt.Fprintf(w, "event: connected\ndata: {\"type\":\"connected\",\"timestamp\":1700000000000}\n\n")
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := client.StreamMemoryEvents(ctx)
+	require.NoError(t, err)
+
+	result := <-ch
+	cancel()
+
+	require.NoError(t, result.Err)
+	require.NotNil(t, result.Event)
+	assert.Equal(t, "connected", result.Event.EventType)
+	assert.Equal(t, "", result.Event.AgentID)
+	assert.Equal(t, int64(1700000000000), result.Event.Timestamp)
 }
