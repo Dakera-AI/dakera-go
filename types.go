@@ -860,6 +860,15 @@ type WarmCacheResponse struct {
 // Admin Types
 // ===========================================================================
 
+// OpsStats represents the ops stats response — Read-scoped; works with read-only API keys.
+type OpsStats struct {
+	Version        string `json:"version"`
+	TotalVectors   int64  `json:"total_vectors"`
+	NamespaceCount int64  `json:"namespace_count"`
+	UptimeSeconds  int64  `json:"uptime_seconds"`
+	Timestamp      int64  `json:"timestamp"`
+}
+
 // ClusterStatus represents the cluster status response.
 type ClusterStatus struct {
 	Status  string `json:"status"`
