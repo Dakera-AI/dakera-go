@@ -867,6 +867,7 @@ type OpsStats struct {
 	NamespaceCount int64  `json:"namespace_count"`
 	UptimeSeconds  int64  `json:"uptime_seconds"`
 	Timestamp      int64  `json:"timestamp"`
+	State          string `json:"state"`
 }
 
 // ClusterStatus represents the cluster status response.
