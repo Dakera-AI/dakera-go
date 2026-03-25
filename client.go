@@ -1360,7 +1360,7 @@ func (c *Client) WarmCache(ctx context.Context, namespace string, req WarmCacheR
 // Admin Operations (Extended)
 // ===========================================================================
 
-// OpsStats gets server stats (version, total_vectors, namespace_count, uptime_seconds, timestamp).
+// OpsStats gets server stats (version, total_vectors, namespace_count, uptime_seconds, timestamp, state).
 // Requires Read scope — works with read-only API keys, unlike ClusterStatus.
 func (c *Client) OpsStats(ctx context.Context) (*OpsStats, error) {
 	data, err := c.request(ctx, "GET", "/v1/ops/stats", nil)
