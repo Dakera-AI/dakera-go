@@ -1360,6 +1360,20 @@ func (c *Client) WarmCache(ctx context.Context, namespace string, req WarmCacheR
 // Admin Operations (Extended)
 // ===========================================================================
 
+// OpsStats gets server stats (version, total_vectors, namespace_count, uptime_seconds, timestamp).
+// Requires Read scope — works with read-only API keys, unlike ClusterStatus.
+func (c *Client) OpsStats(ctx context.Context) (*OpsStats, error) {
+	data, err := c.request(ctx, "GET", "/v1/ops/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result OpsStats
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ops stats: %w", err)
+	}
+	return &result, nil
+}
+
 // ClusterStatus gets the cluster status.
 func (c *Client) ClusterStatus(ctx context.Context) (*ClusterStatus, error) {
 	data, err := c.request(ctx, "GET", "/v1/admin/cluster/status", nil)
