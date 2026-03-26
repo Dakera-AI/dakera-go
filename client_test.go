@@ -1614,4 +1614,145 @@ func TestHasTagOverlap(t *testing.T) {
 	assert.False(t, hasTagOverlap([]string{"a"}, nil))
 }
 
+// ---------------------------------------------------------------------------
+// CE-4 Entity Extraction (GLiNER)
+// ---------------------------------------------------------------------------
+
+func TestConfigureNamespaceNer(t *testing.T) {
+	var capturedMethod, capturedPath string
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	cfg := NamespaceNerConfig{
+		ExtractEntities: true,
+		EntityTypes:     []string{"person", "location"},
+	}
+	result, err := client.ConfigureNamespaceNer(context.Background(), "my-ns", cfg)
+
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH", capturedMethod)
+	assert.Equal(t, "/v1/namespaces/my-ns/config", capturedPath)
+	assert.NotNil(t, result)
+	assert.Equal(t, true, result["ok"])
+
+	var sentBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(capturedBody, &sentBody))
+	assert.Equal(t, true, sentBody["extract_entities"])
+	entityTypes := sentBody["entity_types"].([]interface{})
+	assert.Len(t, entityTypes, 2)
+}
+
+func TestConfigureNamespaceNer_PathEscaping(t *testing.T) {
+	var capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	_, err := client.ConfigureNamespaceNer(context.Background(), "ns/with/slashes", NamespaceNerConfig{ExtractEntities: false})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/namespaces/ns%2Fwith%2Fslashes/config", capturedPath)
+}
+
+func TestExtractEntities(t *testing.T) {
+	var capturedMethod, capturedPath string
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"entities": []map[string]interface{}{
+				{"entity_type": "person", "value": "Alice", "score": 0.97},
+				{"entity_type": "location", "value": "Paris", "score": 0.91},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.ExtractEntities(context.Background(), "Alice lives in Paris.", []string{"person", "location"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "POST", capturedMethod)
+	assert.Equal(t, "/v1/memories/extract", capturedPath)
+	assert.Len(t, result.Entities, 2)
+	assert.Equal(t, "person", result.Entities[0].EntityType)
+	assert.Equal(t, "Alice", result.Entities[0].Value)
+	assert.InDelta(t, 0.97, result.Entities[0].Score, 0.001)
+	assert.Equal(t, "location", result.Entities[1].EntityType)
+
+	var sentBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(capturedBody, &sentBody))
+	assert.Equal(t, "Alice lives in Paris.", sentBody["text"])
+	assert.NotNil(t, sentBody["entity_types"])
+}
+
+func TestExtractEntities_NilEntityTypes(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"entities": []map[string]interface{}{},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.ExtractEntities(context.Background(), "Some text.", nil)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result.Entities)
+
+	var sentBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(capturedBody, &sentBody))
+	_, hasEntityTypes := sentBody["entity_types"]
+	assert.False(t, hasEntityTypes, "entity_types should be omitted when nil")
+}
+
+func TestMemoryEntities(t *testing.T) {
+	var capturedMethod, capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory_id": "mem-42",
+			"entities": []map[string]interface{}{
+				{"entity_type": "org", "value": "Dakera", "score": 0.99},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.MemoryEntities(context.Background(), "mem-42")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Equal(t, "/v1/memory/entities/mem-42", capturedPath)
+	assert.Equal(t, "mem-42", result.MemoryID)
+	assert.Len(t, result.Entities, 1)
+	assert.Equal(t, "org", result.Entities[0].EntityType)
+	assert.Equal(t, "Dakera", result.Entities[0].Value)
+	assert.InDelta(t, 0.99, result.Entities[0].Score, 0.001)
+}
+
 func strPtr(s string) *string { return &s }
