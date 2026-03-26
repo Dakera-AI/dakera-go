@@ -1283,3 +1283,116 @@ type BatchForgetRequest struct {
 type BatchForgetResponse struct {
 	DeletedCount int `json:"deleted_count"`
 }
+
+// ---------------------------------------------------------------------------
+// CE-5 / SDK-9: Memory Knowledge Graph
+// ---------------------------------------------------------------------------
+
+// EdgeType classifies a relationship edge in the memory knowledge graph.
+//
+//   - EdgeTypeRelatedTo: cosine similarity ≥ 0.85 — semantically similar memories.
+//   - EdgeTypeSharesEntity: both memories share a named entity (CE-4 tags).
+//   - EdgeTypePrecedes: temporal ordering — source was created before target.
+//   - EdgeTypeLinkedBy: explicit user/agent-created link.
+type EdgeType string
+
+const (
+	// EdgeTypeRelatedTo indicates two memories are semantically similar (cosine ≥ 0.85).
+	EdgeTypeRelatedTo EdgeType = "related_to"
+	// EdgeTypeSharesEntity indicates both memories reference the same named entity.
+	EdgeTypeSharesEntity EdgeType = "shares_entity"
+	// EdgeTypePrecedes indicates source was created before target (temporal ordering).
+	EdgeTypePrecedes EdgeType = "precedes"
+	// EdgeTypeLinkedBy indicates an explicit user/agent-created link.
+	EdgeTypeLinkedBy EdgeType = "linked_by"
+)
+
+// GraphEdge is a directed edge in the memory knowledge graph.
+type GraphEdge struct {
+	// ID is the unique edge identifier.
+	ID string `json:"id"`
+	// SourceID is the source memory ID.
+	SourceID string `json:"source_id"`
+	// TargetID is the target memory ID.
+	TargetID string `json:"target_id"`
+	// EdgeType is the relationship type between the two memories.
+	EdgeType EdgeType `json:"edge_type"`
+	// Weight is the edge weight (0.0–1.0). For RelatedTo this is the cosine similarity score.
+	Weight float64 `json:"weight"`
+	// CreatedAt is the Unix timestamp of edge creation.
+	CreatedAt int64 `json:"created_at"`
+}
+
+// GraphNode is a memory node in the knowledge graph traversal result.
+type GraphNode struct {
+	// MemoryID is the memory identifier.
+	MemoryID string `json:"memory_id"`
+	// ContentPreview is the first 200 characters of memory content.
+	ContentPreview string `json:"content_preview"`
+	// Importance is the memory importance score.
+	Importance float64 `json:"importance"`
+	// Depth is the traversal depth from the root node (root = 0).
+	Depth int `json:"depth"`
+}
+
+// MemoryGraph is the graph traversal result from GET /v1/memories/{id}/graph.
+type MemoryGraph struct {
+	// RootID is the root memory ID from which traversal started.
+	RootID string `json:"root_id"`
+	// Depth is the maximum traversal depth used.
+	Depth int `json:"depth"`
+	// Nodes contains all memory nodes reachable within the requested depth.
+	Nodes []GraphNode `json:"nodes"`
+	// Edges contains all edges connecting the returned nodes.
+	Edges []GraphEdge `json:"edges"`
+}
+
+// GraphPath is the shortest path between two memories from GET /v1/memories/{id}/path.
+type GraphPath struct {
+	// SourceID is the starting memory ID.
+	SourceID string `json:"source_id"`
+	// TargetID is the destination memory ID.
+	TargetID string `json:"target_id"`
+	// Path is the ordered list of memory IDs from source to target (inclusive).
+	Path []string `json:"path"`
+	// Hops is the number of edges traversed (len(Path) - 1). -1 if no path exists.
+	Hops int `json:"hops"`
+	// Edges are the edges along the path, in traversal order.
+	Edges []GraphEdge `json:"edges"`
+}
+
+// GraphLinkRequest is the request body for POST /v1/memories/{id}/links.
+type GraphLinkRequest struct {
+	// TargetID is the target memory ID to link to.
+	TargetID string `json:"target_id"`
+	// EdgeType is the edge type — must be EdgeTypeLinkedBy for explicit links.
+	EdgeType EdgeType `json:"edge_type"`
+}
+
+// GraphLinkResponse is the response from POST /v1/memories/{id}/links.
+type GraphLinkResponse struct {
+	// Edge is the newly created edge.
+	Edge GraphEdge `json:"edge"`
+}
+
+// GraphExport is the agent graph export from GET /v1/agents/{id}/graph/export.
+type GraphExport struct {
+	// AgentID is the agent whose graph was exported.
+	AgentID string `json:"agent_id"`
+	// Format is the export format: "json", "graphml", or "csv".
+	Format string `json:"format"`
+	// Data is the serialised graph in the requested format.
+	Data string `json:"data"`
+	// NodeCount is the total number of memory nodes in the export.
+	NodeCount int64 `json:"node_count"`
+	// EdgeCount is the total number of edges in the export.
+	EdgeCount int64 `json:"edge_count"`
+}
+
+// GraphOptions holds options for the MemoryGraph method.
+type GraphOptions struct {
+	// Depth is the maximum traversal depth (default: 1, max: 3).
+	Depth int
+	// Types filters by edge types. nil or empty returns all types.
+	Types []EdgeType
+}
