@@ -1496,3 +1496,59 @@ type FeedbackHealthResponse struct {
 	MemoryCount   int     `json:"memory_count"`
 	AvgImportance float32 `json:"avg_importance"`
 }
+
+// =============================================================================
+// Namespace API Keys (SEC-1)
+// =============================================================================
+
+// KeySuccessResponse is returned by key deletion and deactivation endpoints.
+type KeySuccessResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
+type CreateNamespaceKeyRequest struct {
+	Name         string `json:"name"`
+	ExpiresInDays *int  `json:"expires_in_days,omitempty"`
+}
+
+// CreateNamespaceKeyResponse is returned by POST /v1/namespaces/:ns/keys (SEC-1).
+// The Key field is shown only once — store it securely.
+type CreateNamespaceKeyResponse struct {
+	KeyID     string  `json:"key_id"`
+	Key       string  `json:"key"`
+	Name      string  `json:"name"`
+	Namespace string  `json:"namespace"`
+	CreatedAt int64   `json:"created_at"`
+	ExpiresAt *int64  `json:"expires_at,omitempty"`
+	Warning   string  `json:"warning"`
+}
+
+// NamespaceKeyInfo holds namespace-scoped API key metadata (no secret) — SEC-1.
+type NamespaceKeyInfo struct {
+	KeyID     string  `json:"key_id"`
+	Name      string  `json:"name"`
+	Namespace string  `json:"namespace"`
+	CreatedAt int64   `json:"created_at"`
+	Active    bool    `json:"active"`
+	ExpiresAt *int64  `json:"expires_at,omitempty"`
+}
+
+// ListNamespaceKeysResponse is returned by GET /v1/namespaces/:ns/keys (SEC-1).
+type ListNamespaceKeysResponse struct {
+	Namespace string             `json:"namespace"`
+	Keys      []NamespaceKeyInfo `json:"keys"`
+	Total     int                `json:"total"`
+}
+
+// NamespaceKeyUsageResponse is returned by GET /v1/namespaces/:ns/keys/:key_id/usage (SEC-1).
+type NamespaceKeyUsageResponse struct {
+	KeyID                string  `json:"key_id"`
+	Namespace            string  `json:"namespace"`
+	TotalRequests        uint64  `json:"total_requests"`
+	SuccessfulRequests   uint64  `json:"successful_requests"`
+	FailedRequests       uint64  `json:"failed_requests"`
+	BytesTransferred     uint64  `json:"bytes_transferred"`
+	AvgLatencyMs         float64 `json:"avg_latency_ms"`
+}

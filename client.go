@@ -2035,3 +2035,60 @@ func (c *Client) MemoryEntities(ctx context.Context, memoryID string) (*MemoryEn
 	}
 	return &result, nil
 }
+
+// CreateNamespaceKey creates a namespace-scoped API key (SEC-1).
+// POST /v1/namespaces/{namespace}/keys
+// The Key field in the response is shown only once — store it securely.
+func (c *Client) CreateNamespaceKey(ctx context.Context, namespace string, req CreateNamespaceKeyRequest) (*CreateNamespaceKeyResponse, error) {
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/keys", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result CreateNamespaceKeyResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal create namespace key response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListNamespaceKeys lists all API keys scoped to a namespace (SEC-1).
+// GET /v1/namespaces/{namespace}/keys
+func (c *Client) ListNamespaceKeys(ctx context.Context, namespace string) (*ListNamespaceKeysResponse, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/keys", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ListNamespaceKeysResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal list namespace keys response: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteNamespaceKey revokes a namespace-scoped API key (SEC-1).
+// DELETE /v1/namespaces/{namespace}/keys/{keyID}
+func (c *Client) DeleteNamespaceKey(ctx context.Context, namespace string, keyID string) (*KeySuccessResponse, error) {
+	data, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s/keys/%s", url.PathEscape(namespace), url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KeySuccessResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal delete namespace key response: %w", err)
+	}
+	return &result, nil
+}
+
+// NamespaceKeyUsage returns usage statistics for a namespace-scoped API key (SEC-1).
+// GET /v1/namespaces/{namespace}/keys/{keyID}/usage
+func (c *Client) NamespaceKeyUsage(ctx context.Context, namespace string, keyID string) (*NamespaceKeyUsageResponse, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/keys/%s/usage", url.PathEscape(namespace), url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result NamespaceKeyUsageResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal namespace key usage response: %w", err)
+	}
+	return &result, nil
+}
