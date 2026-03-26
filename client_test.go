@@ -1537,10 +1537,12 @@ func TestSubscribeAgentMemories_FiltersByAgentID(t *testing.T) {
 
 	var collected []MemoryEvent
 	for r := range ch {
-		require.NoError(t, r.Err)
+		if r.Err != nil {
+			break // ignore context-cancel teardown errors
+		}
 		collected = append(collected, *r.Event)
 		if len(collected) == 2 {
-			cancel() // Stop after we have the expected events.
+			cancel()
 		}
 	}
 	assert.Len(t, collected, 2)
@@ -1564,9 +1566,11 @@ func TestSubscribeAgentMemories_SkipsConnectedHandshake(t *testing.T) {
 
 	var collected []MemoryEvent
 	for r := range ch {
-		require.NoError(t, r.Err)
+		if r.Err != nil {
+			break
+		}
 		collected = append(collected, *r.Event)
-		cancel() // Only one event expected.
+		cancel()
 	}
 	assert.Len(t, collected, 1)
 	assert.Equal(t, "m1", *collected[0].MemoryID)
@@ -1590,10 +1594,12 @@ func TestSubscribeAgentMemories_TagFilter(t *testing.T) {
 
 	ids := map[string]bool{}
 	for r := range ch {
-		require.NoError(t, r.Err)
+		if r.Err != nil {
+			break
+		}
 		ids[*r.Event.MemoryID] = true
 		if len(ids) == 2 {
-			cancel() // Stop after m1 and m3 received.
+			cancel()
 		}
 	}
 	assert.True(t, ids["m1"])
