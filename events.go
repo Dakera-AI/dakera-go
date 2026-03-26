@@ -285,7 +285,7 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 			}
 		}
 
-		if err := scanner.Err(); err != nil {
+		if err := scanner.Err(); err != nil && ctx.Err() == nil {
 			select {
 			case ch <- MemoryEventResult{Err: fmt.Errorf("dakera: SSE read error: %w", err)}:
 			case <-ctx.Done():
