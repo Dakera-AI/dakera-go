@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // EventResult wraps a DakeraEvent or an error from the SSE stream.
@@ -89,6 +90,106 @@ func (c *Client) StreamGlobalEvents(ctx context.Context) (<-chan EventResult, er
 // Requires a Read-scoped API key.
 func (c *Client) StreamMemoryEvents(ctx context.Context) (<-chan MemoryEventResult, error) {
 	return c.streamMemorySSE(ctx, "/v1/events/stream")
+}
+
+// SubscribeAgentMemories subscribes to real-time memory lifecycle events for a
+// specific agent.
+//
+// It wraps [Client.StreamMemoryEvents], filtering events by agentID and an
+// optional tags list.  When tags is non-empty, only events whose tags have at
+// least one element in common with the filter are forwarded.  The connection
+// is re-established automatically on error until ctx is cancelled.
+//
+// The returned channel is closed when ctx is cancelled or the parent context
+// is done.
+//
+// Requires a Read-scoped API key.
+//
+// Example:
+//
+//	ch, err := client.SubscribeAgentMemories(ctx, "my-bot", []string{"important"})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for result := range ch {
+//	    if result.Err != nil {
+//	        log.Println("stream error:", result.Err)
+//	        continue
+//	    }
+//	    fmt.Printf("%s: %v\n", result.Event.EventType, result.Event.MemoryID)
+//	}
+func (c *Client) SubscribeAgentMemories(ctx context.Context, agentID string, tags []string) (<-chan MemoryEventResult, error) {
+	ch := make(chan MemoryEventResult, 64)
+
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			inner, err := c.StreamMemoryEvents(ctx)
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
+			}
+
+			for result := range inner {
+				if result.Err != nil {
+					select {
+					case ch <- result:
+					case <-ctx.Done():
+						return
+					}
+					break // Reconnect on error.
+				}
+				event := result.Event
+				if event.EventType == "connected" {
+					continue
+				}
+				if event.AgentID != agentID {
+					continue
+				}
+				if len(tags) > 0 && !hasTagOverlap(event.Tags, tags) {
+					continue
+				}
+				select {
+				case ch <- MemoryEventResult{Event: event}:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// Stream ended cleanly — reconnect after a short delay.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+// hasTagOverlap reports whether slice a and slice b share at least one element.
+func hasTagOverlap(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, t := range a {
+		set[t] = struct{}{}
+	}
+	for _, t := range b {
+		if _, ok := set[t]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // streamMemorySSE opens an SSE connection and pumps MemoryEvent values into a channel.
@@ -184,7 +285,7 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 			}
 		}
 
-		if err := scanner.Err(); err != nil {
+		if err := scanner.Err(); err != nil && ctx.Err() == nil {
 			select {
 			case ch <- MemoryEventResult{Err: fmt.Errorf("dakera: SSE read error: %w", err)}:
 			case <-ctx.Done():

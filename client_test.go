@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1487,3 +1488,130 @@ func TestGraphEdge_JSONRoundtrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	assert.Equal(t, edge, decoded)
 }
+
+// ---------------------------------------------------------------------------
+// SubscribeAgentMemories (SDK-10)
+// ---------------------------------------------------------------------------
+
+func makeMemorySSEBody(events []MemoryEvent) string {
+	var sb strings.Builder
+	for _, e := range events {
+		data, _ := json.Marshal(e)
+		sb.WriteString("event: " + e.EventType + "\n")
+		sb.WriteString("data: " + string(data) + "\n\n")
+	}
+	return sb.String()
+}
+
+// makeSseServer creates an httptest.Server that streams events once and then
+// blocks until the client disconnects (ctx cancelled), preventing reconnect loops.
+func makeSseServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, body)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Block until the client disconnects so the goroutine does not reconnect.
+		<-r.Context().Done()
+	}))
+}
+
+func TestSubscribeAgentMemories_FiltersByAgentID(t *testing.T) {
+	events := []MemoryEvent{
+		{EventType: "stored", AgentID: "agent-a", Timestamp: 1774533000, MemoryID: strPtr("m1")},
+		{EventType: "stored", AgentID: "agent-b", Timestamp: 1774533000, MemoryID: strPtr("m2")},
+		{EventType: "recalled", AgentID: "agent-a", Timestamp: 1774533000, MemoryID: strPtr("m3")},
+	}
+	srv := makeSseServer(t, makeMemorySSEBody(events))
+	defer srv.Close()
+
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := client.SubscribeAgentMemories(ctx, "agent-a", nil)
+	require.NoError(t, err)
+
+	var collected []MemoryEvent
+	for r := range ch {
+		if r.Err != nil {
+			break // ignore context-cancel teardown errors
+		}
+		collected = append(collected, *r.Event)
+		if len(collected) == 2 {
+			cancel()
+		}
+	}
+	assert.Len(t, collected, 2)
+	for _, e := range collected {
+		assert.Equal(t, "agent-a", e.AgentID)
+	}
+}
+
+func TestSubscribeAgentMemories_SkipsConnectedHandshake(t *testing.T) {
+	body := "event: connected\ndata: {\"event_type\":\"connected\",\"agent_id\":\"\",\"timestamp\":1774533000}\n\n" +
+		"event: stored\ndata: {\"event_type\":\"stored\",\"agent_id\":\"bot\",\"timestamp\":1774533000,\"memory_id\":\"m1\"}\n\n"
+	srv := makeSseServer(t, body)
+	defer srv.Close()
+
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := client.SubscribeAgentMemories(ctx, "bot", nil)
+	require.NoError(t, err)
+
+	var collected []MemoryEvent
+	for r := range ch {
+		if r.Err != nil {
+			break
+		}
+		collected = append(collected, *r.Event)
+		cancel()
+	}
+	assert.Len(t, collected, 1)
+	assert.Equal(t, "m1", *collected[0].MemoryID)
+}
+
+func TestSubscribeAgentMemories_TagFilter(t *testing.T) {
+	events := []MemoryEvent{
+		{EventType: "stored", AgentID: "bot", Timestamp: 1774533000, MemoryID: strPtr("m1"), Tags: []string{"important", "work"}},
+		{EventType: "stored", AgentID: "bot", Timestamp: 1774533000, MemoryID: strPtr("m2"), Tags: []string{"trivial"}},
+		{EventType: "stored", AgentID: "bot", Timestamp: 1774533000, MemoryID: strPtr("m3"), Tags: []string{"important"}},
+	}
+	srv := makeSseServer(t, makeMemorySSEBody(events))
+	defer srv.Close()
+
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := client.SubscribeAgentMemories(ctx, "bot", []string{"important"})
+	require.NoError(t, err)
+
+	ids := map[string]bool{}
+	for r := range ch {
+		if r.Err != nil {
+			break
+		}
+		ids[*r.Event.MemoryID] = true
+		if len(ids) == 2 {
+			cancel()
+		}
+	}
+	assert.True(t, ids["m1"])
+	assert.True(t, ids["m3"])
+	assert.False(t, ids["m2"])
+}
+
+func TestHasTagOverlap(t *testing.T) {
+	assert.True(t, hasTagOverlap([]string{"a", "b"}, []string{"b", "c"}))
+	assert.False(t, hasTagOverlap([]string{"a"}, []string{"b", "c"}))
+	assert.False(t, hasTagOverlap(nil, []string{"b"}))
+	assert.False(t, hasTagOverlap([]string{"a"}, nil))
+}
+
+func strPtr(s string) *string { return &s }
