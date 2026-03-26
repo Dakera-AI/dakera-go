@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-26
+
+### Added
+- **Memory Feedback Loop (INT-1):**
+  - `Client.FeedbackMemory(ctx, memoryID, agentID, signal, note)` — submit feedback
+    (upvote/downvote/flag) for a memory (`POST /v1/memories/{id}/feedback`). Returns
+    `*FeedbackResponse`.
+  - `Client.PatchMemoryImportance(ctx, memoryID, agentID, importance)` — directly set a
+    memory's importance score (`PATCH /v1/memories/{id}/importance`). Returns `*FeedbackResponse`.
+  - `Client.GetMemoryFeedbackHistory(ctx, memoryID)` — retrieve all feedback events for a
+    memory (`GET /v1/memories/{id}/feedback/history`). Returns `*FeedbackHistoryResponse`.
+  - `Client.GetAgentFeedbackSummary(ctx, agentID)` — aggregate feedback counts and health score
+    for an agent (`GET /v1/agents/{id}/feedback/summary`). Returns `*AgentFeedbackSummary`.
+  - `Client.GetFeedbackHealth(ctx, agentID)` — health score (mean importance of non-expired
+    memories) for an agent (`GET /v1/feedback/health`). Returns `*FeedbackHealthResponse`.
+  - New types: `FeedbackSignal` (string enum: `"upvote"` / `"downvote"` / `"flag"`),
+    `FeedbackResponse`, `FeedbackHistoryEntry`, `FeedbackHistoryResponse`, `MemoryFeedbackBody`,
+    `MemoryImportancePatch`, `AgentFeedbackSummary`, `FeedbackHealthResponse` in `types.go`.
+
 ## [0.9.0] - 2026-03-26
 
 ### Added
