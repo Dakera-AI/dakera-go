@@ -1262,3 +1262,228 @@ func TestStreamMemoryEventsConnectedEvent(t *testing.T) {
 	assert.Equal(t, "", result.Event.AgentID)
 	assert.Equal(t, int64(1700000000000), result.Event.Timestamp)
 }
+
+// ===========================================================================
+// Memory Knowledge Graph Tests (CE-5 / SDK-9)
+// ===========================================================================
+
+var graphResponse = MemoryGraph{
+	RootID: "mem-abc",
+	Depth:  2,
+	Nodes: []GraphNode{
+		{MemoryID: "mem-abc", ContentPreview: "Root memory", Importance: 0.9, Depth: 0},
+		{MemoryID: "mem-def", ContentPreview: "Related memory", Importance: 0.7, Depth: 1},
+	},
+	Edges: []GraphEdge{
+		{
+			ID:        "edge-1",
+			SourceID:  "mem-abc",
+			TargetID:  "mem-def",
+			EdgeType:  EdgeTypeRelatedTo,
+			Weight:    0.92,
+			CreatedAt: 1774000000,
+		},
+	},
+}
+
+var pathResponse = GraphPath{
+	SourceID: "mem-abc",
+	TargetID: "mem-ghi",
+	Path:     []string{"mem-abc", "mem-def", "mem-ghi"},
+	Hops:     2,
+	Edges:    []GraphEdge{},
+}
+
+var linkResponse = GraphLinkResponse{
+	Edge: GraphEdge{
+		ID:        "edge-new",
+		SourceID:  "mem-abc",
+		TargetID:  "mem-xyz",
+		EdgeType:  EdgeTypeLinkedBy,
+		Weight:    1.0,
+		CreatedAt: 1774002000,
+	},
+}
+
+var exportResponse = GraphExport{
+	AgentID:   "test-agent",
+	Format:    "json",
+	Data:      `{"nodes":[],"edges":[]}`,
+	NodeCount: 10,
+	EdgeCount: 7,
+}
+
+func TestMemoryGraph_DefaultDepth(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(graphResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.MemoryGraph(context.Background(), "mem-abc", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "mem-abc", result.RootID)
+	assert.Len(t, result.Nodes, 2)
+	assert.Len(t, result.Edges, 1)
+	assert.Contains(t, capturedURL, "depth=1")
+}
+
+func TestMemoryGraph_CustomDepthAndTypes(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(graphResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	opts := &GraphOptions{Depth: 3, Types: []EdgeType{EdgeTypeRelatedTo, EdgeTypeLinkedBy}}
+	_, err := client.MemoryGraph(context.Background(), "mem-abc", opts)
+
+	require.NoError(t, err)
+	assert.Contains(t, capturedURL, "depth=3")
+	assert.Contains(t, capturedURL, "related_to")
+	assert.Contains(t, capturedURL, "linked_by")
+}
+
+func TestMemoryGraph_NoTypesParam(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(graphResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	_, err := client.MemoryGraph(context.Background(), "mem-abc", &GraphOptions{Depth: 1})
+
+	require.NoError(t, err)
+	assert.NotContains(t, capturedURL, "types=")
+}
+
+func TestMemoryPath(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(pathResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.MemoryPath(context.Background(), "mem-abc", "mem-ghi")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mem-abc", "mem-def", "mem-ghi"}, result.Path)
+	assert.Equal(t, 2, result.Hops)
+	assert.Contains(t, capturedURL, "/v1/memories/mem-abc/path")
+	assert.Contains(t, capturedURL, "target=mem-ghi")
+}
+
+func TestMemoryLink_DefaultEdgeType(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(linkResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.MemoryLink(context.Background(), "mem-abc", "mem-xyz", EdgeTypeLinkedBy)
+
+	require.NoError(t, err)
+	assert.Equal(t, "edge-new", result.Edge.ID)
+	assert.Equal(t, EdgeTypeLinkedBy, result.Edge.EdgeType)
+
+	var body GraphLinkRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &body))
+	assert.Equal(t, "mem-xyz", body.TargetID)
+	assert.Equal(t, EdgeTypeLinkedBy, body.EdgeType)
+}
+
+func TestMemoryLink_CustomEdgeType(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(linkResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	_, err := client.MemoryLink(context.Background(), "mem-abc", "mem-xyz", EdgeTypePrecedes)
+
+	require.NoError(t, err)
+	var body GraphLinkRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &body))
+	assert.Equal(t, EdgeTypePrecedes, body.EdgeType)
+}
+
+func TestAgentGraphExport_DefaultJSON(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(exportResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.AgentGraphExport(context.Background(), "test-agent", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-agent", result.AgentID)
+	assert.Equal(t, "json", result.Format)
+	assert.Equal(t, int64(10), result.NodeCount)
+	assert.Contains(t, capturedURL, "/v1/agents/test-agent/graph/export")
+	assert.Contains(t, capturedURL, "format=json")
+}
+
+func TestAgentGraphExport_Graphml(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		resp := exportResponse
+		resp.Format = "graphml"
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.AgentGraphExport(context.Background(), "test-agent", "graphml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "graphml", result.Format)
+	assert.Contains(t, capturedURL, "format=graphml")
+}
+
+func TestEdgeTypeConstants(t *testing.T) {
+	assert.Equal(t, EdgeType("related_to"), EdgeTypeRelatedTo)
+	assert.Equal(t, EdgeType("shares_entity"), EdgeTypeSharesEntity)
+	assert.Equal(t, EdgeType("precedes"), EdgeTypePrecedes)
+	assert.Equal(t, EdgeType("linked_by"), EdgeTypeLinkedBy)
+}
+
+func TestGraphEdge_JSONRoundtrip(t *testing.T) {
+	edge := GraphEdge{
+		ID:        "e1",
+		SourceID:  "mem-a",
+		TargetID:  "mem-b",
+		EdgeType:  EdgeTypeRelatedTo,
+		Weight:    0.88,
+		CreatedAt: 1774000000,
+	}
+	data, err := json.Marshal(edge)
+	require.NoError(t, err)
+	var decoded GraphEdge
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, edge, decoded)
+}

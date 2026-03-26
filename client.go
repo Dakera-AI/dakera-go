@@ -933,6 +933,102 @@ func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryF
 }
 
 // ===========================================================================
+// Memory Knowledge Graph Operations (CE-5 / SDK-9)
+// ===========================================================================
+
+// MemoryGraph traverses the knowledge graph from a memory node.
+//
+// Requires CE-5 (Memory Knowledge Graph) on the server.
+//
+// Example:
+//
+//	graph, err := client.MemoryGraph(ctx, "mem-abc", &GraphOptions{Depth: 2})
+//	if err != nil { ... }
+//	fmt.Printf("%d nodes, %d edges\n", len(graph.Nodes), len(graph.Edges))
+func (c *Client) MemoryGraph(ctx context.Context, memoryID string, opts *GraphOptions) (*MemoryGraph, error) {
+	depth := 1
+	if opts != nil && opts.Depth > 0 {
+		depth = opts.Depth
+	}
+	path := fmt.Sprintf("/v1/memories/%s/graph?depth=%d", url.PathEscape(memoryID), depth)
+	if opts != nil && len(opts.Types) > 0 {
+		typeStrs := make([]string, len(opts.Types))
+		for i, t := range opts.Types {
+			typeStrs[i] = string(t)
+		}
+		path += "&types=" + strings.Join(typeStrs, ",")
+	}
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryGraph
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// MemoryPath finds the shortest path between two memories in the knowledge graph.
+//
+// Requires CE-5 (Memory Knowledge Graph) on the server.
+func (c *Client) MemoryPath(ctx context.Context, sourceID, targetID string) (*GraphPath, error) {
+	path := fmt.Sprintf("/v1/memories/%s/path?target=%s",
+		url.PathEscape(sourceID),
+		url.QueryEscape(targetID),
+	)
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result GraphPath
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// MemoryLink creates an explicit edge between two memories.
+//
+// Requires CE-5 (Memory Knowledge Graph) on the server.
+func (c *Client) MemoryLink(ctx context.Context, sourceID, targetID string, edgeType EdgeType) (*GraphLinkResponse, error) {
+	req := GraphLinkRequest{
+		TargetID: targetID,
+		EdgeType: edgeType,
+	}
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/memories/%s/links", url.PathEscape(sourceID)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result GraphLinkResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// AgentGraphExport exports the full knowledge graph for an agent.
+//
+// Requires CE-5 (Memory Knowledge Graph) on the server.
+//
+// format should be "json" (default), "graphml", or "csv".
+func (c *Client) AgentGraphExport(ctx context.Context, agentID, format string) (*GraphExport, error) {
+	if format == "" {
+		format = "json"
+	}
+	path := fmt.Sprintf("/v1/agents/%s/graph/export?format=%s", url.PathEscape(agentID), url.QueryEscape(format))
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result GraphExport
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // Session Operations
 // ===========================================================================
 
