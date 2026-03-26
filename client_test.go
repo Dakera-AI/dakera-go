@@ -1516,7 +1516,7 @@ func TestSubscribeAgentMemories_FiltersByAgentID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, WithAPIKey("test"))
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -1544,7 +1544,7 @@ func TestSubscribeAgentMemories_SkipsConnectedHandshake(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, WithAPIKey("test"))
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -1575,7 +1575,7 @@ func TestSubscribeAgentMemories_TagFilter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, WithAPIKey("test"))
+	client := NewClientWithOptions(ClientOptions{BaseURL: srv.URL, APIKey: "test"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
