@@ -933,6 +933,85 @@ func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryF
 }
 
 // ===========================================================================
+// Memory Feedback Loop — INT-1
+// ===========================================================================
+
+// FeedbackMemory submits upvote/downvote/flag feedback on a memory (INT-1).
+//
+// Signals:
+//   - FeedbackSignalUpvote: boosts importance ×1.15 (capped at 1.0).
+//   - FeedbackSignalDownvote: penalises importance ×0.85 (floor 0.0).
+//   - FeedbackSignalFlag: marks as irrelevant — accelerates decay on next cycle.
+func (c *Client) FeedbackMemory(ctx context.Context, memoryID string, agentID string, signal FeedbackSignal) (*FeedbackResponse, error) {
+	req := MemoryFeedbackBodyRequest{AgentID: agentID, Signal: signal}
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/memories/%s/feedback", memoryID), req)
+	if err != nil {
+		return nil, err
+	}
+	var result FeedbackResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetMemoryFeedbackHistory returns the full feedback history for a memory (INT-1).
+func (c *Client) GetMemoryFeedbackHistory(ctx context.Context, memoryID string) (*FeedbackHistoryResponse, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memories/%s/feedback", memoryID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result FeedbackHistoryResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetAgentFeedbackSummary returns aggregate feedback counts and health score for an agent (INT-1).
+func (c *Client) GetAgentFeedbackSummary(ctx context.Context, agentID string) (*AgentFeedbackSummary, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/feedback/summary", agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AgentFeedbackSummary
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// PatchMemoryImportance directly overrides a memory's importance score (INT-1).
+func (c *Client) PatchMemoryImportance(ctx context.Context, memoryID string, agentID string, importance float32) (*FeedbackResponse, error) {
+	req := MemoryImportancePatchRequest{AgentID: agentID, Importance: importance}
+	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/memories/%s/importance", memoryID), req)
+	if err != nil {
+		return nil, err
+	}
+	var result FeedbackResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetFeedbackHealth returns overall feedback health score for an agent (INT-1).
+//
+// The health score is the mean importance of all non-expired memories (0.0–1.0).
+// A higher score indicates a healthier, more relevant memory store.
+func (c *Client) GetFeedbackHealth(ctx context.Context, agentID string) (*FeedbackHealthResponse, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/feedback/health?agent_id=%s", agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result FeedbackHealthResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // Memory Knowledge Graph Operations (CE-5 / SDK-9)
 // ===========================================================================
 

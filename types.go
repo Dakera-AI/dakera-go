@@ -1424,3 +1424,75 @@ type MemoryEntitiesResponse struct {
 	MemoryID string            `json:"memory_id"`
 	Entities []ExtractedEntity `json:"entities"`
 }
+
+// ===========================================================================
+// Memory Feedback Loop (INT-1)
+// ===========================================================================
+
+// FeedbackSignal is the signal type for memory active learning (INT-1).
+//
+//   - "upvote": Boost importance ×1.15, capped at 1.0.
+//   - "downvote": Penalise importance ×0.85, floor 0.0.
+//   - "flag": Mark as irrelevant — sets decay_flag=true, no immediate importance change.
+//   - "positive": Backward-compatible alias for "upvote".
+//   - "negative": Backward-compatible alias for "downvote".
+type FeedbackSignal string
+
+const (
+	FeedbackSignalUpvote   FeedbackSignal = "upvote"
+	FeedbackSignalDownvote FeedbackSignal = "downvote"
+	FeedbackSignalFlag     FeedbackSignal = "flag"
+	FeedbackSignalPositive FeedbackSignal = "positive"
+	FeedbackSignalNegative FeedbackSignal = "negative"
+)
+
+// FeedbackHistoryEntry is a single recorded feedback event stored in memory metadata (INT-1).
+type FeedbackHistoryEntry struct {
+	Signal        FeedbackSignal `json:"signal"`
+	Timestamp     uint64         `json:"timestamp"`
+	OldImportance float32        `json:"old_importance"`
+	NewImportance float32        `json:"new_importance"`
+}
+
+// MemoryFeedbackBodyRequest is the request body for POST /v1/memories/:id/feedback (INT-1).
+type MemoryFeedbackBodyRequest struct {
+	AgentID string         `json:"agent_id"`
+	Signal  FeedbackSignal `json:"signal"`
+}
+
+// MemoryImportancePatchRequest is the request body for PATCH /v1/memories/:id/importance (INT-1).
+type MemoryImportancePatchRequest struct {
+	AgentID    string  `json:"agent_id"`
+	Importance float32 `json:"importance"`
+}
+
+// FeedbackResponse is returned by FeedbackMemory and PatchMemoryImportance (INT-1).
+type FeedbackResponse struct {
+	MemoryID      string         `json:"memory_id"`
+	NewImportance float32        `json:"new_importance"`
+	Signal        FeedbackSignal `json:"signal"`
+}
+
+// FeedbackHistoryResponse is returned by GetMemoryFeedbackHistory (INT-1).
+type FeedbackHistoryResponse struct {
+	MemoryID string                 `json:"memory_id"`
+	Entries  []FeedbackHistoryEntry `json:"entries"`
+}
+
+// AgentFeedbackSummary is returned by GetAgentFeedbackSummary (INT-1).
+type AgentFeedbackSummary struct {
+	AgentID       string  `json:"agent_id"`
+	Upvotes       uint64  `json:"upvotes"`
+	Downvotes     uint64  `json:"downvotes"`
+	Flags         uint64  `json:"flags"`
+	TotalFeedback uint64  `json:"total_feedback"`
+	HealthScore   float32 `json:"health_score"`
+}
+
+// FeedbackHealthResponse is returned by GetFeedbackHealth (INT-1).
+type FeedbackHealthResponse struct {
+	AgentID       string  `json:"agent_id"`
+	HealthScore   float32 `json:"health_score"`
+	MemoryCount   int     `json:"memory_count"`
+	AvgImportance float32 `json:"avg_importance"`
+}

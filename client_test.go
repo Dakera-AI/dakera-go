@@ -1756,3 +1756,157 @@ func TestMemoryEntities(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ===========================================================================
+// INT-1 Memory Feedback Loop tests
+// ===========================================================================
+
+func TestFeedbackMemory(t *testing.T) {
+	var capturedMethod, capturedPath string
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory_id":      "mem-abc",
+			"new_importance": 0.92,
+			"signal":         "upvote",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.FeedbackMemory(context.Background(), "mem-abc", "agent-1", FeedbackSignalUpvote)
+
+	require.NoError(t, err)
+	assert.Equal(t, "POST", capturedMethod)
+	assert.Equal(t, "/v1/memories/mem-abc/feedback", capturedPath)
+	assert.Equal(t, "agent-1", capturedBody["agent_id"])
+	assert.Equal(t, "upvote", capturedBody["signal"])
+	assert.Equal(t, "mem-abc", result.MemoryID)
+	assert.InDelta(t, 0.92, result.NewImportance, 0.001)
+	assert.Equal(t, FeedbackSignalUpvote, result.Signal)
+}
+
+func TestGetMemoryFeedbackHistory(t *testing.T) {
+	var capturedMethod, capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory_id": "mem-abc",
+			"entries": []map[string]interface{}{
+				{"signal": "upvote", "timestamp": 1774000000, "old_importance": 0.5, "new_importance": 0.575},
+				{"signal": "downvote", "timestamp": 1774001000, "old_importance": 0.575, "new_importance": 0.489},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.GetMemoryFeedbackHistory(context.Background(), "mem-abc")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Equal(t, "/v1/memories/mem-abc/feedback", capturedPath)
+	assert.Equal(t, "mem-abc", result.MemoryID)
+	assert.Len(t, result.Entries, 2)
+	assert.Equal(t, FeedbackSignalUpvote, result.Entries[0].Signal)
+	assert.Equal(t, FeedbackSignalDownvote, result.Entries[1].Signal)
+}
+
+func TestGetAgentFeedbackSummary(t *testing.T) {
+	var capturedMethod, capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"agent_id":       "agent-1",
+			"upvotes":        42,
+			"downvotes":      7,
+			"flags":          2,
+			"total_feedback": 51,
+			"health_score":   0.78,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.GetAgentFeedbackSummary(context.Background(), "agent-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Equal(t, "/v1/agents/agent-1/feedback/summary", capturedPath)
+	assert.Equal(t, "agent-1", result.AgentID)
+	assert.Equal(t, uint64(42), result.Upvotes)
+	assert.Equal(t, uint64(51), result.TotalFeedback)
+	assert.InDelta(t, 0.78, result.HealthScore, 0.001)
+}
+
+func TestPatchMemoryImportance(t *testing.T) {
+	var capturedMethod, capturedPath string
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory_id":      "mem-abc",
+			"new_importance": 0.92,
+			"signal":         "upvote",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.PatchMemoryImportance(context.Background(), "mem-abc", "agent-1", 0.92)
+
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH", capturedMethod)
+	assert.Equal(t, "/v1/memories/mem-abc/importance", capturedPath)
+	assert.Equal(t, "agent-1", capturedBody["agent_id"])
+	assert.InDelta(t, 0.92, capturedBody["importance"], 0.001)
+	assert.Equal(t, "mem-abc", result.MemoryID)
+	assert.InDelta(t, 0.92, result.NewImportance, 0.001)
+}
+
+func TestGetFeedbackHealth(t *testing.T) {
+	var capturedMethod string
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"agent_id":       "agent-1",
+			"health_score":   0.78,
+			"memory_count":   120,
+			"avg_importance": 0.72,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.GetFeedbackHealth(context.Background(), "agent-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/feedback/health")
+	assert.Contains(t, capturedURL, "agent_id=agent-1")
+	assert.Equal(t, "agent-1", result.AgentID)
+	assert.InDelta(t, 0.78, result.HealthScore, 0.001)
+	assert.Equal(t, 120, result.MemoryCount)
+}
+
+func TestFeedbackSignalConstants(t *testing.T) {
+	assert.Equal(t, FeedbackSignal("upvote"), FeedbackSignalUpvote)
+	assert.Equal(t, FeedbackSignal("downvote"), FeedbackSignalDownvote)
+	assert.Equal(t, FeedbackSignal("flag"), FeedbackSignalFlag)
+	assert.Equal(t, FeedbackSignal("positive"), FeedbackSignalPositive)
+	assert.Equal(t, FeedbackSignal("negative"), FeedbackSignalNegative)
+}
