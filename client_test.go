@@ -1910,3 +1910,153 @@ func TestFeedbackSignalConstants(t *testing.T) {
 	assert.Equal(t, FeedbackSignal("positive"), FeedbackSignalPositive)
 	assert.Equal(t, FeedbackSignal("negative"), FeedbackSignalNegative)
 }
+
+// =============================================================================
+// SEC-1 Namespace API Key Tests
+// =============================================================================
+
+func TestCreateNamespaceKey(t *testing.T) {
+	var capturedMethod, capturedURL string
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"key_id":     "key-abc",
+			"key":        "dak_live_xxxxxxxxxxxx",
+			"name":       "ci-runner",
+			"namespace":  "prod-ns",
+			"created_at": 1774000000,
+			"warning":    "Save this key — it will not be shown again.",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	req := CreateNamespaceKeyRequest{Name: "ci-runner"}
+	result, err := client.CreateNamespaceKey(context.Background(), "prod-ns", req)
+
+	require.NoError(t, err)
+	assert.Equal(t, "POST", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/namespaces/prod-ns/keys")
+	assert.Equal(t, "ci-runner", capturedBody["name"])
+	assert.Equal(t, "key-abc", result.KeyID)
+	assert.Equal(t, "dak_live_xxxxxxxxxxxx", result.Key)
+	assert.Equal(t, "prod-ns", result.Namespace)
+}
+
+func TestCreateNamespaceKey_WithExpiry(t *testing.T) {
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"key_id": "key-abc", "key": "dak_x", "name": "ci-runner",
+			"namespace": "prod-ns", "created_at": 1774000000, "warning": "save it",
+		})
+	}))
+	defer server.Close()
+
+	expiry := 30
+	req := CreateNamespaceKeyRequest{Name: "ci-runner", ExpiresInDays: &expiry}
+	client := NewClient(server.URL)
+	_, err := client.CreateNamespaceKey(context.Background(), "prod-ns", req)
+	require.NoError(t, err)
+	assert.Equal(t, float64(30), capturedBody["expires_in_days"])
+}
+
+func TestListNamespaceKeys(t *testing.T) {
+	var capturedMethod, capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"namespace": "prod-ns",
+			"keys": []map[string]interface{}{
+				{"key_id": "key-abc", "name": "ci-runner", "namespace": "prod-ns", "created_at": 1774000000, "active": true},
+			},
+			"total": 1,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.ListNamespaceKeys(context.Background(), "prod-ns")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/namespaces/prod-ns/keys")
+	assert.Equal(t, "prod-ns", result.Namespace)
+	assert.Equal(t, 1, result.Total)
+	require.Len(t, result.Keys, 1)
+	assert.Equal(t, "key-abc", result.Keys[0].KeyID)
+}
+
+func TestDeleteNamespaceKey(t *testing.T) {
+	var capturedMethod, capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Key revoked.",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.DeleteNamespaceKey(context.Background(), "prod-ns", "key-abc")
+
+	require.NoError(t, err)
+	assert.Equal(t, "DELETE", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/namespaces/prod-ns/keys/key-abc")
+	assert.True(t, result.Success)
+}
+
+func TestNamespaceKeyUsage(t *testing.T) {
+	var capturedMethod, capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"key_id":               "key-abc",
+			"namespace":            "prod-ns",
+			"total_requests":       uint64(1000),
+			"successful_requests":  uint64(980),
+			"failed_requests":      uint64(20),
+			"bytes_transferred":    uint64(512000),
+			"avg_latency_ms":       12.4,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.NamespaceKeyUsage(context.Background(), "prod-ns", "key-abc")
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/namespaces/prod-ns/keys/key-abc/usage")
+	assert.Equal(t, "key-abc", result.KeyID)
+	assert.Equal(t, uint64(1000), result.TotalRequests)
+	assert.InDelta(t, 12.4, result.AvgLatencyMs, 0.001)
+}
+
+func TestNamespaceKey_PathEscaping(t *testing.T) {
+	var capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "ok"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	client.DeleteNamespaceKey(context.Background(), "my namespace", "key/with/slashes")
+	assert.Contains(t, capturedURL, "my%20namespace")
+	assert.Contains(t, capturedURL, "key%2Fwith%2Fslashes")
+}
