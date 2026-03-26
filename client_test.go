@@ -1655,7 +1655,7 @@ func TestConfigureNamespaceNer(t *testing.T) {
 func TestConfigureNamespaceNer_PathEscaping(t *testing.T) {
 	var capturedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
+		capturedPath = r.URL.EscapedPath()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
