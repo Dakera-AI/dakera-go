@@ -1396,3 +1396,31 @@ type GraphOptions struct {
 	// Types filters by edge types. nil or empty returns all types.
 	Types []EdgeType
 }
+
+// ===========================================================================
+// CE-4 Entity Extraction (GLiNER)
+// ===========================================================================
+
+// NamespaceNerConfig holds entity extraction configuration for a namespace (CE-4).
+type NamespaceNerConfig struct {
+	ExtractEntities bool     `json:"extract_entities"`
+	EntityTypes     []string `json:"entity_types,omitempty"`
+}
+
+// ExtractedEntity is a single entity extracted by GLiNER or the rule-based pipeline.
+type ExtractedEntity struct {
+	EntityType string  `json:"entity_type"`
+	Value      string  `json:"value"`
+	Score      float64 `json:"score"`
+}
+
+// EntityExtractionResponse is returned by ExtractEntities.
+type EntityExtractionResponse struct {
+	Entities []ExtractedEntity `json:"entities"`
+}
+
+// MemoryEntitiesResponse is returned by MemoryEntities.
+type MemoryEntitiesResponse struct {
+	MemoryID string            `json:"memory_id"`
+	Entities []ExtractedEntity `json:"entities"`
+}

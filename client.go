@@ -1903,3 +1903,56 @@ func (c *Client) CrossAgentNetwork(ctx context.Context, req CrossAgentNetworkReq
 	}
 	return &result, nil
 }
+
+// ===========================================================================
+// CE-4 Entity Extraction (GLiNER)
+// ===========================================================================
+
+// ConfigureNamespaceNer configures entity extraction for a namespace (CE-4).
+// PATCH /v1/namespaces/{namespace}/config — requires Write scope.
+func (c *Client) ConfigureNamespaceNer(ctx context.Context, namespace string, config NamespaceNerConfig) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace)), config)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal namespace ner config response: %w", err)
+	}
+	return result, nil
+}
+
+// ExtractEntities extracts named entities from arbitrary text using GLiNER (CE-4).
+// POST /v1/memories/extract — requires Read scope.
+// entityTypes may be nil to use the server default types.
+func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) (*EntityExtractionResponse, error) {
+	body := map[string]interface{}{
+		"text": text,
+	}
+	if entityTypes != nil {
+		body["entity_types"] = entityTypes
+	}
+	data, err := c.request(ctx, "POST", "/v1/memories/extract", body)
+	if err != nil {
+		return nil, err
+	}
+	var result EntityExtractionResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal entity extraction response: %w", err)
+	}
+	return &result, nil
+}
+
+// MemoryEntities returns the entity tags attached to a stored memory (CE-4).
+// GET /v1/memory/entities/{memoryID} — requires Read scope.
+func (c *Client) MemoryEntities(ctx context.Context, memoryID string) (*MemoryEntitiesResponse, error) {
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/entities/%s", url.PathEscape(memoryID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryEntitiesResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal memory entities response: %w", err)
+	}
+	return &result, nil
+}
