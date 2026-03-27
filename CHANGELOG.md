@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-03-27
+
+### Added
+- **Namespace-scoped API Keys (SEC-1):**
+  - `Client.CreateNamespaceKey(ctx, namespace, name, expiresInDays)` — create a
+    scoped API key (`POST /v1/namespaces/{ns}/keys`). Returns
+    `*CreateNamespaceKeyResponse`. The raw key is shown **only once**.
+  - `Client.ListNamespaceKeys(ctx, namespace)` — list all API keys for a namespace
+    (`GET /v1/namespaces/{ns}/keys`). Returns `*ListNamespaceKeysResponse`.
+  - `Client.DeleteNamespaceKey(ctx, namespace, keyID)` — revoke a namespace API
+    key (`DELETE /v1/namespaces/{ns}/keys/{keyID}`). Returns
+    `*KeySuccessResponse`.
+  - `Client.GetNamespaceKeyUsage(ctx, namespace, keyID)` — usage stats for a key
+    (`GET /v1/namespaces/{ns}/keys/{keyID}/usage`). Returns
+    `*NamespaceKeyUsageResponse`.
+  - New types: `CreateNamespaceKeyRequest`, `CreateNamespaceKeyResponse`,
+    `NamespaceKeyInfo`, `ListNamespaceKeysResponse`, `NamespaceKeyUsageResponse`,
+    `KeySuccessResponse` in `types.go`.
+
 ## [0.9.1] - 2026-03-26
 
 ### Added
