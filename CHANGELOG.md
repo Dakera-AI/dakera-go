@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-03-29
+
 ### Added
 - **Prometheus Metrics (INFRA-3):** `Client.OpsMetrics(ctx)` — returns the raw
   Prometheus text exposition format string from `GET /v1/ops/metrics` (Admin scope).
