@@ -2060,3 +2060,53 @@ func TestNamespaceKey_PathEscaping(t *testing.T) {
 	assert.Contains(t, capturedURL, "my%20namespace")
 	assert.Contains(t, capturedURL, "key%2Fwith%2Fslashes")
 }
+
+// ============================================================================
+// INFRA-3: OpsMetrics
+// ============================================================================
+
+const prometheusText = "# HELP dakera_memory_store_total Total memory store operations\n" +
+	"# TYPE dakera_memory_store_total counter\n" +
+	"dakera_memory_store_total 42\n" +
+	"# HELP dakera_memory_count Current stored memory count\n" +
+	"# TYPE dakera_memory_count gauge\n" +
+	"dakera_memory_count 1024\n"
+
+func TestOpsMetrics(t *testing.T) {
+	var capturedMethod, capturedURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedURL = r.URL.String()
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, prometheusText)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.OpsMetrics(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedMethod)
+	assert.Contains(t, capturedURL, "/v1/ops/metrics")
+	assert.Contains(t, result, "dakera_memory_store_total")
+	assert.Contains(t, result, "dakera_memory_count 1024")
+}
+
+func TestOpsMetrics_AuthorizationError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Admin scope required",
+			"code":  "AUTHORIZATION_ERROR",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	_, err := client.OpsMetrics(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Admin scope required")
+}
