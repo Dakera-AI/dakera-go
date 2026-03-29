@@ -1549,6 +1549,17 @@ func (c *Client) OpsStats(ctx context.Context) (*OpsStats, error) {
 	return &result, nil
 }
 
+// OpsMetrics returns the Prometheus metrics in text exposition format (INFRA-3).
+// Requires Admin scope. Returns the raw Prometheus text exposition format string
+// suitable for scraping by a Prometheus server.
+func (c *Client) OpsMetrics(ctx context.Context) (string, error) {
+	data, err := c.request(ctx, "GET", "/v1/ops/metrics", nil)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // ClusterStatus gets the cluster status.
 func (c *Client) ClusterStatus(ctx context.Context) (*ClusterStatus, error) {
 	data, err := c.request(ctx, "GET", "/v1/admin/cluster/status", nil)
