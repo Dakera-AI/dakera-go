@@ -35,6 +35,7 @@ const defaultTimeout = 30 * time.Second
 // Client is the Dakera client for interacting with the vector database.
 type Client struct {
 	baseURL     string
+	odeURL      string
 	apiKey      string
 	retryConfig RetryConfig
 	headers     map[string]string
@@ -103,6 +104,7 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 
 	return &Client{
 		baseURL:     baseURL,
+		odeURL:      strings.TrimSuffix(opts.OdeURL, "/"),
 		apiKey:      opts.APIKey,
 		retryConfig: rc,
 		headers:     opts.Headers,
@@ -2310,6 +2312,60 @@ func (c *Client) RotateEncryptionKey(ctx context.Context, newKey string, namespa
 	var result RotateEncryptionKeyResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal rotate encryption key response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// ODE-2: GLiNER Entity Extraction (dakera-ode sidecar)
+// ===========================================================================
+
+// OdeExtractEntities extracts named entities from text using the GLiNER
+// sidecar (ODE-2). Calls POST /ode/extract on the dakera-ode sidecar.
+//
+// Unlike ExtractEntities (CE-4 server-side NER), this method calls the
+// dedicated GLiNER sidecar and returns character offsets, model name, and
+// processing time.
+//
+// Requires OdeURL to be set in ClientOptions.
+func (c *Client) OdeExtractEntities(ctx context.Context, req ExtractEntitiesRequest) (*ExtractEntitiesResponse, error) {
+	if c.odeURL == "" {
+		return nil, fmt.Errorf("OdeURL must be configured to use ExtractEntities(); " +
+			"pass OdeURL: \"http://localhost:8080\" in ClientOptions")
+	}
+	jsonBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal extract entities request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.odeURL+"/ode/extract", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ODE request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.headers {
+		httpReq.Header.Set(k, v)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, NewTimeoutError(fmt.Sprintf("ODE request timed out: %v", err))
+		}
+		return nil, NewConnectionError(fmt.Sprintf("failed to connect to ODE: %v", err))
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ODE response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ODE sidecar returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	var result ExtractEntitiesResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extract entities response: %w", err)
 	}
 	return &result, nil
 }
