@@ -247,6 +247,10 @@ type ClientOptions struct {
 
 	// Headers are additional HTTP headers to include in requests.
 	Headers map[string]string
+
+	// OdeURL is the base URL of the dakera-ode sidecar (e.g. "http://localhost:8080").
+	// Required to call Client.ExtractEntities.
+	OdeURL string
 }
 
 // Filter operators for metadata filtering.
@@ -1674,4 +1678,45 @@ type RotateEncryptionKeyResponse struct {
 	Rotated    int      `json:"rotated"`
 	Skipped    int      `json:"skipped"`
 	Namespaces []string `json:"namespaces"`
+}
+
+// ===========================================================================
+// ODE-2: GLiNER Entity Extraction (dakera-ode sidecar)
+// ===========================================================================
+
+// OdeEntity is a single entity extracted by the GLiNER model (ODE-2).
+type OdeEntity struct {
+	// Text is the span text as it appears in the input.
+	Text string `json:"text"`
+	// Label is the entity type label (e.g. "person", "organization").
+	Label string `json:"label"`
+	// Start is the start character offset (inclusive) within the input text.
+	Start int `json:"start"`
+	// End is the end character offset (exclusive) within the input text.
+	End int `json:"end"`
+	// Score is the confidence score in the range [0, 1].
+	Score float64 `json:"score"`
+}
+
+// ExtractEntitiesRequest is the body for POST /ode/extract (ODE-2).
+type ExtractEntitiesRequest struct {
+	// Content is the text to extract entities from.
+	Content string `json:"content"`
+	// AgentID is the agent context for the extraction.
+	AgentID string `json:"agent_id"`
+	// MemoryID is an optional memory ID to associate with the extraction.
+	MemoryID string `json:"memory_id,omitempty"`
+	// EntityTypes is an optional list of entity type labels to extract.
+	// When omitted the ODE sidecar uses its default set.
+	EntityTypes []string `json:"entity_types,omitempty"`
+}
+
+// ExtractEntitiesResponse is returned by POST /ode/extract on the ODE sidecar (ODE-2).
+type ExtractEntitiesResponse struct {
+	// Entities are extracted entities ordered by their start offset.
+	Entities []OdeEntity `json:"entities"`
+	// Model is the GLiNER model variant used for extraction.
+	Model string `json:"model"`
+	// ProcessingTimeMs is the wall-clock time taken by the ODE sidecar in milliseconds.
+	ProcessingTimeMs int `json:"processing_time_ms"`
 }

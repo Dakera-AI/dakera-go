@@ -2153,3 +2153,89 @@ func TestRotateEncryptionKey_WithNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, result.Rotated)
 }
+
+// ===========================================================================
+// ODE-2: GLiNER Entity Extraction
+// ===========================================================================
+
+func TestOdeExtractEntities(t *testing.T) {
+	odeResponse := map[string]interface{}{
+		"entities": []map[string]interface{}{
+			{"text": "Alice", "label": "person", "start": 0, "end": 5, "score": 0.97},
+			{"text": "Paris", "label": "location", "start": 16, "end": 21, "score": 0.92},
+		},
+		"model":               "gliner-multi-v2.1",
+		"processing_time_ms":  34,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/ode/extract", r.URL.Path)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "Alice lives in Paris.", body["content"])
+		assert.Equal(t, "agent-1", body["agent_id"])
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(odeResponse)
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: "http://localhost:3000",
+		OdeURL:  server.URL,
+	})
+	result, err := client.OdeExtractEntities(context.Background(), ExtractEntitiesRequest{
+		Content: "Alice lives in Paris.",
+		AgentID: "agent-1",
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, result.Entities, 2)
+	assert.Equal(t, "Alice", result.Entities[0].Text)
+	assert.Equal(t, "person", result.Entities[0].Label)
+	assert.Equal(t, 0, result.Entities[0].Start)
+	assert.Equal(t, 5, result.Entities[0].End)
+	assert.Equal(t, "gliner-multi-v2.1", result.Model)
+	assert.Equal(t, 34, result.ProcessingTimeMs)
+}
+
+func TestOdeExtractEntities_WithOptionalFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "mem-abc", body["memory_id"])
+		entityTypes := body["entity_types"].([]interface{})
+		assert.Equal(t, "person", entityTypes[0])
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"entities": []interface{}{}, "model": "m", "processing_time_ms": 1,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: "http://localhost:3000",
+		OdeURL:  server.URL,
+	})
+	_, err := client.OdeExtractEntities(context.Background(), ExtractEntitiesRequest{
+		Content:     "Alice works at Dakera.",
+		AgentID:     "agent-2",
+		MemoryID:    "mem-abc",
+		EntityTypes: []string{"person", "org"},
+	})
+	require.NoError(t, err)
+}
+
+func TestOdeExtractEntities_RequiresOdeURL(t *testing.T) {
+	client := NewClient("http://localhost:3000")
+	_, err := client.OdeExtractEntities(context.Background(), ExtractEntitiesRequest{
+		Content: "text",
+		AgentID: "agent-1",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OdeURL")
+}
