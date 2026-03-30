@@ -1655,3 +1655,23 @@ type ExtractionProviderInfo struct {
 type extractProvidersResponse struct {
 	Providers []ExtractionProviderInfo `json:"providers"`
 }
+
+// ===========================================================================
+// SEC-3: AES-256-GCM Encryption Key Rotation
+// ===========================================================================
+
+// RotateEncryptionKeyRequest is the body for POST /v1/admin/encryption/rotate-key (SEC-3).
+type RotateEncryptionKeyRequest struct {
+	// NewKey is the new passphrase or 64-char hex key to rotate to.
+	NewKey string `json:"new_key"`
+	// Namespace, if set, restricts rotation to memories in that namespace.
+	// Omit (empty string) to rotate all namespaces.
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// RotateEncryptionKeyResponse is returned by POST /v1/admin/encryption/rotate-key (SEC-3).
+type RotateEncryptionKeyResponse struct {
+	Rotated    int      `json:"rotated"`
+	Skipped    int      `json:"skipped"`
+	Namespaces []string `json:"namespaces"`
+}

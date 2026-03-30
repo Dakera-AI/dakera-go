@@ -2286,3 +2286,30 @@ func (c *Client) ConfigureNamespaceExtractor(ctx context.Context, namespace stri
 	_, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/namespaces/%s/extractor", url.PathEscape(namespace)), body)
 	return err
 }
+
+// ===========================================================================
+// SEC-3: AES-256-GCM Encryption Key Rotation
+// ===========================================================================
+
+// RotateEncryptionKey re-encrypts all memory content blobs with a new
+// AES-256-GCM key (SEC-3). POST /v1/admin/encryption/rotate-key.
+//
+// After this call the new key is active in the running process. The operator
+// must update DAKERA_ENCRYPTION_KEY and restart to make the rotation durable.
+//
+// Requires Admin scope. Pass namespace="" to rotate all namespaces.
+func (c *Client) RotateEncryptionKey(ctx context.Context, newKey string, namespace string) (*RotateEncryptionKeyResponse, error) {
+	req := RotateEncryptionKeyRequest{NewKey: newKey}
+	if namespace != "" {
+		req.Namespace = namespace
+	}
+	resp, err := c.request(ctx, "POST", "/v1/admin/encryption/rotate-key", req)
+	if err != nil {
+		return nil, err
+	}
+	var result RotateEncryptionKeyResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal rotate encryption key response: %w", err)
+	}
+	return &result, nil
+}
