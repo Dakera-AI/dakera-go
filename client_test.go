@@ -2110,3 +2110,46 @@ func TestOpsMetrics_AuthorizationError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Admin scope required")
 }
+
+// SEC-3: RotateEncryptionKey
+func TestRotateEncryptionKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/admin/encryption/rotate-key", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"rotated":    42,
+			"skipped":    3,
+			"namespaces": []string{"ns-a", "ns-b"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.RotateEncryptionKey(context.Background(), "new-secret-passphrase", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, 42, result.Rotated)
+	assert.Equal(t, 3, result.Skipped)
+	assert.Equal(t, []string{"ns-a", "ns-b"}, result.Namespaces)
+}
+
+func TestRotateEncryptionKey_WithNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "new-key", body["new_key"])
+		assert.Equal(t, "my-ns", body["namespace"])
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"rotated": 5, "skipped": 0, "namespaces": []string{"my-ns"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	result, err := client.RotateEncryptionKey(context.Background(), "new-key", "my-ns")
+
+	require.NoError(t, err)
+	assert.Equal(t, 5, result.Rotated)
+}
