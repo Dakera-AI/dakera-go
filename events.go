@@ -296,6 +296,30 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 	return ch, nil
 }
 
+// StreamAuditEvents opens a live SSE stream of audit events (OBS-1).
+//
+// It connects to GET /v1/audit/stream and sends [EventResult] values to the
+// returned channel. The channel is closed when the server closes the stream or
+// ctx is cancelled.
+//
+// agentID and eventType are optional filters (empty = no filter).
+//
+// Requires an Admin-scoped API key.
+func (c *Client) StreamAuditEvents(ctx context.Context, agentID string, eventType string) (<-chan EventResult, error) {
+	params := url.Values{}
+	if agentID != "" {
+		params.Set("agent_id", agentID)
+	}
+	if eventType != "" {
+		params.Set("event_type", eventType)
+	}
+	path := "/v1/audit/stream"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	return c.streamSSE(ctx, path)
+}
+
 // streamSSE opens an SSE connection and pumps events into a channel.
 func (c *Client) streamSSE(ctx context.Context, path string) (<-chan EventResult, error) {
 	rawURL := c.baseURL + path

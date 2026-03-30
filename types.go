@@ -471,18 +471,39 @@ type UpdateImportanceRequest struct {
 	Importance float32  `json:"importance"`
 }
 
+// ConsolidationConfig is the optional algorithm config for DBSCAN adaptive
+// consolidation (CE-6).
+type ConsolidationConfig struct {
+	// Algorithm selects the clustering algorithm: "dbscan" (default) or "greedy".
+	Algorithm  string   `json:"algorithm,omitempty"`
+	MinSamples *int     `json:"min_samples,omitempty"`
+	Eps        *float32 `json:"eps,omitempty"`
+}
+
+// ConsolidationLogEntry is one step in the consolidation execution log (CE-6).
+type ConsolidationLogEntry struct {
+	Step           string  `json:"step"`
+	MemoriesBefore int     `json:"memories_before"`
+	MemoriesAfter  int     `json:"memories_after"`
+	DurationMs     float64 `json:"duration_ms"`
+}
+
 // ConsolidateRequest represents a request to consolidate memories.
 type ConsolidateRequest struct {
-	MemoryType string   `json:"memory_type,omitempty"`
-	Threshold  *float32 `json:"threshold,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
+	MemoryType string               `json:"memory_type,omitempty"`
+	Threshold  *float32             `json:"threshold,omitempty"`
+	DryRun     bool                 `json:"dry_run,omitempty"`
+	// Config selects the DBSCAN clustering algorithm and tunes its parameters (CE-6).
+	Config     *ConsolidationConfig `json:"config,omitempty"`
 }
 
 // ConsolidateResponse represents the response from consolidation.
 type ConsolidateResponse struct {
-	ConsolidatedCount int      `json:"consolidated_count"`
-	RemovedCount      int      `json:"removed_count"`
-	NewMemories       []string `json:"new_memories"`
+	ConsolidatedCount int                     `json:"consolidated_count"`
+	RemovedCount      int                     `json:"removed_count"`
+	NewMemories       []string                `json:"new_memories"`
+	// Log is the step-by-step consolidation log (CE-6, may be nil).
+	Log               []ConsolidationLogEntry `json:"log,omitempty"`
 }
 
 // MemoryFeedbackRequest represents a request for memory feedback.
@@ -872,10 +893,12 @@ type OpsStats struct {
 
 // ClusterStatus represents the cluster status response.
 type ClusterStatus struct {
-	Status  string `json:"status"`
-	Nodes   int    `json:"nodes"`
-	Healthy bool   `json:"healthy"`
-	Version string `json:"version,omitempty"`
+	Status       string `json:"status"`
+	Nodes        int    `json:"nodes"`
+	Healthy      bool   `json:"healthy"`
+	Version      string `json:"version,omitempty"`
+	// RedisHealthy indicates Redis connectivity (OPS-3).
+	RedisHealthy *bool  `json:"redis_healthy,omitempty"`
 }
 
 // ClusterNode represents a cluster node.
@@ -1551,4 +1574,84 @@ type NamespaceKeyUsageResponse struct {
 	FailedRequests       uint64  `json:"failed_requests"`
 	BytesTransferred     uint64  `json:"bytes_transferred"`
 	AvgLatencyMs         float64 `json:"avg_latency_ms"`
+}
+
+// ===========================================================================
+// DX-1: Memory Import / Export
+// ===========================================================================
+
+// MemoryImportResponse is returned by POST /v1/import (DX-1).
+type MemoryImportResponse struct {
+	ImportedCount int      `json:"imported_count"`
+	SkippedCount  int      `json:"skipped_count"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+// MemoryExportResponse is returned by GET /v1/export (DX-1).
+type MemoryExportResponse struct {
+	Data   []map[string]interface{} `json:"data"`
+	Format string                   `json:"format"`
+	Count  int                      `json:"count"`
+}
+
+// ===========================================================================
+// OBS-1: Business-Event Audit Log
+// ===========================================================================
+
+// AuditEvent is a single business-event entry from the audit log (OBS-1).
+type AuditEvent struct {
+	ID        string                 `json:"id"`
+	EventType string                 `json:"event_type"`
+	AgentID   string                 `json:"agent_id,omitempty"`
+	Namespace string                 `json:"namespace,omitempty"`
+	Timestamp int64                  `json:"timestamp"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// AuditListResponse is returned by GET /v1/audit (OBS-1).
+type AuditListResponse struct {
+	Events []AuditEvent `json:"events"`
+	Total  int          `json:"total"`
+	Cursor string       `json:"cursor,omitempty"`
+}
+
+// AuditExportResponse is returned by POST /v1/audit/export (OBS-1).
+type AuditExportResponse struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+	Count  int    `json:"count"`
+}
+
+// AuditQuery holds optional filters for audit log queries (OBS-1).
+type AuditQuery struct {
+	AgentID   string
+	EventType string
+	FromTs    int64
+	ToTs      int64
+	Limit     int
+	Cursor    string
+}
+
+// ===========================================================================
+// EXT-1: External Extraction Providers
+// ===========================================================================
+
+// ExtractionResult is returned by POST /v1/extract (EXT-1).
+type ExtractionResult struct {
+	Entities   []map[string]interface{} `json:"entities"`
+	Provider   string                   `json:"provider"`
+	Model      string                   `json:"model,omitempty"`
+	DurationMs float64                  `json:"duration_ms"`
+}
+
+// ExtractionProviderInfo describes an available extraction provider (EXT-1).
+type ExtractionProviderInfo struct {
+	Name      string   `json:"name"`
+	Available bool     `json:"available"`
+	Models    []string `json:"models,omitempty"`
+}
+
+// extractProvidersResponse handles both array and object response shapes.
+type extractProvidersResponse struct {
+	Providers []ExtractionProviderInfo `json:"providers"`
 }

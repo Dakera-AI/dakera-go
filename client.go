@@ -2103,3 +2103,186 @@ func (c *Client) NamespaceKeyUsage(ctx context.Context, namespace string, keyID 
 	}
 	return &result, nil
 }
+
+// ImportMemories imports memories from an external format (DX-1).
+// POST /v1/import
+// format: "mem0", "zep", "jsonl", or "csv". agentID and namespace are optional.
+func (c *Client) ImportMemories(ctx context.Context, data interface{}, format string, agentID string, namespace string) (*MemoryImportResponse, error) {
+	body := map[string]interface{}{
+		"data":   data,
+		"format": format,
+	}
+	if agentID != "" {
+		body["agent_id"] = agentID
+	}
+	if namespace != "" {
+		body["namespace"] = namespace
+	}
+	resp, err := c.request(ctx, "POST", "/v1/import", body)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryImportResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal import memories response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExportMemories exports memories in a portable format (DX-1).
+// GET /v1/export
+// format: "mem0", "zep", "jsonl", or "csv". agentID, namespace, and limit are optional (zero/empty = omitted).
+func (c *Client) ExportMemories(ctx context.Context, format string, agentID string, namespace string, limit int) (*MemoryExportResponse, error) {
+	params := url.Values{}
+	params.Set("format", format)
+	if agentID != "" {
+		params.Set("agent_id", agentID)
+	}
+	if namespace != "" {
+		params.Set("namespace", namespace)
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/v1/export?" + params.Encode()
+	resp, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryExportResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal export memories response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListAuditEvents queries the paginated business-event audit log (OBS-1).
+// GET /v1/audit
+func (c *Client) ListAuditEvents(ctx context.Context, query AuditQuery) (*AuditListResponse, error) {
+	params := url.Values{}
+	if query.AgentID != "" {
+		params.Set("agent_id", query.AgentID)
+	}
+	if query.EventType != "" {
+		params.Set("event_type", query.EventType)
+	}
+	if query.FromTs > 0 {
+		params.Set("from", fmt.Sprintf("%d", query.FromTs))
+	}
+	if query.ToTs > 0 {
+		params.Set("to", fmt.Sprintf("%d", query.ToTs))
+	}
+	if query.Limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", query.Limit))
+	}
+	if query.Cursor != "" {
+		params.Set("cursor", query.Cursor)
+	}
+	path := "/v1/audit"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	resp, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AuditListResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal audit list response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExportAudit bulk-exports audit log entries (OBS-1).
+// POST /v1/audit/export
+// agentID, eventType, fromTs, and toTs are optional (zero/empty = omitted).
+func (c *Client) ExportAudit(ctx context.Context, format string, agentID string, eventType string, fromTs int64, toTs int64) (*AuditExportResponse, error) {
+	body := map[string]interface{}{
+		"format": format,
+	}
+	if agentID != "" {
+		body["agent_id"] = agentID
+	}
+	if eventType != "" {
+		body["event_type"] = eventType
+	}
+	if fromTs > 0 {
+		body["from"] = fromTs
+	}
+	if toTs > 0 {
+		body["to"] = toTs
+	}
+	resp, err := c.request(ctx, "POST", "/v1/audit/export", body)
+	if err != nil {
+		return nil, err
+	}
+	var result AuditExportResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal audit export response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExtractText extracts entities from text using a pluggable provider (EXT-1).
+// POST /v1/extract
+// namespace, provider, and model are optional (empty = server default).
+func (c *Client) ExtractText(ctx context.Context, text string, namespace string, provider string, model string) (*ExtractionResult, error) {
+	body := map[string]interface{}{
+		"text": text,
+	}
+	if namespace != "" {
+		body["namespace"] = namespace
+	}
+	if provider != "" {
+		body["provider"] = provider
+	}
+	if model != "" {
+		body["model"] = model
+	}
+	resp, err := c.request(ctx, "POST", "/v1/extract", body)
+	if err != nil {
+		return nil, err
+	}
+	var result ExtractionResult
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extraction result: %w", err)
+	}
+	return &result, nil
+}
+
+// ListExtractProviders lists available extraction providers (EXT-1).
+// GET /v1/extract/providers
+func (c *Client) ListExtractProviders(ctx context.Context) ([]ExtractionProviderInfo, error) {
+	resp, err := c.request(ctx, "GET", "/v1/extract/providers", nil)
+	if err != nil {
+		return nil, err
+	}
+	// Server may return a top-level array or {"providers": [...]}
+	resp = []byte(strings.TrimSpace(string(resp)))
+	if len(resp) > 0 && resp[0] == '[' {
+		var result []ExtractionProviderInfo
+		if err := json.Unmarshal(resp, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
+		}
+		return result, nil
+	}
+	var wrapper extractProvidersResponse
+	if err := json.Unmarshal(resp, &wrapper); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
+	}
+	return wrapper.Providers, nil
+}
+
+// ConfigureNamespaceExtractor sets the default extraction provider for a namespace (EXT-1).
+// PATCH /v1/namespaces/{namespace}/extractor
+// model is optional (empty = server default).
+func (c *Client) ConfigureNamespaceExtractor(ctx context.Context, namespace string, provider string, model string) error {
+	body := map[string]interface{}{
+		"provider": provider,
+	}
+	if model != "" {
+		body["model"] = model
+	}
+	_, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/namespaces/%s/extractor", url.PathEscape(namespace)), body)
+	return err
+}
