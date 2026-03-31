@@ -50,7 +50,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("\n--- Recalling Memories ---")
 
-	memories, err := client.Recall(ctx, agentID, dakera.RecallRequest{
+	recallResp, err := client.Recall(ctx, agentID, dakera.RecallRequest{
 		Query: "What does the user prefer?",
 		TopK:  5,
 	})
@@ -58,7 +58,7 @@ func main() {
 		log.Fatalf("Failed to recall memories: %v", err)
 	}
 
-	for _, m := range memories {
+	for _, m := range recallResp.Memories {
 		fmt.Printf("  [%.2f] %s — %s\n", m.Score, m.MemoryType, m.Content)
 	}
 

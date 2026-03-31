@@ -776,24 +776,26 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 }
 
 // Recall recalls memories for an agent.
-func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) ([]RecalledMemory, error) {
+//
+// Set req.IncludeAssociated = true to enable COG-2 associative recall —
+// the response will include AssociatedMemories surfaced via KG depth-1
+// traversal from the primary results.
+func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) (*RecallResponse, error) {
 	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/recall", agentID), req)
 	if err != nil {
 		return nil, err
 	}
 
-	var wrapper struct {
-		Memories []RecalledMemory `json:"memories"`
-	}
-	if err := json.Unmarshal(respBody, &wrapper); err != nil {
-		// Try direct array
+	var result RecallResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		// Fallback: try direct array (legacy server response)
 		var memories []RecalledMemory
 		if err2 := json.Unmarshal(respBody, &memories); err2 != nil {
-			return nil, fmt.Errorf("failed to parse response: %w", err)
+			return nil, fmt.Errorf("failed to parse recall response: %w", err)
 		}
-		return memories, nil
+		return &RecallResponse{Memories: memories}, nil
 	}
-	return wrapper.Memories, nil
+	return &result, nil
 }
 
 // GetMemory gets a specific memory.
