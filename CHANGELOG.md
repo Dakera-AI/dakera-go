@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.8] - 2026-03-31
 
 ### Added
+- **COG-2: Associative Recall bindings:**
+  - `RecallRequest` gains `IncludeAssociated bool` and
+    `AssociatedMemoriesCap *int` fields.
+  - `Recall()` now returns `*RecallResponse` instead of `[]RecalledMemory`.
+    `RecallResponse` has `Memories []RecalledMemory` and
+    `AssociatedMemories []RecalledMemory` (populated when `IncludeAssociated`
+    is set).
 - **COG-1: Cognitive Memory Lifecycle bindings:**
   - `GetMemoryPolicy(ctx, namespace)` — retrieve the memory lifecycle policy
     (`GET /v1/namespaces/{namespace}/memory_policy`). Returns `*MemoryPolicy`.

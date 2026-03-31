@@ -452,6 +452,18 @@ type RecallRequest struct {
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// COG-2: traverse KG depth-1 from recalled memories and include
+	// associatively linked memories in the response (default: false)
+	IncludeAssociated bool `json:"include_associated,omitempty"`
+	// COG-2: max associated memories to return (default: 10, max: 10)
+	AssociatedMemoriesCap *int `json:"associated_memories_cap,omitempty"`
+}
+
+// RecallResponse is the response from the recall endpoint.
+// Use associated_memories (COG-2) by setting IncludeAssociated on the request.
+type RecallResponse struct {
+	Memories           []RecalledMemory `json:"memories"`
+	AssociatedMemories []RecalledMemory `json:"associated_memories,omitempty"`
 }
 
 // UpdateMemoryRequest represents a request to update a memory.
