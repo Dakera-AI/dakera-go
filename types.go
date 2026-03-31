@@ -1832,4 +1832,22 @@ type MemoryPolicy struct {
 	// SpacedRepetitionBaseIntervalSeconds is the base interval in seconds for
 	// spaced repetition TTL extension (server default: 86 400 = 1 d).
 	SpacedRepetitionBaseIntervalSeconds *int64 `json:"spaced_repetition_base_interval_seconds,omitempty"`
+
+	// Proactive consolidation (COG-3) -----------------------------------------
+
+	// ConsolidationEnabled enables background DBSCAN deduplication for this
+	// namespace. When true the server merges semantically near-duplicate
+	// memories every ConsolidationIntervalHours hours. (server default: false)
+	ConsolidationEnabled *bool `json:"consolidation_enabled,omitempty"`
+	// ConsolidationThreshold is the DBSCAN epsilon — cosine-similarity
+	// threshold to consider two memories duplicates. Higher values only merge
+	// very close neighbours. (server default: 0.92)
+	ConsolidationThreshold *float64 `json:"consolidation_threshold,omitempty"`
+	// ConsolidationIntervalHours is how often (in hours) the background
+	// consolidation job runs for this namespace. (server default: 24)
+	ConsolidationIntervalHours *uint32 `json:"consolidation_interval_hours,omitempty"`
+	// ConsolidatedCount is the lifetime count of memories merged by the
+	// consolidation engine. Read-only — the server manages this field; any
+	// value sent via SetMemoryPolicy is silently ignored.
+	ConsolidatedCount *uint64 `json:"consolidated_count,omitempty"`
 }
