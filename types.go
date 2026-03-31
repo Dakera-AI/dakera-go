@@ -457,6 +457,10 @@ type RecallRequest struct {
 	IncludeAssociated bool `json:"include_associated,omitempty"`
 	// COG-2: max associated memories to return (default: 10, max: 10)
 	AssociatedMemoriesCap *int `json:"associated_memories_cap,omitempty"`
+	// CE-7: only recall memories created at or after this ISO-8601 timestamp
+	Since *string `json:"since,omitempty"`
+	// CE-7: only recall memories created at or before this ISO-8601 timestamp
+	Until *string `json:"until,omitempty"`
 }
 
 // RecallResponse is the response from the recall endpoint.
