@@ -2460,3 +2460,45 @@ func (c *Client) OdeExtractEntities(ctx context.Context, req ExtractEntitiesRequ
 	}
 	return &result, nil
 }
+
+// ===========================================================================
+// COG-1: Per-namespace Memory Lifecycle Policy
+// ===========================================================================
+
+// GetMemoryPolicy returns the memory lifecycle policy for a namespace (COG-1).
+//
+// Sends GET /v1/namespaces/{namespace}/memory_policy.
+//
+// When no explicit policy has been configured the server returns the COG-1
+// defaults: working=4 h, episodic=30 d, semantic=365 d, procedural=730 d;
+// exponential/power_law/logarithmic/flat decay curves; SR factor 1.0.
+func (c *Client) GetMemoryPolicy(ctx context.Context, namespace string) (*MemoryPolicy, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/memory_policy", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryPolicy
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal memory policy response: %w", err)
+	}
+	return &result, nil
+}
+
+// SetMemoryPolicy sets the memory lifecycle policy for a namespace (COG-1).
+//
+// Sends PUT /v1/namespaces/{namespace}/memory_policy.
+//
+// The policy is persisted in namespace config and applied immediately to the
+// decay engine background task.  Only populate the fields you want to
+// override — all have safe server-side defaults.
+func (c *Client) SetMemoryPolicy(ctx context.Context, namespace string, policy MemoryPolicy) (*MemoryPolicy, error) {
+	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s/memory_policy", url.PathEscape(namespace)), policy)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryPolicy
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal memory policy response: %w", err)
+	}
+	return &result, nil
+}

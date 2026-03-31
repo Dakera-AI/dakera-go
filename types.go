@@ -1764,3 +1764,56 @@ type KgExportResponse struct {
 	// Edges contains all graph edges for the agent.
 	Edges []GraphEdge `json:"edges"`
 }
+
+// ===========================================================================
+// COG-1: Cognitive Memory Lifecycle — per-namespace memory policy
+// ===========================================================================
+
+// MemoryPolicy is the per-namespace memory lifecycle policy (COG-1).
+//
+// Controls type-specific TTLs, decay curves, and spaced repetition behaviour.
+// All fields are optional (pointer types); nil values use the server-side
+// COG-1 defaults.  Only set the fields you want to override.
+//
+// Used by Client.GetMemoryPolicy and Client.SetMemoryPolicy.
+type MemoryPolicy struct {
+	// Differential TTLs -------------------------------------------------------
+
+	// WorkingTTLSeconds is the default TTL for working memories in seconds
+	// (server default: 14 400 = 4 h).
+	WorkingTTLSeconds *int64 `json:"working_ttl_seconds,omitempty"`
+	// EpisodicTTLSeconds is the default TTL for episodic memories in seconds
+	// (server default: 2 592 000 = 30 d).
+	EpisodicTTLSeconds *int64 `json:"episodic_ttl_seconds,omitempty"`
+	// SemanticTTLSeconds is the default TTL for semantic memories in seconds
+	// (server default: 31 536 000 = 365 d).
+	SemanticTTLSeconds *int64 `json:"semantic_ttl_seconds,omitempty"`
+	// ProceduralTTLSeconds is the default TTL for procedural memories in
+	// seconds (server default: 63 072 000 = 730 d).
+	ProceduralTTLSeconds *int64 `json:"procedural_ttl_seconds,omitempty"`
+
+	// Decay curves ------------------------------------------------------------
+
+	// WorkingDecay is the decay strategy for working memories
+	// (server default: "exponential").
+	WorkingDecay *string `json:"working_decay,omitempty"`
+	// EpisodicDecay is the decay strategy for episodic memories
+	// (server default: "power_law").
+	EpisodicDecay *string `json:"episodic_decay,omitempty"`
+	// SemanticDecay is the decay strategy for semantic memories
+	// (server default: "logarithmic").
+	SemanticDecay *string `json:"semantic_decay,omitempty"`
+	// ProceduralDecay is the decay strategy for procedural memories
+	// (server default: "flat" — no decay).
+	ProceduralDecay *string `json:"procedural_decay,omitempty"`
+
+	// Spaced repetition -------------------------------------------------------
+
+	// SpacedRepetitionFactor is the TTL extension multiplier per recall hit.
+	// Extension = access_count × factor × base_interval_seconds.
+	// Set to 0 to disable. (server default: 1.0)
+	SpacedRepetitionFactor *float64 `json:"spaced_repetition_factor,omitempty"`
+	// SpacedRepetitionBaseIntervalSeconds is the base interval in seconds for
+	// spaced repetition TTL extension (server default: 86 400 = 1 d).
+	SpacedRepetitionBaseIntervalSeconds *int64 `json:"spaced_repetition_base_interval_seconds,omitempty"`
+}
