@@ -444,6 +444,8 @@ type RecalledMemory struct {
 	Score      float32                `json:"score"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt  string                 `json:"created_at,omitempty"`
+	// KG-3: hop depth at which this memory was found (only set on associated memories)
+	Depth *int `json:"depth,omitempty"`
 }
 
 // RecallRequest represents a request to recall memories.
@@ -452,11 +454,15 @@ type RecallRequest struct {
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
-	// COG-2: traverse KG depth-1 from recalled memories and include
+	// COG-2: traverse KG from recalled memories and include
 	// associatively linked memories in the response (default: false)
 	IncludeAssociated bool `json:"include_associated,omitempty"`
 	// COG-2: max associated memories to return (default: 10, max: 10)
 	AssociatedMemoriesCap *int `json:"associated_memories_cap,omitempty"`
+	// KG-3: traversal depth 1–3 (default: 1); requires IncludeAssociated
+	AssociatedMemoriesDepth *int `json:"associated_memories_depth,omitempty"`
+	// KG-3: minimum edge weight for KG traversal (default: 0.0)
+	AssociatedMemoriesMinWeight *float32 `json:"associated_memories_min_weight,omitempty"`
 	// CE-7: only recall memories created at or after this ISO-8601 timestamp
 	Since *string `json:"since,omitempty"`
 	// CE-7: only recall memories created at or before this ISO-8601 timestamp
@@ -464,7 +470,8 @@ type RecallRequest struct {
 }
 
 // RecallResponse is the response from the recall endpoint.
-// Use associated_memories (COG-2) by setting IncludeAssociated on the request.
+// Use associated_memories (COG-2 / KG-3) by setting IncludeAssociated on the request.
+// Each associated memory includes a Depth field (KG-3).
 type RecallResponse struct {
 	Memories           []RecalledMemory `json:"memories"`
 	AssociatedMemories []RecalledMemory `json:"associated_memories,omitempty"`
