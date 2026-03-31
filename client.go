@@ -1997,6 +1997,97 @@ func (c *Client) CrossAgentNetwork(ctx context.Context, req CrossAgentNetworkReq
 }
 
 // ===========================================================================
+// KG-2: Graph Query & Export
+// ===========================================================================
+
+// KnowledgeQuery queries the memory knowledge graph using a filter DSL (KG-2).
+// GET /v1/knowledge/query
+//
+// agentID is required. Optional params: rootID (BFS root memory), edgeType
+// (comma-separated, e.g. "related_to,shares_entity"), minWeight (0.0–1.0),
+// maxDepth (1–5, default 3), limit (default 100, max 1000).
+func (c *Client) KnowledgeQuery(
+	ctx context.Context,
+	agentID string,
+	rootID string,
+	edgeType string,
+	minWeight float64,
+	maxDepth int,
+	limit int,
+) (*KgQueryResponse, error) {
+	params := url.Values{"agent_id": {agentID}}
+	if rootID != "" {
+		params.Set("root_id", rootID)
+	}
+	if edgeType != "" {
+		params.Set("edge_type", edgeType)
+	}
+	if minWeight > 0 {
+		params.Set("min_weight", fmt.Sprintf("%g", minWeight))
+	}
+	if maxDepth > 0 {
+		params.Set("max_depth", fmt.Sprintf("%d", maxDepth))
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	data, err := c.request(ctx, "GET", "/v1/knowledge/query?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KgQueryResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal kg query response: %w", err)
+	}
+	return &result, nil
+}
+
+// KnowledgePath finds the BFS shortest path between two memory IDs (KG-2).
+// GET /v1/knowledge/path
+//
+// Returns an error if no path exists between fromID and toID.
+func (c *Client) KnowledgePath(ctx context.Context, agentID, fromID, toID string) (*KgPathResponse, error) {
+	params := url.Values{
+		"agent_id": {agentID},
+		"from":     {fromID},
+		"to":       {toID},
+	}
+	data, err := c.request(ctx, "GET", "/v1/knowledge/path?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KgPathResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal kg path response: %w", err)
+	}
+	return &result, nil
+}
+
+// KnowledgeExport exports the memory knowledge graph as JSON or GraphML (KG-2).
+// GET /v1/knowledge/export
+//
+// format is "json" (default) or "graphml". For graphml the server returns
+// application/xml — this method deserializes JSON only.
+func (c *Client) KnowledgeExport(ctx context.Context, agentID, format string) (*KgExportResponse, error) {
+	if format == "" {
+		format = "json"
+	}
+	params := url.Values{
+		"agent_id": {agentID},
+		"format":   {format},
+	}
+	data, err := c.request(ctx, "GET", "/v1/knowledge/export?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KgExportResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal kg export response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // CE-4 Entity Extraction (GLiNER)
 // ===========================================================================
 

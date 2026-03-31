@@ -1720,3 +1720,47 @@ type ExtractEntitiesResponse struct {
 	// ProcessingTimeMs is the wall-clock time taken by the ODE sidecar in milliseconds.
 	ProcessingTimeMs int `json:"processing_time_ms"`
 }
+
+// ============================================================================
+// KG-2: Graph Query & Export Types
+// ============================================================================
+
+// KgQueryResponse is returned by GET /v1/knowledge/query (KG-2).
+type KgQueryResponse struct {
+	// AgentID is the agent whose graph was queried.
+	AgentID string `json:"agent_id"`
+	// NodeCount is the number of unique memory node IDs referenced by the returned edges.
+	NodeCount int `json:"node_count"`
+	// EdgeCount is the number of edges returned.
+	EdgeCount int `json:"edge_count"`
+	// Edges contains the matching edges, up to the requested limit.
+	Edges []GraphEdge `json:"edges"`
+}
+
+// KgPathResponse is returned by GET /v1/knowledge/path (KG-2).
+type KgPathResponse struct {
+	// AgentID is the agent whose graph was traversed.
+	AgentID string `json:"agent_id"`
+	// FromID is the source memory ID.
+	FromID string `json:"from_id"`
+	// ToID is the target memory ID.
+	ToID string `json:"to_id"`
+	// HopCount is the number of edges in the shortest path (0 if source == target).
+	HopCount int `json:"hop_count"`
+	// Path is the ordered list of memory IDs from source to target (inclusive).
+	Path []string `json:"path"`
+}
+
+// KgExportResponse is returned by GET /v1/knowledge/export with format=json (KG-2).
+type KgExportResponse struct {
+	// AgentID is the agent whose graph was exported.
+	AgentID string `json:"agent_id"`
+	// Format is the export format used ("json" when this struct is returned).
+	Format string `json:"format"`
+	// NodeCount is the total number of unique memory node IDs in the export.
+	NodeCount int `json:"node_count"`
+	// EdgeCount is the total number of edges in the export.
+	EdgeCount int `json:"edge_count"`
+	// Edges contains all graph edges for the agent.
+	Edges []GraphEdge `json:"edges"`
+}
