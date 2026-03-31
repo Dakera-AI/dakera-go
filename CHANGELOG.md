@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **KG-3: Deep Associative Recall bindings:**
+  - `RecalledMemory` gains `Depth *int` (`json:"depth,omitempty"`) — the KG hop at which an associated memory was found.
+  - `RecallRequest` gains two new pointer fields:
+    - `AssociatedMemoriesDepth *int` (`json:"associated_memories_depth,omitempty"`) — KG traversal depth 1–3 (default: `1`).
+    - `AssociatedMemoriesMinWeight *float32` (`json:"associated_memories_min_weight,omitempty"`) — minimum KG edge weight (default: `0.0`).
+  - Fully backward-compatible: nil fields are omitted from JSON; existing callers retain depth-1 (COG-2) behaviour.
 - **COG-3: Proactive Memory Consolidation bindings:**
   - `MemoryPolicy` struct gains four new pointer fields (all `omitempty`):
     - `ConsolidationEnabled *bool` — opt-in background DBSCAN deduplication (server default: `false`).
