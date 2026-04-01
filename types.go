@@ -1857,4 +1857,16 @@ type MemoryPolicy struct {
 	// consolidation engine. Read-only — the server manages this field; any
 	// value sent via SetMemoryPolicy is silently ignored.
 	ConsolidatedCount *uint64 `json:"consolidated_count,omitempty"`
+
+	// Per-namespace rate limiting (SEC-5) -------------------------------------
+
+	// RateLimitEnabled enables per-namespace store/recall rate limiting.
+	// (server default: false)
+	RateLimitEnabled *bool `json:"rate_limit_enabled,omitempty"`
+	// RateLimitStoresPerMinute sets the max store operations per minute for
+	// this namespace. nil = unlimited (server default).
+	RateLimitStoresPerMinute *uint32 `json:"rate_limit_stores_per_minute,omitempty"`
+	// RateLimitRecallsPerMinute sets the max recall operations per minute for
+	// this namespace. nil = unlimited (server default).
+	RateLimitRecallsPerMinute *uint32 `json:"rate_limit_recalls_per_minute,omitempty"`
 }

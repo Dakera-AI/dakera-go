@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `ConsolidationThreshold *float64` — cosine-similarity epsilon (server default: `0.92`).
     - `ConsolidationIntervalHours *uint32` — background job interval in hours (server default: `24`).
     - `ConsolidatedCount *uint64` — **read-only** lifetime merge count (server-managed).
+- **SEC-5: Per-namespace rate limiting bindings:**
+  - `MemoryPolicy` struct gains three new pointer fields (all `omitempty`):
+    - `RateLimitEnabled *bool` (`json:"rate_limit_enabled,omitempty"`) — opt-in per-namespace rate limiting (server default: `false`).
+    - `RateLimitStoresPerMinute *uint32` (`json:"rate_limit_stores_per_minute,omitempty"`) — max store ops/min; `nil` = unlimited (server default).
+    - `RateLimitRecallsPerMinute *uint32` (`json:"rate_limit_recalls_per_minute,omitempty"`) — max recall ops/min; `nil` = unlimited (server default).
+  - When a limit is exceeded the server returns HTTP 429; the existing `RateLimitError` is returned with `RetryAfter: 60`.
 
 ## [0.9.9] - 2026-03-31
 
