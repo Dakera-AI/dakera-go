@@ -5,12 +5,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8)](https://go.dev/)
 
-Official Go client for [Dakera](https://dakera.ai) — an AI agent memory platform.
+Official Go SDK for [Dakera](https://dakera.ai) — the AI agent memory platform. Persistent, session-aware, cross-agent memory for your AI agents.
 
 ## Installation
 
 ```bash
-go get github.com/dakera-ai/dakera-go
+go get github.com/dakera-ai/dakera-go@latest
 ```
 
 ## Quick Start
