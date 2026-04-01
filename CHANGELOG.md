@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-04-01
+
 ### Added
 - **KG-3: Deep Associative Recall bindings:**
   - `RecalledMemory` gains `Depth *int` (`json:"depth,omitempty"`) — the KG hop at which an associated memory was found.
