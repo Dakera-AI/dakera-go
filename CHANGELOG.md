@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-04-06
+
+### Added
+- **OBS-2: Product KPI Snapshot endpoint:**
+  - `Client.GetKpis(ctx)` — `GET /v1/kpis` — returns `*KpiSnapshot` with 8 real-time
+    operational metrics. Sub-millisecond; served from in-memory counters. Requires Admin scope.
+  - `KpiSnapshot` struct in `types.go`:
+    - `RecallLatencyP50Ms` / `RecallLatencyP99Ms` (`float64`) — median/p99 recall latency (ms)
+    - `StoreLatencyP50Ms` (`float64`) — median store latency (ms)
+    - `ApiErrorRate5xxPct` (`float64`) — 5xx error rate as a percentage of total requests
+    - `ActiveAgentsCount` (`uint64`) — distinct agents active in the last 24 hours
+    - `SessionCountWeek` (`uint64`) — sessions created in the rolling 7-day window
+    - `CrossAgentNetworkNodeCount` (`uint64`) — nodes in the cross-agent knowledge graph
+    - `MemoryRetention7dPct` (`float64`) — percentage of memories from 7 days ago still active
+
+### Server-side only (no SDK changes required)
+- **v0.9.12 performance fixes:** session-agent index lookup reduced to O(1); memory counters
+  now updated via atomic increments; S3 flushes are async (non-blocking).
+
 ## [0.9.11] - 2026-04-01
 
 ### Added

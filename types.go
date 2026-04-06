@@ -1870,3 +1870,39 @@ type MemoryPolicy struct {
 	// this namespace. nil = unlimited (server default).
 	RateLimitRecallsPerMinute *uint32 `json:"rate_limit_recalls_per_minute,omitempty"`
 }
+
+// ===========================================================================
+// Product KPIs (OBS-2)
+// ===========================================================================
+
+// KpiSnapshot is a point-in-time product KPI snapshot returned by GET /v1/kpis (OBS-2).
+//
+// All latency values are in milliseconds. Rate/percentage values are in the
+// range 0.0–100.0. Integer counts are unsigned.
+//
+// Requires Admin scope.
+type KpiSnapshot struct {
+	// RecallLatencyP50Ms is the median recall latency across all namespaces
+	// over the last minute (ms).
+	RecallLatencyP50Ms float64 `json:"recall_latency_p50_ms"`
+	// RecallLatencyP99Ms is the 99th-percentile recall latency across all
+	// namespaces over the last minute (ms).
+	RecallLatencyP99Ms float64 `json:"recall_latency_p99_ms"`
+	// StoreLatencyP50Ms is the median store latency across all namespaces
+	// over the last minute (ms).
+	StoreLatencyP50Ms float64 `json:"store_latency_p50_ms"`
+	// ApiErrorRate5xxPct is the 5xx error rate as a percentage of total API
+	// requests over the last minute.
+	ApiErrorRate5xxPct float64 `json:"api_error_rate_5xx_pct"`
+	// ActiveAgentsCount is the number of distinct agent identifiers that stored
+	// or recalled a memory in the last 24 hours.
+	ActiveAgentsCount uint64 `json:"active_agents_count"`
+	// SessionCountWeek is the total sessions created in the rolling 7-day window.
+	SessionCountWeek uint64 `json:"session_count_week"`
+	// CrossAgentNetworkNodeCount is the current number of nodes in the
+	// cross-agent knowledge graph.
+	CrossAgentNetworkNodeCount uint64 `json:"cross_agent_network_node_count"`
+	// MemoryRetention7dPct is the percentage of memories created 7 days ago
+	// that are still active (not decayed or deleted).
+	MemoryRetention7dPct float64 `json:"memory_retention_7d_pct"`
+}

@@ -1893,6 +1893,27 @@ func (c *Client) DecayStats(ctx context.Context) (*DecayStatsResponse, error) {
 }
 
 // ===========================================================================
+// Product KPI Snapshot (OBS-2)
+// ===========================================================================
+
+// GetKpis returns a point-in-time product KPI snapshot (OBS-2).
+//
+// Calls GET /v1/kpis. Returns 8 operational metrics covering latency, error
+// rate, and retention. Sub-millisecond — served from in-memory counters.
+// Requires Admin scope.
+func (c *Client) GetKpis(ctx context.Context) (*KpiSnapshot, error) {
+	data, err := c.request(ctx, "GET", "/v1/kpis", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result KpiSnapshot
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal kpi snapshot: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // API Key Operations
 // ===========================================================================
 
