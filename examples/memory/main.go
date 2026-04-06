@@ -94,12 +94,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start session: %v", err)
 	}
-	fmt.Printf("Started session: %s\n", session.SessionID)
+	fmt.Printf("Started session: %s\n", session.ID)
 
 	// Store a session-scoped memory
 	sessionMem, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
 		Content:   "Reviewing PR #42: refactor authentication middleware.",
-		SessionID: session.SessionID,
+		SessionID: session.ID,
 	})
 	if err != nil {
 		log.Fatalf("Failed to store session memory: %v", err)
@@ -107,10 +107,11 @@ func main() {
 	fmt.Printf("Stored session memory: %s\n", sessionMem.MemoryID)
 
 	// End the session
-	if err := client.EndSession(ctx, session.SessionID); err != nil {
+	endResp, err := client.EndSession(ctx, session.ID)
+	if err != nil {
 		log.Fatalf("Failed to end session: %v", err)
 	}
-	fmt.Printf("Ended session: %s\n", session.SessionID)
+	fmt.Printf("Ended session: %s (memories: %d)\n", endResp.Session.ID, endResp.MemoryCount)
 
 	// -------------------------------------------------------------------------
 	// Agent stats

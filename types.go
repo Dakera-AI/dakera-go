@@ -558,11 +558,24 @@ type StartSessionRequest struct {
 
 // Session represents a session.
 type Session struct {
-	SessionID string                 `json:"session_id"`
-	AgentID   string                 `json:"agent_id"`
-	StartedAt string                 `json:"started_at,omitempty"`
-	EndedAt   string                 `json:"ended_at,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	AgentID     string                 `json:"agent_id"`
+	StartedAt   int64                  `json:"started_at,omitempty"`
+	EndedAt     *int64                 `json:"ended_at,omitempty"`
+	Summary     string                 `json:"summary,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	MemoryCount int                    `json:"memory_count"`
+}
+
+// SessionStartResponse is the response from POST /v1/sessions/start.
+type SessionStartResponse struct {
+	Session Session `json:"session"`
+}
+
+// SessionEndResponse is the response from POST /v1/sessions/{id}/end.
+type SessionEndResponse struct {
+	Session     Session `json:"session"`
+	MemoryCount int     `json:"memory_count"`
 }
 
 // ListSessionsOptions represents options for listing sessions.

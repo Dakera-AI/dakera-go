@@ -1122,17 +1122,25 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 		return nil, err
 	}
 
-	var result Session
+	var result SessionStartResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result.Session, nil
+}
+
+// EndSession ends a session and returns the session state and memory count.
+func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SessionEndResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	return &result, nil
-}
-
-// EndSession ends a session.
-func (c *Client) EndSession(ctx context.Context, sessionID string) error {
-	_, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), nil)
-	return err
 }
 
 // GetSession gets session details.
