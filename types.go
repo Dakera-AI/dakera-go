@@ -1919,3 +1919,32 @@ type KpiSnapshot struct {
 	// that are still active (not decayed or deleted).
 	MemoryRetention7dPct float64 `json:"memory_retention_7d_pct"`
 }
+
+// ===========================================================================
+// Wake-Up Types (DAK-1690)
+// ===========================================================================
+
+// WakeUpOptions contains optional parameters for GetWakeUpContext.
+type WakeUpOptions struct {
+	// TopN is the maximum number of memories to return (default 20, max 100).
+	TopN *int
+	// MinImportance filters out memories below this importance threshold (default 0.0).
+	MinImportance *float32
+}
+
+// WakeUpResponse is returned by GET /v1/agents/{agent_id}/wake-up (DAK-1690).
+//
+// Contains top-N memories ranked by importance × exp(-ln2 × age / 14d) for
+// fast agent start-up context loading. No embedding inference — served from
+// the metadata index for sub-millisecond latency.
+//
+// Requires Read scope on the agent namespace.
+type WakeUpResponse struct {
+	// AgentID is the agent whose memories are returned.
+	AgentID string `json:"agent_id"`
+	// Memories are the top-N memories ranked by recency-weighted importance.
+	Memories []Memory `json:"memories"`
+	// TotalAvailable is the total number of memories available before the
+	// top_n cap was applied.
+	TotalAvailable int64 `json:"total_available"`
+}

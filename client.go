@@ -1293,6 +1293,40 @@ func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentS
 	return result, nil
 }
 
+// GetWakeUpContext returns top-N wake-up context memories for an agent (DAK-1690).
+//
+// Calls GET /v1/agents/{agent_id}/wake-up. Returns memories ranked by
+// importance × exp(-ln2 × age / 14d) — no embedding inference, served from
+// the metadata index for sub-millisecond latency.
+//
+// Requires Read scope on the agent namespace.
+func (c *Client) GetWakeUpContext(ctx context.Context, agentID string, opts *WakeUpOptions) (*WakeUpResponse, error) {
+	path := fmt.Sprintf("/v1/agents/%s/wake-up", agentID)
+	if opts != nil {
+		params := url.Values{}
+		if opts.TopN != nil {
+			params.Set("top_n", fmt.Sprintf("%d", *opts.TopN))
+		}
+		if opts.MinImportance != nil {
+			params.Set("min_importance", fmt.Sprintf("%g", *opts.MinImportance))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	respBody, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result WakeUpResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal wake-up response: %w", err)
+	}
+	return &result, nil
+}
+
 // ===========================================================================
 // Knowledge Graph Operations
 // ===========================================================================
