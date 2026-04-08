@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.15] - 2026-04-08
+
+### Notes
+- Version bump to match server v0.9.15. No SDK API changes.
+- Server changes (transparent to SDK callers):
+  - **DAK-1691:** Session-end auto-consolidation — `EndSession` now triggers server-side DBSCAN clustering of near-duplicate session memories, soft-expiring them with a 30-day TTL. High-importance memories (>0.8) are protected. No request/response signature change.
+  - **DAK-1689:** HNSW post-filter ANN fix — filtered vector queries are now O(N·ANN) instead of O(N·linear). No SDK change.
+
+## [0.9.14] - 2026-04-07
+
+### Added
+- **DAK-1690: Agent wake-up context endpoint:**
+  - `Client.GetWakeUpContext(ctx, agentID, opts *WakeUpOptions)` — `GET /v1/agents/{agentID}/wake-up` — returns `*WakeUpResponse` with top-N memories ranked by importance × recency decay. Sub-millisecond; no embedding inference. Requires Read scope.
+  - `WakeUpResponse` struct (`AgentID`, `Memories []Memory`, `TotalAvailable int`) and `WakeUpOptions` struct exported from package.
+
+## [0.9.13] - 2026-04-07
+
+### Fixed
+- **Session type fix (DAK-1548):** `Session.ID` is now correctly mapped (was `SessionID`). `StartSession()` and `EndSession()` now correctly deserialize wrapped server responses. Added `SessionStartResponse` and `SessionEndResponse` types — `EndSession()` now returns `*SessionEndResponse` exposing `MemoryCount int`.
+
 ## [0.9.12] - 2026-04-06
 
 ### Added
