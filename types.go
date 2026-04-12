@@ -448,6 +448,22 @@ type RecalledMemory struct {
 	Depth *int `json:"depth,omitempty"`
 }
 
+// RoutingMode controls which retrieval index the server uses for recall and
+// search (CE-10). RoutingModeAuto (default) lets the server pick the best
+// strategy based on the query.
+type RoutingMode string
+
+const (
+	// RoutingModeAuto lets the server pick the best retrieval strategy (default).
+	RoutingModeAuto RoutingMode = "auto"
+	// RoutingModeVector forces ANN vector search (HNSW).
+	RoutingModeVector RoutingMode = "vector"
+	// RoutingModeBM25 forces BM25 full-text search.
+	RoutingModeBM25 RoutingMode = "bm25"
+	// RoutingModeHybrid fuses ANN and BM25 scores (RRF).
+	RoutingModeHybrid RoutingMode = "hybrid"
+)
+
 // RecallRequest represents a request to recall memories.
 type RecallRequest struct {
 	Query         string   `json:"query"`
@@ -467,6 +483,8 @@ type RecallRequest struct {
 	Since *string `json:"since,omitempty"`
 	// CE-7: only recall memories created at or before this ISO-8601 timestamp
 	Until *string `json:"until,omitempty"`
+	// CE-10: retrieval routing mode. nil uses the server default ("auto").
+	Routing *RoutingMode `json:"routing,omitempty"`
 }
 
 // RecallResponse is the response from the recall endpoint.
@@ -490,6 +508,8 @@ type SearchMemoriesRequest struct {
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// CE-10: retrieval routing mode. nil uses the server default ("auto").
+	Routing *RoutingMode `json:"routing,omitempty"`
 }
 
 // UpdateImportanceRequest represents a request to update memory importance.
@@ -1882,6 +1902,19 @@ type MemoryPolicy struct {
 	// RateLimitRecallsPerMinute sets the max recall operations per minute for
 	// this namespace. nil = unlimited (server default).
 	RateLimitRecallsPerMinute *uint32 `json:"rate_limit_recalls_per_minute,omitempty"`
+
+	// Store-time deduplication (CE-10) -----------------------------------------
+
+	// DedupOnStore enables similarity deduplication at store time (CE-10).
+	// When true the server computes a similarity check before persisting a new
+	// memory and drops it if a near-duplicate already exists (threshold
+	// controlled by DedupThreshold). (server default: false)
+	DedupOnStore *bool `json:"dedup_on_store,omitempty"`
+	// DedupThreshold is the cosine-similarity threshold for store-time
+	// deduplication (server default: 0.92). Memories with similarity ≥ this
+	// value are considered duplicates and the incoming memory is dropped. Only
+	// active when DedupOnStore is true.
+	DedupThreshold *float32 `json:"dedup_threshold,omitempty"`
 }
 
 // ===========================================================================
@@ -1947,4 +1980,22 @@ type WakeUpResponse struct {
 	// TotalAvailable is the total number of memories available before the
 	// top_n cap was applied.
 	TotalAvailable int64 `json:"total_available"`
+}
+
+// CompressResponse is returned by POST /v1/agents/{agent_id}/compress (CE-12).
+//
+// Contains compression statistics for the agent's memory namespace after the
+// server runs the compression pass.
+type CompressResponse struct {
+	// AgentID is the agent whose namespace was compressed.
+	AgentID string `json:"agent_id"`
+	// MemoriesBefore is the number of memories before compression.
+	MemoriesBefore int64 `json:"memories_before"`
+	// MemoriesAfter is the number of memories after compression.
+	MemoriesAfter int64 `json:"memories_after"`
+	// RemovedCount is the number of memories removed during compression.
+	RemovedCount int64 `json:"removed_count"`
+	// DurationMs is the wall-clock duration of the compression pass in
+	// milliseconds. May be zero if the server does not report it.
+	DurationMs float64 `json:"duration_ms,omitempty"`
 }

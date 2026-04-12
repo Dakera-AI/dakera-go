@@ -1327,6 +1327,21 @@ func (c *Client) GetWakeUpContext(ctx context.Context, agentID string, opts *Wak
 	return &result, nil
 }
 
+// CompressAgent runs a server-side compression pass on the agent's memory
+// namespace (CE-12). Returns statistics about the compression operation.
+func (c *Client) CompressAgent(ctx context.Context, agentID string) (*CompressResponse, error) {
+	path := fmt.Sprintf("/v1/agents/%s/compress", agentID)
+	respBody, err := c.request(ctx, "POST", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result CompressResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal compress response: %w", err)
+	}
+	return &result, nil
+}
+
 // ===========================================================================
 // Knowledge Graph Operations
 // ===========================================================================

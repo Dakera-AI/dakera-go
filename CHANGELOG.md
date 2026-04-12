@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-12
+
+### Added
+- **CE-10:** `RoutingMode` string type with constants `RoutingModeAuto`, `RoutingModeVector`, `RoutingModeBM25`, `RoutingModeHybrid` — controls which retrieval index to use for recall and search.
+- **CE-10:** `Routing *RoutingMode` field on `RecallRequest` and `SearchMemoriesRequest`. nil uses the server default (`"auto"`).
+- **CE-12:** `CompressAgent(ctx, agentID)` method on `Client` — calls `POST /v1/agents/{id}/compress` and returns `*CompressResponse`.
+- **CE-12:** `CompressResponse` struct with `AgentID`, `MemoriesBefore`, `MemoriesAfter`, `RemovedCount`, `DurationMs`.
+- **CE-10:** `MemoryPolicy.DedupOnStore *bool` — enable similarity deduplication at store time.
+- **CE-10:** `MemoryPolicy.DedupThreshold *float32` — cosine-similarity threshold for store-time deduplication.
+
 ## [0.9.15] - 2026-04-08
 
 ### Notes
