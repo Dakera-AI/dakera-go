@@ -325,6 +325,8 @@ func Or(conditions ...map[string]interface{}) map[string]interface{} {
 type EmbeddingModel string
 
 const (
+	// EmbeddingModelBGELarge is the BGE-large model - Best quality, server default (1024 dimensions).
+	EmbeddingModelBGELarge EmbeddingModel = "bge-large"
 	// EmbeddingModelMiniLM is the MiniLM-L6 model - Fast, good quality (384 dimensions).
 	EmbeddingModelMiniLM EmbeddingModel = "minilm"
 	// EmbeddingModelBGESmall is the BGE-small model - Balanced performance (384 dimensions).
@@ -489,6 +491,9 @@ type RecallRequest struct {
 	Until *string `json:"until,omitempty"`
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
+	// CE-13: cross-encoder reranking. nil uses server default (true for recall).
+	// Set to pointer-to-false to disable on latency-sensitive paths.
+	Rerank *bool `json:"rerank,omitempty"`
 }
 
 // RecallResponse is the response from the recall endpoint.
@@ -514,6 +519,9 @@ type SearchMemoriesRequest struct {
 	MinImportance *float32 `json:"min_importance,omitempty"`
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
+	// CE-13: cross-encoder reranking. nil uses server default (false for search).
+	// Set to pointer-to-true to enable reranking on search queries.
+	Rerank *bool `json:"rerank,omitempty"`
 }
 
 // UpdateImportanceRequest represents a request to update memory importance.
