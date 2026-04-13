@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-13
+
+### Fixed
+- **`StoreMemoryResponse`:** Corrected struct to match actual server response shape — server returns `{"memory": {...}, "embedding_time_ms": N}` (nested). Field is now `Memory *Memory` (was `MemoryID string`). Access via `resp.Memory.ID`.
+- **`ConsolidateResponse`:** Corrected field names — `MemoriesRemoved` (was `ConsolidatedCount`), `SourceMemoryIDs` (was `NewMemories`), `ConsolidatedMemory *Memory` (was `RemovedCount int`).
+
 ## [0.10.0] - 2026-04-12
 
 ### Added

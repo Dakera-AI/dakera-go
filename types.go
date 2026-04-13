@@ -418,9 +418,13 @@ type StoreMemoryRequest struct {
 }
 
 // StoreMemoryResponse represents the response from storing a memory.
+//
+// The server wraps the created memory in a nested "memory" object:
+//
+//	{"memory": {"id": "...", "agent_id": "...", ...}, "embedding_time_ms": N}
 type StoreMemoryResponse struct {
-	MemoryID string `json:"memory_id"`
-	Status   string `json:"status"`
+	Memory          *Memory `json:"memory"`
+	EmbeddingTimeMs *int64  `json:"embedding_time_ms,omitempty"`
 }
 
 // Memory represents a stored memory.
@@ -546,11 +550,11 @@ type ConsolidateRequest struct {
 
 // ConsolidateResponse represents the response from consolidation.
 type ConsolidateResponse struct {
-	ConsolidatedCount int                     `json:"consolidated_count"`
-	RemovedCount      int                     `json:"removed_count"`
-	NewMemories       []string                `json:"new_memories"`
+	MemoriesRemoved    int                     `json:"memories_removed"`
+	SourceMemoryIDs    []string                `json:"source_memory_ids"`
+	ConsolidatedMemory *Memory                 `json:"consolidated_memory,omitempty"`
 	// Log is the step-by-step consolidation log (CE-6, may be nil).
-	Log               []ConsolidationLogEntry `json:"log,omitempty"`
+	Log                []ConsolidationLogEntry `json:"log,omitempty"`
 }
 
 // MemoryFeedbackRequest represents a request for memory feedback.
