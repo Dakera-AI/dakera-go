@@ -32,7 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to store memory: %v", err)
 	}
-	fmt.Printf("Stored memory: %s\n", mem1.MemoryID)
+	fmt.Printf("Stored memory: %s\n", mem1.Memory.ID)
 
 	imp2 := float32(0.7)
 	mem2, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
@@ -43,7 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to store memory: %v", err)
 	}
-	fmt.Printf("Stored memory: %s\n", mem2.MemoryID)
+	fmt.Printf("Stored memory: %s\n", mem2.Memory.ID)
 
 	// -------------------------------------------------------------------------
 	// Recall memories
@@ -104,7 +104,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to store session memory: %v", err)
 	}
-	fmt.Printf("Stored session memory: %s\n", sessionMem.MemoryID)
+	fmt.Printf("Stored session memory: %s\n", sessionMem.Memory.ID)
 
 	// End the session
 	endResp, err := client.EndSession(ctx, session.ID)
