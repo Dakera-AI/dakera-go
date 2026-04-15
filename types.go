@@ -470,6 +470,18 @@ const (
 	RoutingModeHybrid RoutingMode = "hybrid"
 )
 
+// FusionStrategy controls how vector and BM25 scores are combined during
+// hybrid recall (CE-14). FusionStrategyRRF (default) uses Reciprocal Rank
+// Fusion (Cormack et al., SIGIR 2009).
+type FusionStrategy string
+
+const (
+	// FusionStrategyRRF uses Reciprocal Rank Fusion — default, best for recall tasks.
+	FusionStrategyRRF FusionStrategy = "rrf"
+	// FusionStrategyMinMax uses legacy weighted min-max normalization.
+	FusionStrategyMinMax FusionStrategy = "minmax"
+)
+
 // RecallRequest represents a request to recall memories.
 type RecallRequest struct {
 	Query         string   `json:"query"`
@@ -494,6 +506,11 @@ type RecallRequest struct {
 	// CE-13: cross-encoder reranking. nil uses server default (true for recall).
 	// Set to pointer-to-false to disable on latency-sensitive paths.
 	Rerank *bool `json:"rerank,omitempty"`
+	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyRRF).
+	Fusion *FusionStrategy `json:"fusion,omitempty"`
+	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
+	// Set to pointer-to-false to disable on latency-sensitive paths.
+	Neighborhood *bool `json:"neighborhood,omitempty"`
 }
 
 // RecallResponse is the response from the recall endpoint.

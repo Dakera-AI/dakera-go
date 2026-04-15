@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-15
+
+### Added
+- **CE-14:** `FusionStrategy` type with `FusionStrategyRRF` and `FusionStrategyMinMax` constants — controls hybrid score fusion.
+- **CE-14:** `Fusion *FusionStrategy` field on `RecallRequest`. `nil` uses server default (`FusionStrategyRRF`).
+- **v0.11.0:** `Neighborhood *bool` field on `RecallRequest`. Session-adjacent memory enrichment (±5 min). `nil` uses server default (`true`). Set pointer-to-false to disable.
+
+
 ## [0.10.2] - 2026-04-13
 
 ### Added
