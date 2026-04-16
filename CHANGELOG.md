@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-04-16
+
+### Changed
+- **v0.11.2:** Server default fusion strategy changed from `FusionStrategyRRF` to
+  `FusionStrategyMinMax` (CEO architecture decision, DAK-1948). MinMax +6.3pp overall
+  Recall@10, +13.5pp temporal. Callers that pass `Fusion: nil` will now use MinMax on the
+  server. Pass `&FusionStrategyRRF` explicitly to keep RRF behaviour. Updated godoc comments
+  to reflect the new server default.
+
 ## [0.11.1] - 2026-04-16
 
 ### Fixed
