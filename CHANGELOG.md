@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-04-16
+
+### Fixed
+- No code changes in this release. Version bump for parity with `dakera-rs` v0.11.1, which
+  fixed a serialization bug where `FusionStrategy::MinMax` was sent as `"min_max"` instead of
+  `"minmax"`. Go serialized `FusionStrategyMinMax` correctly as `"minmax"` in v0.11.0 (typed
+  string constant) — no action required if you are using this SDK.
+
 ## [0.11.0] - 2026-04-15
 
 ### Added
