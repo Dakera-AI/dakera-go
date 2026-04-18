@@ -508,6 +508,10 @@ type RecallRequest struct {
 	Rerank *bool `json:"rerank,omitempty"`
 	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyMinMax since v0.11.2).
 	Fusion *FusionStrategy `json:"fusion,omitempty"`
+	// CE-17: explicit vector/BM25 weight for Hybrid routing (0.0–1.0).
+	// When set, overrides the adaptive heuristic from QueryClassifier.
+	// Omit for adaptive defaults (recommended). Only effective when Routing = RoutingModeHybrid.
+	VectorWeight *float32 `json:"vector_weight,omitempty"`
 	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
 	// Set to pointer-to-false to disable on latency-sensitive paths.
 	Neighborhood *bool `json:"neighborhood,omitempty"`
