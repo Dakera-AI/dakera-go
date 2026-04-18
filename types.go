@@ -512,6 +512,10 @@ type RecallRequest struct {
 	// When set, overrides the adaptive heuristic from QueryClassifier.
 	// Omit for adaptive defaults (recommended). Only effective when Routing = RoutingModeHybrid.
 	VectorWeight *float32 `json:"vector_weight,omitempty"`
+	// CE-23: pseudo-relevance feedback (PRF) passes for BM25 routing (1–3, default: 1).
+	// Pass pointer-to-2 or pointer-to-3 for multi-hop or temporal queries.
+	// Only effective when Routing = RoutingModeBm25.
+	Iterations *uint8 `json:"iterations,omitempty"`
 	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
 	// Set to pointer-to-false to disable on latency-sensitive paths.
 	Neighborhood *bool `json:"neighborhood,omitempty"`
