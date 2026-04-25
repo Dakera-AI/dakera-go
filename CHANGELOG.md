@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.30] - 2026-04-25
+
+### Notes
+- Version bump to match server v0.11.30. No SDK API changes.
+- Server improvements since v0.11.4 (all transparent to SDK callers):
+  - **CE-48 — Hybrid PRF for inference queries (Cat3 +24pp)**: Pseudo-relevance
+    feedback now applied to `routing="auto"` Hybrid queries classified as temporal/inference.
+    Pass-1 Hybrid results seed a BM25 expansion pass; RRF-merged (k=60). Gated behind
+    `QueryClassifier::Temporal` to prevent Cat1 regression.
+  - **CE-47a — Cross-encoder reranking for BM25 temporal queries**: Cross-encoder reranker
+    now fires on temporal BM25 queries (was previously skipped for BM25 paths), correcting
+    BM25 rank-order errors caused by date-prefixed memories.
+  - **CE-43/39/35 — Temporal PRF hardening**: Auto-PRF (iterations=2) applied server-side
+    for all temporal BM25 queries. Pass-1 pool widened to 40 candidates. Date-window
+    narrowing (±90 days from anchor date) applied to pass-2 BM25.
+  - **CE-34 v2 — Tighter MultiHop classifier**: Structural-context guards on pronoun-after-
+    sequential-marker patterns protect Cat2 multi-hop queries from misrouting.
+  - **CE-31 — Sentence decomposition at store**: Content ≥80 chars is split into up to 5
+    atomic sentences, each embedded and indexed independently as sibling memories. Individual
+    facts become independently retrievable without scoring the full parent blob.
+  - **SEC-3 hardening (v0.11.30)**: Empty or short encryption passphrases now rejected
+    at the API boundary (NIST 800-63B). Affects callers of `RotateEncryptionKey()` — supply
+    a passphrase ≥ 8 chars or a full 64-hex raw key.
+  - **Security (v0.11.29)**: Server dep bumps: rustls-webpki 0.103.13 (RUSTSEC-2026-0104),
+    rand 0.9.1 (RUSTSEC-2026-0097). No SDK impact.
+
 ## [0.11.4] - 2026-04-18
 
 ### Added
