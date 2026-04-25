@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.31] - 2026-04-25
+
+### Notes
+- Version bump to match server v0.11.31. No SDK API changes.
+- Server improvements (all transparent to SDK callers):
+  - **CE-48 — BM25 English stemming for new fulltext indices**: All new fulltext indices
+    now use Snowball English stemmer at both index and query time. Morphological variants
+    (e.g. "running"→"run", "memories"→"memori") are normalized, increasing BM25 term
+    overlap. Only affects NEW indices — persisted indices retain their original config.
+    Expect +3–5pp on Cat1 (factual) and Cat4 (multi-hop) queries.
+
 ## [0.11.30] - 2026-04-25
 
 ### Notes
