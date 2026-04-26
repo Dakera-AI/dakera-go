@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.36] - 2026-04-26
+
+### Notes
+- Version bump to match server v0.11.36. No SDK API changes.
+- Server improvements v0.11.32–v0.11.36 (all transparent to SDK callers):
+  - **CE-53 — BM25 session pre-filter**: BM25 full-text candidates constrained to the
+    active `session_id` before cross-encoder ranking, closing the symmetry gap with HNSW
+    session pre-filter (CE-52). Session-scoped queries no longer bleed cross-session results.
+  - **CE-53 — fetch_n 20×→5×**: Cross-encoder candidate workload cut by 4×, eliminating
+    408 timeouts on high-memory conversations (1200+ memories). Full 1540Q bench: **82.4%
+    overall** (Cat1 80.1%, Cat2 85.7%, Cat3 55.2%, Cat4 85.0%).
+  - **CE-52 — Session HNSW pre-filter**: HNSW ANN search pre-filtered by `session_id`
+    for multi-session namespaces, eliminating cross-session bleed at scale.
+  - **CE-51 — Entity-prioritized PRF term extraction**: Hybrid PRF now prioritises
+    entity tokens during pseudo-relevance feedback expansion.
+  - **CE-49 — Hybrid PRF honors `iterations`**: `iterations` param now correctly applied
+    in Hybrid routing mode (was silently ignored in some PRF paths).
+  - **CE-33 — HNSW cache invalidation**: All write endpoints (store, update, delete,
+    consolidate, feedback) now invalidate the cached HNSW index, preventing stale search
+    results during high-throughput ingestion.
+  - **Parallel S3/Minio reads**: `ObjectStorage::get_all()` uses `buffer_unordered(32)` —
+    ~32× throughput improvement for bulk reads, fixing recall timeouts at 1000+ memories.
+
 ## [0.11.31] - 2026-04-25
 
 ### Notes
