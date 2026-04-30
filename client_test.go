@@ -515,6 +515,56 @@ func TestFilterHelpers(t *testing.T) {
 		}
 		assert.Equal(t, expected, filter)
 	})
+
+	t.Run("Exists", func(t *testing.T) {
+		filter := Exists(true)
+		assert.Equal(t, map[string]interface{}{OpExists: true}, filter)
+	})
+
+	t.Run("Contains", func(t *testing.T) {
+		filter := Contains("alice")
+		assert.Equal(t, map[string]interface{}{OpContains: "alice"}, filter)
+	})
+
+	t.Run("IContains", func(t *testing.T) {
+		filter := IContains("alice")
+		assert.Equal(t, map[string]interface{}{OpIContains: "alice"}, filter)
+	})
+
+	t.Run("StartsWith", func(t *testing.T) {
+		filter := StartsWith("entity:")
+		assert.Equal(t, map[string]interface{}{OpStartsWith: "entity:"}, filter)
+	})
+
+	t.Run("EndsWith", func(t *testing.T) {
+		filter := EndsWith(":alice")
+		assert.Equal(t, map[string]interface{}{OpEndsWith: ":alice"}, filter)
+	})
+
+	t.Run("Glob", func(t *testing.T) {
+		filter := Glob("entity:*:alice")
+		assert.Equal(t, map[string]interface{}{OpGlob: "entity:*:alice"}, filter)
+	})
+
+	t.Run("Regex", func(t *testing.T) {
+		filter := Regex("^entity:PERSON:")
+		assert.Equal(t, map[string]interface{}{OpRegex: "^entity:PERSON:"}, filter)
+	})
+
+	t.Run("ArrayContains", func(t *testing.T) {
+		filter := ArrayContains("entity:PERSON:alice")
+		assert.Equal(t, map[string]interface{}{OpArrayContains: "entity:PERSON:alice"}, filter)
+	})
+
+	t.Run("ArrayContainsAll", func(t *testing.T) {
+		filter := ArrayContainsAll("entity:PERSON:alice", "entity:PERSON:bob")
+		assert.Equal(t, map[string]interface{}{OpArrayContainsAll: []interface{}{"entity:PERSON:alice", "entity:PERSON:bob"}}, filter)
+	})
+
+	t.Run("ArrayContainsAny", func(t *testing.T) {
+		filter := ArrayContainsAny("entity:PERSON:alice", "entity:PERSON:carol")
+		assert.Equal(t, map[string]interface{}{OpArrayContainsAny: []interface{}{"entity:PERSON:alice", "entity:PERSON:carol"}}, filter)
+	})
 }
 
 func TestAuthorizationHeader(t *testing.T) {

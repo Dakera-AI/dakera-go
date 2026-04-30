@@ -265,6 +265,19 @@ const (
 	OpNin = "$nin"
 	OpAnd = "$and"
 	OpOr  = "$or"
+	// Existence check
+	OpExists = "$exists"
+	// String operators
+	OpContains    = "$contains"
+	OpIContains   = "$icontains"
+	OpStartsWith  = "$startsWith"
+	OpEndsWith    = "$endsWith"
+	OpGlob        = "$glob"
+	OpRegex       = "$regex"
+	// Array operators (CE-79)
+	OpArrayContains    = "$arrayContains"
+	OpArrayContainsAll = "$arrayContainsAll"
+	OpArrayContainsAny = "$arrayContainsAny"
 )
 
 // Eq creates an equality filter.
@@ -315,6 +328,56 @@ func And(conditions ...map[string]interface{}) map[string]interface{} {
 // Or creates a logical OR filter.
 func Or(conditions ...map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{OpOr: conditions}
+}
+
+// Exists creates a field-existence filter.
+func Exists(present bool) map[string]interface{} {
+	return map[string]interface{}{OpExists: present}
+}
+
+// Contains creates a case-sensitive substring filter.
+func Contains(substr string) map[string]interface{} {
+	return map[string]interface{}{OpContains: substr}
+}
+
+// IContains creates a case-insensitive substring filter.
+func IContains(substr string) map[string]interface{} {
+	return map[string]interface{}{OpIContains: substr}
+}
+
+// StartsWith creates a prefix filter.
+func StartsWith(prefix string) map[string]interface{} {
+	return map[string]interface{}{OpStartsWith: prefix}
+}
+
+// EndsWith creates a suffix filter.
+func EndsWith(suffix string) map[string]interface{} {
+	return map[string]interface{}{OpEndsWith: suffix}
+}
+
+// Glob creates a glob-pattern filter (supports * and ? wildcards).
+func Glob(pattern string) map[string]interface{} {
+	return map[string]interface{}{OpGlob: pattern}
+}
+
+// Regex creates a regular-expression filter.
+func Regex(pattern string) map[string]interface{} {
+	return map[string]interface{}{OpRegex: pattern}
+}
+
+// ArrayContains creates a filter that matches when an array metadata field contains value.
+func ArrayContains(value interface{}) map[string]interface{} {
+	return map[string]interface{}{OpArrayContains: value}
+}
+
+// ArrayContainsAll creates a filter that matches when an array field contains all values.
+func ArrayContainsAll(values ...interface{}) map[string]interface{} {
+	return map[string]interface{}{OpArrayContainsAll: values}
+}
+
+// ArrayContainsAny creates a filter that matches when an array field contains any of values.
+func ArrayContainsAny(values ...interface{}) map[string]interface{} {
+	return map[string]interface{}{OpArrayContainsAny: values}
 }
 
 // ===========================================================================
