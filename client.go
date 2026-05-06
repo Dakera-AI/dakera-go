@@ -2542,6 +2542,36 @@ func (c *Client) OdeExtractEntities(ctx context.Context, req ExtractEntitiesRequ
 }
 
 // ===========================================================================
+// CE-54: Fulltext Reindex (Admin)
+// ===========================================================================
+
+// AdminFulltextReindex backfills the BM25 fulltext index for memories stored
+// before CE-12 auto-indexing was added (CE-54).
+//
+// Sends POST /admin/fulltext/reindex. Requires Admin scope.
+//
+// Pass a non-empty namespace to limit reindexing to that namespace, or an
+// empty string to reindex all agent namespaces. Safe to call multiple times —
+// already-indexed memories are counted in TotalSkipped and not re-processed.
+func (c *Client) AdminFulltextReindex(ctx context.Context, namespace string) (*FulltextReindexResponse, error) {
+	var body interface{}
+	if namespace != "" {
+		body = map[string]string{"namespace": namespace}
+	} else {
+		body = map[string]string{}
+	}
+	data, err := c.request(ctx, "POST", "/admin/fulltext/reindex", body)
+	if err != nil {
+		return nil, err
+	}
+	var result FulltextReindexResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fulltext reindex response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
 // COG-1: Per-namespace Memory Lifecycle Policy
 // ===========================================================================
 

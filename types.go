@@ -2099,3 +2099,32 @@ type CompressResponse struct {
 	// milliseconds. May be zero if the server does not report it.
 	DurationMs float64 `json:"duration_ms,omitempty"`
 }
+
+// FulltextReindexNamespaceResult is the per-namespace breakdown from
+// POST /admin/fulltext/reindex (CE-54).
+type FulltextReindexNamespaceResult struct {
+	// Namespace that was scanned.
+	Namespace string `json:"namespace"`
+	// VectorsScanned is the total number of vectors examined.
+	VectorsScanned int `json:"vectors_scanned"`
+	// NewlyIndexed is the number of memories added to the BM25 index.
+	NewlyIndexed int `json:"newly_indexed"`
+	// AlreadyIndexed is the number of memories already in the BM25 index.
+	AlreadyIndexed int `json:"already_indexed"`
+	// ParseFailures is the number of memories that could not be parsed.
+	ParseFailures int `json:"parse_failures"`
+}
+
+// FulltextReindexResponse is returned by POST /admin/fulltext/reindex (CE-54).
+//
+// Returned by [Client.AdminFulltextReindex].
+type FulltextReindexResponse struct {
+	// NamespacesProcessed is the number of namespaces scanned.
+	NamespacesProcessed int `json:"namespaces_processed"`
+	// TotalIndexed is the total memories newly added to BM25 across all namespaces.
+	TotalIndexed int `json:"total_indexed"`
+	// TotalSkipped is the total memories already in the BM25 index (skipped).
+	TotalSkipped int `json:"total_skipped"`
+	// Details is the per-namespace breakdown.
+	Details []FulltextReindexNamespaceResult `json:"details"`
+}
