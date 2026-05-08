@@ -4,6 +4,8 @@ Go client for Dakera AI — store, recall, and search agent memories against a D
 
 Part of [Dakera AI](https://dakera.ai) — the memory engine for AI agents.
 
+> The Dakera memory engine scores **87.8% on LoCoMo** (1,540 questions, standard eval) — [benchmark details](https://dakera.ai/benchmark)
+
 ---
 
 ## Install
