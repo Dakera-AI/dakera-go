@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.53] - 2026-05-08
+
+### Notes
+- Version bump to match server v0.11.53. Server improvements v0.11.52–v0.11.53:
+  - **v0.11.53** — CE-106 entity+year co-occurrence BM25 boost for Cat2 multi-hop queries; CE-94 temporal-inference centroid tightening (12 patterns, -14.7pp Cat2 false-positive rate); distribution week1 (crate metadata, MCP registry, Docker Hub workflows).
+  - **v0.11.52** — CE-86 multiplicative post-reranker temporal scaling (+2.2pp Cat3); complete recall/search metrics coverage (4 PRs).
+
 ## [0.11.51] - 2026-05-06
 
 ### Added
