@@ -1,5 +1,7 @@
 # ⚡ dakera-go
 
+[![CI](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/Dakera-AI/dakera-go.svg)](https://pkg.go.dev/github.com/Dakera-AI/dakera-go) [![License: MIT](https://img.shields.io/github/license/Dakera-AI/dakera-go)](LICENSE)
+
 Go client for Dakera AI — store, recall, and search agent memories against a Dakera instance.
 
 Part of [Dakera AI](https://dakera.ai) — the memory engine for AI agents.
