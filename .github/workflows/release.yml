@@ -1,0 +1,40 @@
+name: Publish to pkg.go.dev
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Verify and publish to pkg.go.dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.23'
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+      - name: Request pkg.go.dev indexing
+        if: github.event_name == 'release'
+        run: |
+          MODULE=$(go list -m)
+          VERSION="${{ github.ref_name }}"
+          echo "Requesting Go module proxy to index ${MODULE}@${VERSION}"
+          curl -sf --max-time 30 "https://proxy.golang.org/${MODULE}/@v/${VERSION}.info" && echo "Proxy: indexed" || echo "Proxy: will index asynchronously"
+          curl -sf --max-time 30 "https://sum.golang.org/lookup/${MODULE}@${VERSION}" && echo "Sum DB: found" || echo "Sum DB: will sync asynchronously"
