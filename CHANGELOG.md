@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.54] - 2026-05-13
+
+### Notes
+- Version bump to match server v0.11.54 (CE-115: INFERENCE_TEMPORAL_MULT_BETA 0.5→0.65, Cat3 +2.2pp to 73.9%). Scoring-only change — no API changes.
+
 ## [0.11.53] - 2026-05-08
 
 ### Notes
