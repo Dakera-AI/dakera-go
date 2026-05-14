@@ -27,6 +27,15 @@ go.work.sum
 *.swo
 *~
 
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+credentials.json
+
 # OS files
 .DS_Store
 Thumbs.db
