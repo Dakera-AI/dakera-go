@@ -1,19 +1,38 @@
-# dakera-go
+<p align="center">
+  <img src="https://github.com/dakera-ai.png" alt="Dakera AI" width="80" />
+</p>
 
-[![CI](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/Dakera-AI/dakera-go.svg)](https://pkg.go.dev/github.com/Dakera-AI/dakera-go) [![License: MIT](https://img.shields.io/github/license/Dakera-AI/dakera-go)](LICENSE)
-[![dakera.ai](https://img.shields.io/badge/dakera.ai-website-22c55e?style=flat-square)](https://dakera.ai) [![Docs](https://img.shields.io/badge/docs-dakera.ai%2Fdocs-3b82f6?style=flat-square)](https://dakera.ai/docs)
+<h1 align="center">dakera-go</h1>
 
-Go client for Dakera AI — store, recall, and search agent memories against a Dakera instance.
+<p align="center">
+  Go client for <a href="https://dakera.ai">Dakera AI</a> — the memory engine for AI agents
+</p>
 
-Part of [Dakera AI](https://dakera.ai) — the memory engine for AI agents.
+<p align="center">
+  <a href="https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://pkg.go.dev/github.com/Dakera-AI/dakera-go"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/Dakera-AI/dakera-go.svg" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/Dakera-AI/dakera-go" /></a>
+  <a href="https://dakera.ai/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-dakera.ai%2Fdocs-3b82f6?style=flat-square" /></a>
+  <a href="https://dakera.ai/benchmark"><img alt="LoCoMo 87.6%" src="https://img.shields.io/badge/LoCoMo-87.6%25-22c55e?style=flat-square" /></a>
+</p>
 
-> The Dakera memory engine scores **87.6% on LoCoMo** (1,540 questions, standard eval) — [benchmark details](https://dakera.ai/benchmark)
+---
+
+## Why Dakera?
+
+| | Dakera | Others |
+|---|---|---|
+| **LoCoMo accuracy** | **87.6%** (1,540 Q standard eval) | 60–92% |
+| **Deployment** | Single binary, Docker one-liner | External vector DB + embedding service required |
+| **Embeddings** | Built-in — no OpenAI key needed | Requires external embedding API |
+| **Search modes** | Vector · BM25 · Hybrid · Knowledge Graph | Usually one or two |
+| **Dependencies** | stdlib `net/http` only | Often pulls in gRPC or third-party HTTP clients |
+
+→ [Full benchmark results](https://dakera.ai/benchmark) · [dakera.ai](https://dakera.ai)
 
 ---
 
 ## Run Dakera
-
-You need a running Dakera server before using this SDK. The fastest way:
 
 ```bash
 docker run -d \
@@ -21,16 +40,16 @@ docker run -d \
   -p 3300:3300 \
   -e DAKERA_ROOT_API_KEY=dk-mykey \
   ghcr.io/dakera-ai/dakera:latest
+
+curl http://localhost:3300/health  # → {"status":"ok"}
 ```
 
-For persistent storage (recommended for anything beyond a quick test):
+For persistent storage with Docker Compose:
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/Dakera-AI/dakera-deploy/main/docker-compose.yml \
   -o docker-compose.yml
 DAKERA_API_KEY=dk-mykey docker compose up -d
-
-curl http://localhost:3300/health  # → {"status":"ok"}
 ```
 
 Full deployment guide (Docker Compose, Kubernetes, Helm): [dakera-deploy](https://github.com/Dakera-AI/dakera-deploy)
@@ -42,6 +61,10 @@ Full deployment guide (Docker Compose, Kubernetes, Helm): [dakera-deploy](https:
 ```bash
 go get github.com/dakera-ai/dakera-go@latest
 ```
+
+Requires Go 1.21+. Uses only the standard library — no external runtime dependencies.
+
+---
 
 ## Quick Start
 
@@ -83,13 +106,36 @@ func main() {
         {ID: "vec1", Values: []float32{0.1, 0.2, 0.3}},
     })
 
-    // Full-text search
-    results, _ := client.FulltextSearch(ctx, "my-namespace", "completed task", nil)
+    // Hybrid search (vector + BM25)
+    results, _ := client.HybridSearch(ctx, "my-namespace", "completed task", nil)
     for _, r := range results {
         fmt.Println(r.ID, r.Score)
     }
 }
 ```
+
+### Context-based cancellation
+
+All methods accept a `context.Context` — use it for timeouts, deadlines, or cancellation:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "preferences", TopK: 3})
+```
+
+### Text auto-embedding
+
+Send raw text without pre-computing embeddings — Dakera embeds server-side:
+
+```go
+client.UpsertText(ctx, "my-namespace", []dakera.TextInput{
+    {ID: "doc1", Text: "Agent completed onboarding flow successfully"},
+})
+```
+
+---
 
 ## Features
 
@@ -100,20 +146,16 @@ func main() {
 - **Full-Text Search** — BM25 ranking with stemming and stop-word filtering
 - **Hybrid Search** — combine vector similarity with keyword matching
 - **Text Auto-Embedding** — server-side embedding generation (no local model needed)
+- **Namespaces** — isolated vector stores per project, tenant, or use case
 - **Feedback Loop** — upvote/downvote/flag memories to improve recall quality
 - **Entity Extraction** — GLiNER NER for automatic entity detection
-- **Streaming** — SSE event subscriptions for real-time memory updates
+- **SSE Streaming** — Server-sent event subscriptions for real-time memory updates
 - **Typed Filters** — `Eq()`, `Gt()`, `Contains()`, `ArrayContains()` and more
+- **Context-Based** — all methods accept `context.Context` for cancellation and timeouts
 - **Retry & Rate Limiting** — built-in exponential backoff and rate-limit header tracking
-- **Zero Dependencies** — standard library HTTP client, no external runtime deps
+- **Zero Dependencies** — standard library `net/http` client, no external runtime deps
 
-## Examples
-
-See the [`examples/`](examples/) directory:
-
-- [`basic/`](examples/basic/main.go) — vectors, namespaces, queries, filters
-- [`memory/`](examples/memory/main.go) — store/recall memories, sessions, agent stats
-- [`advanced/`](examples/advanced/main.go) — text embedding, full-text, hybrid search, analytics
+---
 
 ## Connect to Dakera
 
@@ -138,25 +180,46 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 })
 ```
 
-## Documentation
+---
 
--> [Full docs](https://dakera.ai/docs)  
--> [API reference](https://dakera.ai/docs/api)  
--> [Go SDK reference](https://dakera.ai/docs/sdk/go)
+## Examples
 
-## Related
+See the [`examples/`](examples/) directory:
 
-| Repo | What it is |
-|---|---|
-| [dakera-py](https://github.com/dakera-ai/dakera-py) | Python SDK |
-| [dakera-js](https://github.com/dakera-ai/dakera-js) | TypeScript SDK |
-| [dakera-rs](https://github.com/dakera-ai/dakera-rs) | Rust client |
-| [dakera-cli](https://github.com/dakera-ai/dakera-cli) | CLI |
-| [dakera-mcp](https://github.com/dakera-ai/dakera-mcp) | MCP server |
-| [dakera-deploy](https://github.com/dakera-ai/dakera-deploy) | Self-host Dakera |
+- [`basic/`](examples/basic/main.go) — vectors, namespaces, queries, filters
+- [`memory/`](examples/memory/main.go) — store/recall memories, sessions, agent stats
+- [`advanced/`](examples/advanced/main.go) — text embedding, full-text, hybrid search, analytics
 
 ---
 
-**[dakera.ai](https://dakera.ai)** · [Documentation](https://dakera.ai/docs) · [Request Early Access](https://dakera.ai#cta)
+## Resources
 
-<sub>Part of the Dakera AI open-source ecosystem. Built with Rust. Self-hosted. Zero dependencies.</sub>
+| | |
+|---|---|
+| [Documentation](https://dakera.ai/docs) | Full API reference and guides |
+| [Go SDK docs](https://pkg.go.dev/github.com/Dakera-AI/dakera-go) | pkg.go.dev reference |
+| [Benchmark](https://dakera.ai/benchmark) | LoCoMo evaluation results |
+| [dakera.ai](https://dakera.ai) | Website and early access |
+| [GitHub Org](https://github.com/dakera-ai) | All public repos |
+| [dakera-deploy](https://github.com/Dakera-AI/dakera-deploy) | Self-hosting guide |
+
+### Other SDKs
+
+| SDK | Package |
+|---|---|
+| [dakera-py](https://github.com/dakera-ai/dakera-py) | `dakera` (PyPI) |
+| [dakera-js](https://github.com/dakera-ai/dakera-js) | `@dakera-ai/dakera` (npm) |
+| [dakera-rs](https://github.com/dakera-ai/dakera-rs) | `dakera-client` (crates.io) |
+| [dakera-cli](https://github.com/dakera-ai/dakera-cli) | CLI tool |
+| [dakera-mcp](https://github.com/dakera-ai/dakera-mcp) | MCP server for Claude/Cursor |
+
+---
+
+<p align="center">
+  <a href="https://dakera.ai">dakera.ai</a> ·
+  <a href="https://dakera.ai/docs">Docs</a> ·
+  <a href="https://dakera.ai/benchmark">Benchmark</a> ·
+  <a href="https://dakera.ai#cta">Request Early Access</a>
+</p>
+
+<p align="center"><sub>Built with Rust. Single binary. Zero external dependencies.</sub></p>
