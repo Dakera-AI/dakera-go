@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/Dakera-AI/dakera-go/security/advisories/new
+    about: Report security vulnerabilities via GitHub Private Security Reporting, not public Issues.
+  - name: Dakera Documentation
+    url: https://dakera.ai/docs
+    about: Check the docs before opening an issue — most questions are answered there.
+  - name: Community Discussions
+    url: https://github.com/orgs/dakera-ai/discussions
+    about: Ask questions and connect with the Dakera community.
