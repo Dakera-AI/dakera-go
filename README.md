@@ -1,6 +1,7 @@
 # ⚡ dakera-go
 
 [![CI](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/Dakera-AI/dakera-go/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/Dakera-AI/dakera-go.svg)](https://pkg.go.dev/github.com/Dakera-AI/dakera-go) [![License: MIT](https://img.shields.io/github/license/Dakera-AI/dakera-go)](LICENSE)
+[![dakera.ai](https://img.shields.io/badge/dakera.ai-website-22c55e?style=flat-square)](https://dakera.ai) [![Docs](https://img.shields.io/badge/docs-dakera.ai%2Fdocs-3b82f6?style=flat-square)](https://dakera.ai/docs)
 
 Go client for Dakera AI — store, recall, and search agent memories against a Dakera instance.
 
@@ -110,4 +111,6 @@ client := dakera.NewClient(dakera.Config{BaseURL: "https://api.dakera.ai", APIKe
 
 ---
 
-*Part of the Dakera AI open core. The engine is proprietary. The tools are yours.*
+**[dakera.ai](https://dakera.ai)** · [Documentation](https://dakera.ai/docs) · [Request Early Access](https://dakera.ai#cta)
+
+<sub>Part of the Dakera AI open-source ecosystem. Built with Rust. Self-hosted. Zero dependencies.</sub>
