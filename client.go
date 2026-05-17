@@ -802,7 +802,7 @@ func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) 
 
 // GetMemory gets a specific memory.
 func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s", memoryID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s?agent_id=%s", memoryID, url.QueryEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
