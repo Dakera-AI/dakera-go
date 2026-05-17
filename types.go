@@ -2136,3 +2136,98 @@ type FulltextReindexResponse struct {
 	// Details is the per-namespace breakdown.
 	Details []FulltextReindexNamespaceResult `json:"details"`
 }
+
+// ===========================================================================
+// Engine Parity — Health Probes, Vector Bulk Ops, Agent Consolidation
+// ===========================================================================
+
+// ReadinessResponse is returned by GET /health/ready.
+type ReadinessResponse struct {
+	Ready   bool                               `json:"ready"`
+	Version string                             `json:"version"`
+	Checks  map[string]ReadinessCheckComponent `json:"checks"`
+}
+
+// ReadinessCheckComponent is one component in a readiness check.
+type ReadinessCheckComponent struct {
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+// LivenessResponse is returned by GET /health/live.
+type LivenessResponse struct {
+	Alive         bool   `json:"alive"`
+	Version       string `json:"version"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+}
+
+// BulkUpdateResponse is returned by POST /v1/namespaces/{ns}/vectors/bulk-update.
+type BulkUpdateResponse struct {
+	Updated int      `json:"updated"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors"`
+}
+
+// BulkDeleteResponse is returned by POST /v1/namespaces/{ns}/vectors/bulk-delete.
+type BulkDeleteResponse struct {
+	Deleted int      `json:"deleted"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors"`
+}
+
+// CountVectorsResponse is returned by POST /v1/namespaces/{ns}/vectors/count.
+type CountVectorsResponse struct {
+	Count     int    `json:"count"`
+	Namespace string `json:"namespace"`
+}
+
+// AgentConsolidateResponse is returned by POST /v1/agents/{agent_id}/consolidate.
+type AgentConsolidateResponse struct {
+	AgentID            string   `json:"agent_id"`
+	MemoriesScanned    int      `json:"memories_scanned"`
+	ClustersFound      int      `json:"clusters_found"`
+	MemoriesDeprecated int      `json:"memories_deprecated"`
+	AnchorIDs          []string `json:"anchor_ids"`
+	DeprecatedIDs      []string `json:"deprecated_ids"`
+	Skipped            *bool    `json:"skipped,omitempty"`
+	Reason             string   `json:"reason,omitempty"`
+}
+
+// AgentConsolidationLogEntry is one entry in the agent consolidation log.
+type AgentConsolidationLogEntry struct {
+	Timestamp          int64    `json:"timestamp"`
+	ClustersFound      int      `json:"clusters_found"`
+	MemoriesDeprecated int      `json:"memories_deprecated"`
+	AnchorIDs          []string `json:"anchor_ids"`
+	DeprecatedIDs      []string `json:"deprecated_ids"`
+}
+
+// ConsolidationConfigPatch is the request for PATCH /v1/agents/{agent_id}/consolidation/config.
+type ConsolidationConfigPatch struct {
+	Enabled             *bool    `json:"enabled,omitempty"`
+	Epsilon             *float64 `json:"epsilon,omitempty"`
+	MinSamples          *int     `json:"min_samples,omitempty"`
+	SoftDeprecationDays *int     `json:"soft_deprecation_days,omitempty"`
+}
+
+// AgentConsolidationConfig is the response from consolidation config endpoints.
+type AgentConsolidationConfig struct {
+	Enabled             bool    `json:"enabled"`
+	Epsilon             float64 `json:"epsilon"`
+	MinSamples          int     `json:"min_samples"`
+	SoftDeprecationDays int     `json:"soft_deprecation_days"`
+}
+
+// NamespaceEntityConfig is returned by GET /v1/namespaces/{ns}/config.
+type NamespaceEntityConfig struct {
+	Namespace       string   `json:"namespace"`
+	ExtractEntities bool     `json:"extract_entities"`
+	EntityTypes     []string `json:"entity_types"`
+}
+
+// ExtractorConfigResponse is returned by GET /v1/namespaces/{ns}/extractor.
+type ExtractorConfigResponse struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+}

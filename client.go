@@ -349,6 +349,56 @@ func (c *Client) Delete(ctx context.Context, namespace string, opts DeleteOption
 	return &resp, nil
 }
 
+// BulkUpdateVectors bulk updates vector metadata matching a filter.
+func (c *Client) BulkUpdateVectors(ctx context.Context, namespace string, filter map[string]interface{}, update map[string]interface{}) (*BulkUpdateResponse, error) {
+	body := map[string]interface{}{
+		"filter": filter,
+		"update": update,
+	}
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-update", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+	var resp BulkUpdateResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// BulkDeleteVectors bulk deletes vectors matching a filter.
+func (c *Client) BulkDeleteVectors(ctx context.Context, namespace string, filter map[string]interface{}) (*BulkDeleteResponse, error) {
+	body := map[string]interface{}{
+		"filter": filter,
+	}
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-delete", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+	var resp BulkDeleteResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// CountVectors counts vectors in a namespace, optionally filtered.
+func (c *Client) CountVectors(ctx context.Context, namespace string, filter map[string]interface{}) (*CountVectorsResponse, error) {
+	body := make(map[string]interface{})
+	if filter != nil {
+		body["filter"] = filter
+	}
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/count", namespace), body)
+	if err != nil {
+		return nil, err
+	}
+	var resp CountVectorsResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
 // Fetch retrieves vectors by ID from a namespace.
 func (c *Client) Fetch(ctx context.Context, namespace string, ids []string, opts *FetchOptions) ([]Vector, error) {
 	body := map[string]interface{}{
@@ -715,6 +765,32 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	return &resp, nil
 }
 
+// HealthReady checks K8s readiness probe — storage and dependencies.
+func (c *Client) HealthReady(ctx context.Context) (*ReadinessResponse, error) {
+	respBody, err := c.request(ctx, "GET", "/health/ready", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp ReadinessResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// HealthLive checks K8s liveness probe — process is alive.
+func (c *Client) HealthLive(ctx context.Context) (*LivenessResponse, error) {
+	respBody, err := c.request(ctx, "GET", "/health/live", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp LivenessResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
 // GetIndexStats returns index statistics for a namespace.
 func (c *Client) GetIndexStats(ctx context.Context, namespace string) (*IndexStats, error) {
 	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/stats", namespace), nil)
@@ -933,6 +1009,45 @@ func (c *Client) Consolidate(ctx context.Context, agentID string, req Consolidat
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	return &result, nil
+}
+
+// ConsolidateAgent consolidates memories directly for an agent (DBSCAN clustering).
+func (c *Client) ConsolidateAgent(ctx context.Context, agentID string) (*AgentConsolidateResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/consolidate", agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp AgentConsolidateResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// GetConsolidationLog gets the consolidation execution log for an agent.
+func (c *Client) GetConsolidationLog(ctx context.Context, agentID string) ([]AgentConsolidationLogEntry, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/consolidation/log", agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var entries []AgentConsolidationLogEntry
+	if err := json.Unmarshal(respBody, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return entries, nil
+}
+
+// PatchConsolidationConfig updates the consolidation configuration for an agent.
+func (c *Client) PatchConsolidationConfig(ctx context.Context, agentID string, patch ConsolidationConfigPatch) (*AgentConsolidationConfig, error) {
+	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/agents/%s/consolidation/config", agentID), patch)
+	if err != nil {
+		return nil, err
+	}
+	var resp AgentConsolidationConfig
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
 }
 
 // MemoryFeedback submits feedback on a memory recall.
@@ -2187,6 +2302,32 @@ func (c *Client) KnowledgeExport(ctx context.Context, agentID, format string) (*
 // ===========================================================================
 // CE-4 Entity Extraction (GLiNER)
 // ===========================================================================
+
+// GetNamespaceEntityConfig gets entity extraction configuration for a namespace.
+func (c *Client) GetNamespaceEntityConfig(ctx context.Context, namespace string) (*NamespaceEntityConfig, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/config", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp NamespaceEntityConfig
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// GetNamespaceExtractor gets the extractor provider configuration for a namespace.
+func (c *Client) GetNamespaceExtractor(ctx context.Context, namespace string) (*ExtractorConfigResponse, error) {
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/extractor", namespace), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp ExtractorConfigResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
 
 // ConfigureNamespaceNer configures entity extraction for a namespace (CE-4).
 // PATCH /v1/namespaces/{namespace}/config — requires Write scope.
