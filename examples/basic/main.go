@@ -113,17 +113,6 @@ func main() {
 			result.ID, result.Score, result.Metadata["category"])
 	}
 
-	// Fetch vectors by ID
-	fmt.Println("\n--- Fetched Vectors ---")
-	vectors, err := client.Fetch(ctx, namespace, []string{"vec1", "vec2"}, nil)
-	if err != nil {
-		log.Printf("Fetch not supported on this server version: %v", err)
-	} else {
-		for _, vec := range vectors {
-			fmt.Printf("ID: %s, Values: %v\n", vec.ID, vec.Values)
-		}
-	}
-
 	// Batch query
 	fmt.Println("\n--- Batch Query Results ---")
 	batchResults, err := client.BatchQuery(ctx, namespace, []dakera.BatchQuerySpec{
@@ -155,10 +144,9 @@ func main() {
 		IDs: []string{"vec1"},
 	})
 	if err != nil {
-		log.Printf("Delete not supported on this server version: %v", err)
-	} else {
-		fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
+		log.Fatalf("Failed to delete: %v", err)
 	}
+	fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
 
 	// Cleanup - delete namespace
 	err = client.DeleteNamespace(ctx, namespace)
