@@ -267,7 +267,7 @@ func TestHybridSearch(t *testing.T) {
 
 	client := NewClient(server.URL)
 	results, err := client.HybridSearch(context.Background(), "test-ns", []float32{0.1, 0.2, 0.3}, "hello", &HybridSearchOptions{
-		Alpha: 0.5,
+		VectorWeight: 0.5,
 	})
 
 	require.NoError(t, err)
