@@ -8,7 +8,7 @@ If you discover a security vulnerability in this project, please report it respo
 
 ### How to Report
 
-Email: security@dakera.ai
+Report via [GitHub Security Advisories](https://github.com/dakera-ai/dakera-go/security/advisories/new)
 
 Please include:
 - Description of the vulnerability
