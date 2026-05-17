@@ -270,6 +270,121 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	return nil, &DakeraError{Message: "request failed after retries"}
 }
 
+// requestRaw sends an HTTP request with a raw byte body and a custom content type.
+// It reuses the same retry and error-handling logic as request but skips JSON marshaling.
+func (c *Client) requestRaw(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
+	reqURL := c.baseURL + path
+	rc := c.retryConfig
+	var lastErr error
+
+	for attempt := 0; attempt < rc.MaxRetries; attempt++ {
+		var reqBody io.Reader
+		if body != nil {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", contentType)
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+		for k, v := range c.headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
+			}
+			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
+			if attempt < rc.MaxRetries-1 {
+				time.Sleep(c.computeBackoff(attempt))
+				continue
+			}
+			return nil, lastErr
+		}
+		defer resp.Body.Close()
+
+		c.rlMu.Lock()
+		c.lastRateLimitHeaders = parseRateLimitHeaders(resp.Header)
+		c.rlMu.Unlock()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", err)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return respBody, nil
+		}
+
+		var errBody struct {
+			Error   string    `json:"error"`
+			Code    ErrorCode `json:"code"`
+			Details string    `json:"details"`
+		}
+		json.Unmarshal(respBody, &errBody)
+		errMsg := errBody.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		errorCode := errBody.Code
+		if errorCode == "" {
+			errorCode = ErrorCodeUnknown
+		}
+
+		switch resp.StatusCode {
+		case 400:
+			return nil, NewValidationError(errMsg, resp.StatusCode, errBody, errorCode)
+		case 401:
+			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
+		case 403:
+			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
+		case 404:
+			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
+		case 429:
+			retryAfterSecs := -1
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				retryAfterSecs, _ = strconv.Atoi(ra)
+			}
+			rlErr := NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfterSecs)
+			if attempt < rc.MaxRetries-1 {
+				var wait time.Duration
+				if retryAfterSecs >= 0 {
+					wait = time.Duration(retryAfterSecs) * time.Second
+				} else {
+					wait = c.computeBackoff(attempt)
+				}
+				time.Sleep(wait)
+				lastErr = rlErr
+				continue
+			}
+			return nil, rlErr
+		default:
+			if resp.StatusCode >= 500 {
+				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
+				if attempt < rc.MaxRetries-1 {
+					time.Sleep(c.computeBackoff(attempt))
+					continue
+				}
+				return nil, lastErr
+			}
+			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, Code: errorCode, ResponseBody: errBody}
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, &DakeraError{Message: "request failed after retries"}
+}
+
 // ===========================================================================
 // Vector Operations
 // ===========================================================================
@@ -2767,6 +2882,598 @@ func (c *Client) SetMemoryPolicy(ctx context.Context, namespace string, policy M
 	var result MemoryPolicy
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal memory policy response: %w", err)
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Phase 2 — Cluster & Maintenance
+// =============================================================================
+
+// AdminClusterReplication returns cluster replication status.
+func (c *Client) AdminClusterReplication(ctx context.Context) (*ReplicationStatus, error) {
+	resp, err := c.request(ctx, "GET", "/admin/cluster/replication", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ReplicationStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal replication status: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminListShards returns the list of shards.
+func (c *Client) AdminListShards(ctx context.Context) (*ShardListResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/cluster/shards", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ShardListResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal shard list: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminRebalanceShards triggers shard rebalancing.
+func (c *Client) AdminRebalanceShards(ctx context.Context, req ShardRebalanceRequest) (*ShardRebalanceResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/cluster/shards/rebalance", req)
+	if err != nil {
+		return nil, err
+	}
+	var result ShardRebalanceResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal rebalance response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminMaintenanceStatus returns current maintenance mode status.
+func (c *Client) AdminMaintenanceStatus(ctx context.Context) (*MaintenanceStatus, error) {
+	resp, err := c.request(ctx, "GET", "/admin/cluster/maintenance", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MaintenanceStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal maintenance status: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminEnableMaintenance enables maintenance mode.
+func (c *Client) AdminEnableMaintenance(ctx context.Context, req EnableMaintenanceRequest) (*MaintenanceStatus, error) {
+	resp, err := c.request(ctx, "POST", "/admin/cluster/maintenance/enable", req)
+	if err != nil {
+		return nil, err
+	}
+	var result MaintenanceStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal maintenance status: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminDisableMaintenance disables maintenance mode.
+func (c *Client) AdminDisableMaintenance(ctx context.Context, req DisableMaintenanceRequest) (*MaintenanceStatus, error) {
+	resp, err := c.request(ctx, "POST", "/admin/cluster/maintenance/disable", req)
+	if err != nil {
+		return nil, err
+	}
+	var result MaintenanceStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal maintenance status: %w", err)
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Phase 2 — Quotas
+// =============================================================================
+
+// AdminListQuotas lists all namespace quotas.
+func (c *Client) AdminListQuotas(ctx context.Context) (*QuotaListResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/quotas", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result QuotaListResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal quota list: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminGetDefaultQuota returns the default quota configuration.
+func (c *Client) AdminGetDefaultQuota(ctx context.Context) (*DefaultQuotaResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/quotas/default", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DefaultQuotaResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal default quota: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminSetDefaultQuota sets the default quota configuration.
+func (c *Client) AdminSetDefaultQuota(ctx context.Context, req SetDefaultQuotaRequest) (*SetQuotaResponse, error) {
+	resp, err := c.request(ctx, "PUT", "/admin/quotas/default", req)
+	if err != nil {
+		return nil, err
+	}
+	var result SetQuotaResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal set quota response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminGetQuota returns the quota for a specific namespace.
+func (c *Client) AdminGetQuota(ctx context.Context, namespace string) (*QuotaStatus, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result QuotaStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal quota status: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminSetQuota sets the quota for a specific namespace.
+func (c *Client) AdminSetQuota(ctx context.Context, namespace string, req SetQuotaRequest) (*SetQuotaResponse, error) {
+	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result SetQuotaResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal set quota response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminDeleteQuota removes the quota for a specific namespace.
+func (c *Client) AdminDeleteQuota(ctx context.Context, namespace string) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal delete quota response: %w", err)
+	}
+	return result, nil
+}
+
+// AdminCheckQuota checks if an operation would exceed quota for a namespace.
+func (c *Client) AdminCheckQuota(ctx context.Context, namespace string, req QuotaCheckRequest) (*QuotaCheckResult, error) {
+	resp, err := c.request(ctx, "POST", fmt.Sprintf("/admin/quotas/%s/check", url.PathEscape(namespace)), req)
+	if err != nil {
+		return nil, err
+	}
+	var result QuotaCheckResult
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal quota check result: %w", err)
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Phase 2 — Slow Queries
+// =============================================================================
+
+// AdminListSlowQueries lists recent slow queries.
+func (c *Client) AdminListSlowQueries(ctx context.Context, namespace, queryType string, limit int) ([]map[string]interface{}, error) {
+	path := "/admin/slow-queries"
+	params := url.Values{}
+	if namespace != "" {
+		params.Set("namespace", namespace)
+	}
+	if queryType != "" {
+		params.Set("query_type", queryType)
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	resp, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal slow queries: %w", err)
+	}
+	return result, nil
+}
+
+// AdminSlowQuerySummary returns the slow query summary.
+func (c *Client) AdminSlowQuerySummary(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "GET", "/admin/slow-queries/summary", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal slow query summary: %w", err)
+	}
+	return result, nil
+}
+
+// AdminClearSlowQueries clears the slow query log.
+func (c *Client) AdminClearSlowQueries(ctx context.Context, namespace string) (map[string]interface{}, error) {
+	path := "/admin/slow-queries"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
+	resp, err := c.request(ctx, "DELETE", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal clear slow queries response: %w", err)
+	}
+	return result, nil
+}
+
+// AdminUpdateSlowQueryConfig updates the slow query configuration.
+func (c *Client) AdminUpdateSlowQueryConfig(ctx context.Context, config map[string]interface{}) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "PATCH", "/admin/slow-queries/config", config)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal slow query config response: %w", err)
+	}
+	return result, nil
+}
+
+// =============================================================================
+// Phase 2 — Backups
+// =============================================================================
+
+// AdminListBackups lists all backups.
+func (c *Client) AdminListBackups(ctx context.Context) (*BackupListResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/backups", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result BackupListResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup list: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminCreateBackup creates a new backup.
+func (c *Client) AdminCreateBackup(ctx context.Context, req CreateBackupRequest) (*CreateBackupResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/backups", req)
+	if err != nil {
+		return nil, err
+	}
+	var result CreateBackupResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal create backup response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminGetBackup returns backup details by ID.
+func (c *Client) AdminGetBackup(ctx context.Context, backupID string) (*AdminBackupInfo, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/%s", url.PathEscape(backupID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AdminBackupInfo
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup info: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminDeleteBackup deletes a backup by ID.
+func (c *Client) AdminDeleteBackup(ctx context.Context, backupID string) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/backups/%s", url.PathEscape(backupID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal delete backup response: %w", err)
+	}
+	return result, nil
+}
+
+// AdminGetBackupSchedule returns the backup schedule configuration.
+func (c *Client) AdminGetBackupSchedule(ctx context.Context) (*BackupSchedule, error) {
+	resp, err := c.request(ctx, "GET", "/admin/backups/schedule", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result BackupSchedule
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup schedule: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminUpdateBackupSchedule updates the backup schedule.
+func (c *Client) AdminUpdateBackupSchedule(ctx context.Context, req UpdateBackupScheduleRequest) (*BackupSchedule, error) {
+	resp, err := c.request(ctx, "POST", "/admin/backups/schedule", req)
+	if err != nil {
+		return nil, err
+	}
+	var result BackupSchedule
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup schedule: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminRestoreBackup initiates a backup restore.
+func (c *Client) AdminRestoreBackup(ctx context.Context, req RestoreBackupRequest) (*RestoreBackupResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/backups/restore", req)
+	if err != nil {
+		return nil, err
+	}
+	var result RestoreBackupResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal restore response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminGetRestoreStatus returns the status of a restore operation.
+func (c *Client) AdminGetRestoreStatus(ctx context.Context, restoreID string) (*RestoreBackupResponse, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/restore/%s", url.PathEscape(restoreID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result RestoreBackupResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal restore status: %w", err)
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Phase 2 — Ops: Diagnostics & Jobs
+// =============================================================================
+
+// OpsDiagnostics returns system diagnostics.
+func (c *Client) OpsDiagnostics(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "GET", "/ops/diagnostics", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal diagnostics: %w", err)
+	}
+	return result, nil
+}
+
+// OpsListJobs lists background jobs.
+func (c *Client) OpsListJobs(ctx context.Context) ([]JobInfo, error) {
+	resp, err := c.request(ctx, "GET", "/ops/jobs", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []JobInfo
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal jobs list: %w", err)
+	}
+	return result, nil
+}
+
+// OpsGetJob returns the status of a specific background job.
+func (c *Client) OpsGetJob(ctx context.Context, jobID string) (*JobInfo, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/ops/jobs/%s", url.PathEscape(jobID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result JobInfo
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal job info: %w", err)
+	}
+	return &result, nil
+}
+
+// OpsCompact triggers a compaction pass.
+func (c *Client) OpsCompact(ctx context.Context, req CompactionRequest) (*CompactionResponse, error) {
+	resp, err := c.request(ctx, "POST", "/ops/compact", req)
+	if err != nil {
+		return nil, err
+	}
+	var result CompactionResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal compaction response: %w", err)
+	}
+	return &result, nil
+}
+
+// OpsShutdown requests a graceful server shutdown.
+func (c *Client) OpsShutdown(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "POST", "/ops/shutdown", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal shutdown response: %w", err)
+	}
+	return result, nil
+}
+
+// ===========================================================================
+// Fulltext Operations
+// ===========================================================================
+
+// FulltextStats returns full-text index statistics for the given namespace.
+func (c *Client) FulltextStats(ctx context.Context, namespace string) (*FullTextIndexStats, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/fulltext/stats", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result FullTextIndexStats
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fulltext stats: %w", err)
+	}
+	return &result, nil
+}
+
+// FulltextDelete deletes full-text entries by their IDs within the given namespace.
+func (c *Client) FulltextDelete(ctx context.Context, namespace string, ids []string) (*FulltextDeleteResponse, error) {
+	body := FulltextDeleteRequest{IDs: ids}
+	resp, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/delete", url.PathEscape(namespace)), body)
+	if err != nil {
+		return nil, err
+	}
+	var result FulltextDeleteResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fulltext delete response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Admin Operations
+// ===========================================================================
+
+// AdminTtlStats returns TTL statistics across all namespaces.
+func (c *Client) AdminTtlStats(ctx context.Context) (*TtlStatsResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/ttl/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result TtlStatsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ttl stats: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Routing Operations
+// ===========================================================================
+
+// RouteQuery routes a query to the most relevant namespaces.
+func (c *Client) RouteQuery(ctx context.Context, req RouteRequest) (*RouteResponse, error) {
+	resp, err := c.request(ctx, "POST", "/v1/route", req)
+	if err != nil {
+		return nil, err
+	}
+	var result RouteResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal route response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Import Operations
+// ===========================================================================
+
+// ImportJobStatus returns the status of an import job.
+func (c *Client) ImportJobStatus(ctx context.Context, jobID string) (*ImportJobStatus, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/import/%s/status", url.PathEscape(jobID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ImportJobStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal import job status: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Backup Operations
+// ===========================================================================
+
+// AdminDownloadBackup downloads a backup archive as raw bytes.
+func (c *Client) AdminDownloadBackup(ctx context.Context, backupID string) ([]byte, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/%s/download", url.PathEscape(backupID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// AdminUploadBackup uploads a raw backup archive and returns the server response.
+func (c *Client) AdminUploadBackup(ctx context.Context, data []byte) (map[string]interface{}, error) {
+	resp, err := c.requestRaw(ctx, "POST", "/admin/backups/upload", "application/octet-stream", data)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal upload backup response: %w", err)
+	}
+	return result, nil
+}
+
+// ===========================================================================
+// Storage Tier Operations
+// ===========================================================================
+
+// AdminStorageTierOverview returns an overview of the storage tier architecture and activity.
+func (c *Client) AdminStorageTierOverview(ctx context.Context) (*StorageTierOverview, error) {
+	resp, err := c.request(ctx, "GET", "/admin/storage/tiers", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StorageTierOverview
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal storage tier overview: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminBackgroundActivity returns the current background activity as dynamic JSON.
+func (c *Client) AdminBackgroundActivity(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "GET", "/admin/background-activity", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal background activity: %w", err)
+	}
+	return result, nil
+}
+
+// AdminMemoryTypeStats returns memory type distribution statistics.
+func (c *Client) AdminMemoryTypeStats(ctx context.Context) (*MemoryTypeStatsResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/memory-type-stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryTypeStatsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal memory type stats: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminMigrateNamespaceDimensions migrates namespace vector dimensions to a target dimension.
+func (c *Client) AdminMigrateNamespaceDimensions(ctx context.Context, req MigrateNamespaceDimensionsRequest) (*MigrateDimensionsResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/namespaces/migrate-dimensions", req)
+	if err != nil {
+		return nil, err
+	}
+	var result MigrateDimensionsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal migrate dimensions response: %w", err)
 	}
 	return &result, nil
 }

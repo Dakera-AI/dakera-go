@@ -2231,3 +2231,415 @@ type ExtractorConfigResponse struct {
 	Model    string `json:"model,omitempty"`
 	BaseURL  string `json:"base_url,omitempty"`
 }
+
+// =============================================================================
+// Phase 2 Types — Cluster, Quotas, Backups, Ops
+// =============================================================================
+
+// NodeReplicationLag holds per-node replication lag.
+type NodeReplicationLag struct {
+	NodeID string `json:"node_id"`
+	LagMs  uint64 `json:"lag_ms"`
+	Status string `json:"status"`
+}
+
+// ReplicationStatus is returned by GET /admin/cluster/replication.
+type ReplicationStatus struct {
+	ReplicationFactor uint32               `json:"replication_factor"`
+	HealthyReplicas   uint32               `json:"healthy_replicas"`
+	TotalNodes        uint32               `json:"total_nodes"`
+	ReplicationLag    []NodeReplicationLag `json:"replication_lag"`
+}
+
+// ShardInfo holds shard details.
+type ShardInfo struct {
+	ShardID      string   `json:"shard_id"`
+	Namespace    string   `json:"namespace"`
+	PrimaryNode  string   `json:"primary_node"`
+	ReplicaNodes []string `json:"replica_nodes"`
+	State        string   `json:"state"`
+	VectorCount  uint64   `json:"vector_count"`
+	SizeBytes    uint64   `json:"size_bytes"`
+}
+
+// ShardListResponse is returned by GET /admin/cluster/shards.
+type ShardListResponse struct {
+	Shards []ShardInfo `json:"shards"`
+	Total  uint32      `json:"total"`
+}
+
+// ShardRebalanceRequest is the request body for POST /admin/cluster/shards/rebalance.
+type ShardRebalanceRequest struct {
+	ShardIDs []string `json:"shard_ids,omitempty"`
+	DryRun   bool     `json:"dry_run"`
+}
+
+// ShardMove describes a planned shard move.
+type ShardMove struct {
+	ShardID  string `json:"shard_id"`
+	FromNode string `json:"from_node"`
+	ToNode   string `json:"to_node"`
+}
+
+// ShardRebalanceResponse is returned by POST /admin/cluster/shards/rebalance.
+type ShardRebalanceResponse struct {
+	Initiated        bool        `json:"initiated"`
+	OperationID      string      `json:"operation_id"`
+	ShardsAffected   uint32      `json:"shards_affected"`
+	EstimatedSeconds *uint64     `json:"estimated_seconds,omitempty"`
+	PlannedMoves     []ShardMove `json:"planned_moves"`
+}
+
+// MaintenanceStatus is returned by GET /admin/cluster/maintenance.
+type MaintenanceStatus struct {
+	Enabled              bool     `json:"enabled"`
+	Reason               string   `json:"reason,omitempty"`
+	EnabledAt            *uint64  `json:"enabled_at,omitempty"`
+	ScheduledEnd         *uint64  `json:"scheduled_end,omitempty"`
+	NodesInMaintenance   []string `json:"nodes_in_maintenance"`
+	RejectingRequests    bool     `json:"rejecting_requests"`
+}
+
+// EnableMaintenanceRequest is the request body for POST /admin/cluster/maintenance/enable.
+type EnableMaintenanceRequest struct {
+	Reason          string   `json:"reason"`
+	NodeIDs         []string `json:"node_ids,omitempty"`
+	RejectRequests  bool     `json:"reject_requests"`
+	DurationMinutes *uint32  `json:"duration_minutes,omitempty"`
+}
+
+// DisableMaintenanceRequest is the request body for POST /admin/cluster/maintenance/disable.
+type DisableMaintenanceRequest struct {
+	Force *bool `json:"force,omitempty"`
+}
+
+// QuotaConfig is the quota configuration for a namespace.
+type QuotaConfig struct {
+	MaxVectors      *uint64 `json:"max_vectors,omitempty"`
+	MaxStorageBytes *uint64 `json:"max_storage_bytes,omitempty"`
+	MaxDimensions   *int    `json:"max_dimensions,omitempty"`
+	MaxMetadataBytes *int   `json:"max_metadata_bytes,omitempty"`
+	Enforcement     string  `json:"enforcement,omitempty"`
+}
+
+// QuotaUsage holds current quota usage.
+type QuotaUsage struct {
+	VectorCount      uint64 `json:"vector_count"`
+	StorageBytes     uint64 `json:"storage_bytes"`
+	AvgDimensions    *int   `json:"avg_dimensions,omitempty"`
+	AvgMetadataBytes *int   `json:"avg_metadata_bytes,omitempty"`
+	LastUpdated      uint64 `json:"last_updated"`
+}
+
+// QuotaStatus holds combined quota config and usage.
+type QuotaStatus struct {
+	Namespace            string      `json:"namespace"`
+	Config               QuotaConfig `json:"config"`
+	Usage                QuotaUsage  `json:"usage"`
+	VectorUsagePercent   *float32    `json:"vector_usage_percent,omitempty"`
+	StorageUsagePercent  *float32    `json:"storage_usage_percent,omitempty"`
+	IsExceeded           bool        `json:"is_exceeded"`
+	ExceededQuotas       []string    `json:"exceeded_quotas"`
+}
+
+// QuotaListResponse is returned by GET /admin/quotas.
+type QuotaListResponse struct {
+	Quotas        []QuotaStatus `json:"quotas"`
+	Total         uint64        `json:"total"`
+	DefaultConfig *QuotaConfig  `json:"default_config,omitempty"`
+}
+
+// DefaultQuotaResponse is returned by GET /admin/quotas/default.
+type DefaultQuotaResponse struct {
+	Config *QuotaConfig `json:"config"`
+}
+
+// SetDefaultQuotaRequest is the request body for PUT /admin/quotas/default.
+type SetDefaultQuotaRequest struct {
+	Config *QuotaConfig `json:"config"`
+}
+
+// SetQuotaRequest is the request body for PUT /admin/quotas/{namespace}.
+type SetQuotaRequest struct {
+	Config QuotaConfig `json:"config"`
+}
+
+// SetQuotaResponse is returned by PUT /admin/quotas.
+type SetQuotaResponse struct {
+	Success   bool        `json:"success"`
+	Namespace string      `json:"namespace"`
+	Config    QuotaConfig `json:"config"`
+	Message   string      `json:"message"`
+}
+
+// QuotaCheckRequest is the request body for POST /admin/quotas/{namespace}/check.
+type QuotaCheckRequest struct {
+	VectorIDs    []string `json:"vector_ids"`
+	Dimensions   *int     `json:"dimensions,omitempty"`
+	MetadataBytes *int    `json:"metadata_bytes,omitempty"`
+}
+
+// QuotaCheckResult is returned by POST /admin/quotas/{namespace}/check.
+type QuotaCheckResult struct {
+	Allowed       bool       `json:"allowed"`
+	Reason        string     `json:"reason,omitempty"`
+	Usage         QuotaUsage `json:"usage"`
+	ExceededQuota string     `json:"exceeded_quota,omitempty"`
+}
+
+// AdminBackupInfo holds backup metadata.
+type AdminBackupInfo struct {
+	BackupID        string  `json:"backup_id"`
+	Name            string  `json:"name"`
+	BackupType      string  `json:"backup_type"`
+	Status          string  `json:"status"`
+	Namespaces      []string `json:"namespaces"`
+	VectorCount     uint64  `json:"vector_count"`
+	SizeBytes       uint64  `json:"size_bytes"`
+	CreatedAt       uint64  `json:"created_at"`
+	CompletedAt     *uint64 `json:"completed_at,omitempty"`
+	DurationSeconds *uint64 `json:"duration_seconds,omitempty"`
+	StoragePath     string  `json:"storage_path,omitempty"`
+	Error           string  `json:"error,omitempty"`
+	Encrypted       bool    `json:"encrypted"`
+	Compression     string  `json:"compression,omitempty"`
+}
+
+// BackupListResponse is returned by GET /admin/backups.
+type BackupListResponse struct {
+	Backups []AdminBackupInfo `json:"backups"`
+	Total   uint64            `json:"total"`
+}
+
+// CreateBackupRequest is the request body for POST /admin/backups.
+type CreateBackupRequest struct {
+	Name        string   `json:"name"`
+	BackupType  string   `json:"backup_type,omitempty"`
+	Namespaces  []string `json:"namespaces,omitempty"`
+	Encrypt     *bool    `json:"encrypt,omitempty"`
+	Compression string   `json:"compression,omitempty"`
+}
+
+// CreateBackupResponse is returned by POST /admin/backups.
+type CreateBackupResponse struct {
+	Backup              AdminBackupInfo `json:"backup"`
+	EstimatedCompletion *uint64         `json:"estimated_completion,omitempty"`
+}
+
+// RestoreBackupRequest is the request body for POST /admin/backups/restore.
+type RestoreBackupRequest struct {
+	BackupID         string   `json:"backup_id"`
+	TargetNamespaces []string `json:"target_namespaces,omitempty"`
+	Overwrite        *bool    `json:"overwrite,omitempty"`
+	PointInTime      *uint64  `json:"point_in_time,omitempty"`
+}
+
+// RestoreBackupResponse is returned by POST /admin/backups/restore.
+type RestoreBackupResponse struct {
+	RestoreID           string   `json:"restore_id"`
+	Status              string   `json:"status"`
+	BackupID            string   `json:"backup_id"`
+	Namespaces          []string `json:"namespaces"`
+	StartedAt           uint64   `json:"started_at"`
+	EstimatedCompletion *uint64  `json:"estimated_completion,omitempty"`
+	ProgressPercent     *uint8   `json:"progress_percent,omitempty"`
+	VectorsRestored     *uint64  `json:"vectors_restored,omitempty"`
+	CompletedAt         *uint64  `json:"completed_at,omitempty"`
+	DurationSeconds     *uint64  `json:"duration_seconds,omitempty"`
+	Error               string   `json:"error,omitempty"`
+}
+
+// BackupSchedule holds backup schedule configuration.
+type BackupSchedule struct {
+	Enabled       bool     `json:"enabled"`
+	Cron          string   `json:"cron,omitempty"`
+	BackupType    string   `json:"backup_type"`
+	RetentionDays uint32   `json:"retention_days"`
+	MaxBackups    uint32   `json:"max_backups"`
+	Namespaces    []string `json:"namespaces"`
+	Encrypt       bool     `json:"encrypt"`
+	Compression   string   `json:"compression,omitempty"`
+	LastBackupAt  *uint64  `json:"last_backup_at,omitempty"`
+	NextBackupAt  *uint64  `json:"next_backup_at,omitempty"`
+}
+
+// UpdateBackupScheduleRequest is the request body for POST /admin/backups/schedule.
+type UpdateBackupScheduleRequest struct {
+	Enabled       *bool    `json:"enabled,omitempty"`
+	Cron          string   `json:"cron,omitempty"`
+	BackupType    string   `json:"backup_type,omitempty"`
+	RetentionDays *uint32  `json:"retention_days,omitempty"`
+	MaxBackups    *uint32  `json:"max_backups,omitempty"`
+	Namespaces    []string `json:"namespaces,omitempty"`
+	Encrypt       *bool    `json:"encrypt,omitempty"`
+	Compression   string   `json:"compression,omitempty"`
+}
+
+// JobInfo holds background job status.
+type JobInfo struct {
+	ID          string            `json:"id"`
+	JobType     string            `json:"job_type"`
+	Status      string            `json:"status"`
+	CreatedAt   uint64            `json:"created_at"`
+	StartedAt   *uint64           `json:"started_at,omitempty"`
+	CompletedAt *uint64           `json:"completed_at,omitempty"`
+	Progress    uint8             `json:"progress"`
+	Message     string            `json:"message,omitempty"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+// CompactionRequest is the request body for POST /ops/compact.
+type CompactionRequest struct {
+	Namespace string `json:"namespace,omitempty"`
+	Force     bool   `json:"force"`
+}
+
+// CompactionResponse is returned by POST /ops/compact.
+type CompactionResponse struct {
+	JobID   string `json:"job_id"`
+	Message string `json:"message"`
+}
+
+// FullTextIndexStats is returned by GET /v1/namespaces/{namespace}/fulltext/stats.
+type FullTextIndexStats struct {
+	DocumentCount uint32  `json:"document_count"`
+	UniqueTerms   int     `json:"unique_terms"`
+	AvgDocLength  float64 `json:"avg_doc_length"`
+}
+
+// FulltextDeleteRequest is the request body for POST /v1/namespaces/{namespace}/fulltext/delete.
+type FulltextDeleteRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// FulltextDeleteResponse is returned by POST /v1/namespaces/{namespace}/fulltext/delete.
+type FulltextDeleteResponse struct {
+	DeletedCount int `json:"deleted_count"`
+}
+
+// TtlNamespaceStats holds TTL statistics for a single namespace.
+type TtlNamespaceStats struct {
+	Namespace             string `json:"namespace"`
+	VectorsWithTtl        uint64 `json:"vectors_with_ttl"`
+	ExpiringWithinHour    uint64 `json:"expiring_within_hour"`
+	ExpiringWithinDay     uint64 `json:"expiring_within_day"`
+	ExpiredPendingCleanup uint64 `json:"expired_pending_cleanup"`
+}
+
+// TtlStatsResponse is returned by GET /admin/ttl/stats.
+type TtlStatsResponse struct {
+	Namespaces   []TtlNamespaceStats `json:"namespaces"`
+	TotalWithTtl uint64              `json:"total_with_ttl"`
+	TotalExpired uint64              `json:"total_expired"`
+}
+
+// RouteRequest is the request body for POST /v1/route.
+type RouteRequest struct {
+	Query         string  `json:"query"`
+	TopK          int     `json:"top_k,omitempty"`
+	MinSimilarity float32 `json:"min_similarity,omitempty"`
+	Model         string  `json:"model,omitempty"`
+}
+
+// RouteMatch represents a single namespace match from routing.
+type RouteMatch struct {
+	Namespace   string  `json:"namespace"`
+	Similarity  float64 `json:"similarity"`
+	Description string  `json:"description,omitempty"`
+}
+
+// RouteResponse is returned by POST /v1/route.
+type RouteResponse struct {
+	Routes          []RouteMatch `json:"routes"`
+	Model           string       `json:"model"`
+	EmbeddingTimeMs uint64       `json:"embedding_time_ms"`
+}
+
+// ImportJobStatus is returned by GET /v1/import/{job_id}/status.
+type ImportJobStatus struct {
+	JobID      string   `json:"job_id"`
+	Status     string   `json:"status"`
+	Format     string   `json:"format"`
+	Total      int      `json:"total"`
+	Imported   int      `json:"imported"`
+	Skipped    int      `json:"skipped"`
+	Errors     []string `json:"errors"`
+	StartedAt  uint64   `json:"started_at"`
+	FinishedAt *uint64  `json:"finished_at,omitempty"`
+}
+
+// TierInfo describes a single storage tier.
+type TierInfo struct {
+	Name          string  `json:"name"`
+	TierType      string  `json:"tier_type"`
+	Technology    string  `json:"technology"`
+	Description   string  `json:"description"`
+	TargetLatency string  `json:"target_latency"`
+	Capacity      string  `json:"capacity,omitempty"`
+	Status        string  `json:"status"`
+	CurrentCount  uint64  `json:"current_count"`
+	HitCount      uint64  `json:"hit_count"`
+	HitRate       float64 `json:"hit_rate"`
+}
+
+// TierConfig holds the tiered storage configuration.
+type TierConfig struct {
+	HotTierCapacity         int    `json:"hot_tier_capacity"`
+	HotToWarmThresholdSecs  uint64 `json:"hot_to_warm_threshold_secs"`
+	WarmToColdThresholdSecs uint64 `json:"warm_to_cold_threshold_secs"`
+	AutoTierEnabled         bool   `json:"auto_tier_enabled"`
+	TierCheckIntervalSecs   uint64 `json:"tier_check_interval_secs"`
+}
+
+// TierActivity holds tiered storage activity metrics.
+type TierActivity struct {
+	Promotions      uint64  `json:"promotions"`
+	Demotions       uint64  `json:"demotions"`
+	CacheHitRate    float64 `json:"cache_hit_rate"`
+	StorageBackend  string  `json:"storage_backend"`
+	PromotionsToHot uint64  `json:"promotions_to_hot"`
+	DemotionsToWarm uint64  `json:"demotions_to_warm"`
+	DemotionsToCold uint64  `json:"demotions_to_cold"`
+}
+
+// StorageTierOverview is returned by GET /admin/storage/tiers.
+type StorageTierOverview struct {
+	TiersEnabled bool         `json:"tiers_enabled"`
+	Architecture []TierInfo   `json:"architecture"`
+	Config       TierConfig   `json:"config"`
+	Activity     TierActivity `json:"activity"`
+}
+
+// MemoryTypeStatsResponse is returned by GET /admin/memory-type-stats.
+type MemoryTypeStatsResponse struct {
+	Total           uint64 `json:"total"`
+	Working         uint64 `json:"working"`
+	Episodic        uint64 `json:"episodic"`
+	Semantic        uint64 `json:"semantic"`
+	Procedural      uint64 `json:"procedural"`
+	AgentNamespaces uint64 `json:"agent_namespaces"`
+}
+
+// MigrateNamespaceDimensionsRequest is the request body for POST /admin/namespaces/migrate-dimensions.
+type MigrateNamespaceDimensionsRequest struct {
+	Namespaces      []string `json:"namespaces,omitempty"`
+	TargetDimension int      `json:"target_dimension,omitempty"`
+}
+
+// NamespaceMigrationResult holds the migration result for a single namespace.
+type NamespaceMigrationResult struct {
+	Namespace         string  `json:"namespace"`
+	OriginalDimension int     `json:"original_dimension"`
+	VectorsMigrated   int     `json:"vectors_migrated"`
+	VectorsSkipped    int     `json:"vectors_skipped"`
+	Status            string  `json:"status"`
+	Error             *string `json:"error,omitempty"`
+}
+
+// MigrateDimensionsResponse is returned by POST /admin/namespaces/migrate-dimensions.
+type MigrateDimensionsResponse struct {
+	Migrated       int                        `json:"migrated"`
+	Failed         int                        `json:"failed"`
+	AlreadyCurrent int                        `json:"already_current"`
+	Results        []NamespaceMigrationResult `json:"results"`
+}
