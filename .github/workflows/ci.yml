@@ -48,6 +48,7 @@ jobs:
           - 3300:3000
         env:
           DAKERA_AUTH_ENABLED: "false"
+          DAKERA_ROOT_API_KEY: test-key
         options: >-
           --health-cmd "curl -f http://127.0.0.1:3000/health || exit 1"
           --health-interval 5s
