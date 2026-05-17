@@ -49,8 +49,8 @@ func TestIntegration_Health(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Health failed: %v", err)
 	}
-	if health.Status != "ok" {
-		t.Errorf("expected status ok, got %s", health.Status)
+	if health.Status != "healthy" {
+		t.Errorf("expected status healthy, got %s", health.Status)
 	}
 }
 

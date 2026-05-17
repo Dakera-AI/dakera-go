@@ -1116,7 +1116,7 @@ func TestStoreMemoryWithExpiresAt(t *testing.T) {
 	t.Run("IncludesExpiresAtInBody", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "POST", r.Method)
-			assert.Equal(t, "/v1/agents/agent-1/memories", r.URL.Path)
+			assert.Equal(t, "/v1/memory/store", r.URL.Path)
 
 			var body map[string]interface{}
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))

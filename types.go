@@ -467,6 +467,7 @@ type BatchTextQueryOptions struct {
 
 // StoreMemoryRequest represents a request to store a memory.
 type StoreMemoryRequest struct {
+	AgentID    string                 `json:"agent_id,omitempty"`
 	Content    string                 `json:"content"`
 	MemoryType string                 `json:"memory_type,omitempty"`
 	Importance *float32               `json:"importance,omitempty"`
@@ -547,6 +548,7 @@ const (
 
 // RecallRequest represents a request to recall memories.
 type RecallRequest struct {
+	AgentID       string   `json:"agent_id,omitempty"`
 	Query         string   `json:"query"`
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
@@ -601,6 +603,7 @@ type UpdateMemoryRequest struct {
 
 // SearchMemoriesRequest represents a request to search memories.
 type SearchMemoriesRequest struct {
+	AgentID       string   `json:"agent_id,omitempty"`
 	Query         string   `json:"query"`
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
@@ -614,6 +617,7 @@ type SearchMemoriesRequest struct {
 
 // UpdateImportanceRequest represents a request to update memory importance.
 type UpdateImportanceRequest struct {
+	AgentID    string   `json:"agent_id,omitempty"`
 	MemoryIDs  []string `json:"memory_ids"`
 	Importance float32  `json:"importance"`
 }
@@ -637,6 +641,7 @@ type ConsolidationLogEntry struct {
 
 // ConsolidateRequest represents a request to consolidate memories.
 type ConsolidateRequest struct {
+	AgentID    string               `json:"agent_id,omitempty"`
 	MemoryType string               `json:"memory_type,omitempty"`
 	Threshold  *float32             `json:"threshold,omitempty"`
 	DryRun     bool                 `json:"dry_run,omitempty"`

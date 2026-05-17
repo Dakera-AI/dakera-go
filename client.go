@@ -651,7 +651,7 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 
 	if opts != nil {
 		if opts.Dimensions > 0 {
-			body["dimensions"] = opts.Dimensions
+			body["dimension"] = opts.Dimensions
 		}
 		if opts.IndexType != "" {
 			body["index_type"] = opts.IndexType
@@ -763,7 +763,8 @@ func (c *Client) Flush(ctx context.Context, namespace string) (*StatusResponse, 
 
 // StoreMemory stores a memory for an agent.
 func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemoryRequest) (*StoreMemoryResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/store", req)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +782,8 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 // the response will include AssociatedMemories surfaced via KG depth-1
 // traversal from the primary results.
 func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) (*RecallResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/recall", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/recall", req)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +802,7 @@ func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) 
 
 // GetMemory gets a specific memory.
 func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s", memoryID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -814,7 +816,7 @@ func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memo
 
 // UpdateMemory updates an existing memory.
 func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req UpdateMemoryRequest) (*StoreMemoryResponse, error) {
-	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), req)
+	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/memory/update/%s", memoryID), req)
 	if err != nil {
 		return nil, err
 	}
@@ -828,7 +830,7 @@ func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req
 
 // Forget deletes a memory.
 func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
-	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	_, err := c.request(ctx, "POST", "/v1/memory/forget", map[string]interface{}{"agent_id": agentID, "memory_ids": []string{memoryID}})
 	return err
 }
 
@@ -884,7 +886,8 @@ func (c *Client) BatchForget(ctx context.Context, req BatchForgetRequest) (*Batc
 
 // SearchMemories searches memories for an agent.
 func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchMemoriesRequest) ([]RecalledMemory, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/search", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/search", req)
 	if err != nil {
 		return nil, err
 	}
@@ -904,13 +907,15 @@ func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchM
 
 // UpdateImportance updates the importance of memories.
 func (c *Client) UpdateImportance(ctx context.Context, agentID string, req UpdateImportanceRequest) error {
-	_, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/importance", agentID), req)
+	req.AgentID = agentID
+	_, err := c.request(ctx, "POST", "/v1/memory/importance", req)
 	return err
 }
 
 // Consolidate consolidates memories for an agent.
 func (c *Client) Consolidate(ctx context.Context, agentID string, req ConsolidateRequest) (*ConsolidateResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/consolidate", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/consolidate", req)
 	if err != nil {
 		return nil, err
 	}
