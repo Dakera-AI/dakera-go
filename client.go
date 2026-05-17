@@ -1197,11 +1197,13 @@ func (c *Client) ListSessions(ctx context.Context, opts *ListSessionsOptions) ([
 		return nil, err
 	}
 
-	var result []Session
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wrapper struct {
+		Sessions []Session `json:"sessions"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return wrapper.Sessions, nil
 }
 
 // SessionMemories gets memories for a session.
@@ -1299,11 +1301,13 @@ func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentS
 		return nil, err
 	}
 
-	var result []Session
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wrapper struct {
+		Sessions []Session `json:"sessions"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return wrapper.Sessions, nil
 }
 
 // GetWakeUpContext returns top-N wake-up context memories for an agent (DAK-1690).
