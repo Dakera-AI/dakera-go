@@ -1746,7 +1746,7 @@ func TestExtractEntities(t *testing.T) {
 
 	var sentBody map[string]interface{}
 	require.NoError(t, json.Unmarshal(capturedBody, &sentBody))
-	assert.Equal(t, "Alice lives in Paris.", sentBody["text"])
+	assert.Equal(t, "Alice lives in Paris.", sentBody["content"])
 	assert.NotNil(t, sentBody["entity_types"])
 }
 
