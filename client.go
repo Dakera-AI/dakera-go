@@ -2203,7 +2203,7 @@ func (c *Client) ConfigureNamespaceNer(ctx context.Context, namespace string, co
 // entityTypes may be nil to use the server default types.
 func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) (*EntityExtractionResponse, error) {
 	body := map[string]interface{}{
-		"text": text,
+		"content": text,
 	}
 	if entityTypes != nil {
 		body["entity_types"] = entityTypes
