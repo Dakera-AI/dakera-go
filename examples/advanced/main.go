@@ -109,9 +109,10 @@ func main() {
 		{ID: "doc-3", Content: "Rust provides memory safety without GC"},
 	})
 	if err != nil {
-		log.Fatalf("Failed to index documents: %v", err)
+		log.Printf("IndexDocuments (may not be supported): %v", err)
+	} else {
+		fmt.Println("Documents indexed")
 	}
-	fmt.Println("Documents indexed")
 
 	// -------------------------------------------------------------------------
 	// Full-text search
@@ -122,11 +123,11 @@ func main() {
 		TopK: 3,
 	})
 	if err != nil {
-		log.Fatalf("Failed to full-text search: %v", err)
-	}
-
-	for _, r := range ftResults {
-		fmt.Printf("  [%.4f] %s: %s\n", r.Score, r.ID, r.Content)
+		log.Printf("FulltextSearch (may not be supported): %v", err)
+	} else {
+		for _, r := range ftResults {
+			fmt.Printf("  [%.4f] %s: %s\n", r.Score, r.ID, r.Content)
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -140,12 +141,12 @@ func main() {
 		VectorWeight: 0.5,
 	})
 	if err != nil {
-		log.Fatalf("Failed to hybrid search: %v", err)
-	}
-
-	for _, r := range hybridResults {
-		fmt.Printf("  [%.4f] %s (vec=%.4f, text=%.4f)\n",
-			r.Score, r.ID, r.VectorScore, r.TextScore)
+		log.Printf("HybridSearch (may not be supported): %v", err)
+	} else {
+		for _, r := range hybridResults {
+			fmt.Printf("  [%.4f] %s (vec=%.4f, text=%.4f)\n",
+				r.Score, r.ID, r.VectorScore, r.TextScore)
+		}
 	}
 
 	// -------------------------------------------------------------------------
