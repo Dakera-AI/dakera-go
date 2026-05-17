@@ -74,9 +74,7 @@ func main() {
 				"lang":     "rust",
 			},
 		},
-	}, &dakera.TextUpsertOptions{
-		Model: dakera.EmbeddingModelMiniLM,
-	})
+	}, nil)
 	if err != nil {
 		log.Fatalf("Failed to upsert text: %v", err)
 	}
