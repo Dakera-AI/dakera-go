@@ -17,9 +17,13 @@ func integrationClient(t *testing.T) *dakera.Client {
 	if url == "" {
 		t.Skip("DAKERA_TEST_URL not set — skipping integration tests")
 	}
+	apiKey := os.Getenv("DAKERA_API_KEY")
+	if apiKey == "" {
+		apiKey = "test-key"
+	}
 	return dakera.NewClientWithOptions(dakera.ClientOptions{
 		BaseURL: url,
-		APIKey:  "test-key",
+		APIKey:  apiKey,
 	})
 }
 
@@ -458,6 +462,38 @@ func TestIntegration_NonexistentMemory(t *testing.T) {
 	_, err := client.GetMemory(ctx, agent, "nonexistent-memory-id")
 	if err == nil {
 		t.Error("expected error for nonexistent memory")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+func TestIntegration_AuthRejectsInvalidKey(t *testing.T) {
+	url := os.Getenv("DAKERA_TEST_URL")
+	if url == "" {
+		t.Skip("DAKERA_TEST_URL not set — skipping integration tests")
+	}
+	badClient := dakera.NewClientWithOptions(dakera.ClientOptions{
+		BaseURL: url,
+		APIKey:  "invalid-key-xxx",
+	})
+	ctx := context.Background()
+	_, err := badClient.ListNamespaces(ctx)
+	if err == nil {
+		t.Fatal("expected auth error with invalid key")
+	}
+	if !dakera.IsAuthenticationError(err) {
+		t.Errorf("expected AuthenticationError, got: %v", err)
+	}
+}
+
+func TestIntegration_AuthAcceptsValidKey(t *testing.T) {
+	client := integrationClient(t)
+	ctx := context.Background()
+	_, err := client.ListNamespaces(ctx)
+	if err != nil {
+		t.Fatalf("ListNamespaces failed with valid key: %v", err)
 	}
 }
 

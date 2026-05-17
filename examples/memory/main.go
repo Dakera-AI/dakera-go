@@ -41,14 +41,14 @@ func main() {
 	importance := float32(0.9)
 	mem1, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
 		Content:    "The user prefers concise responses with code examples.",
-		MemoryType: "preference",
+		MemoryType: "semantic",
 		Importance: &importance,
 		Metadata: map[string]interface{}{
 			"source": "user-feedback",
 		},
 	})
 	if err != nil {
-		log.Printf("StoreMemory (may not be supported): %v", err)
+		log.Fatalf("StoreMemory failed: %v", err)
 	} else {
 		fmt.Printf("Stored memory: %s\n", mem1.Memory.ID)
 	}
@@ -56,11 +56,11 @@ func main() {
 	imp2 := float32(0.7)
 	mem2, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
 		Content:    "User is working on a Go web service using the chi router.",
-		MemoryType: "context",
+		MemoryType: "episodic",
 		Importance: &imp2,
 	})
 	if err != nil {
-		log.Printf("StoreMemory (may not be supported): %v", err)
+		log.Fatalf("StoreMemory failed: %v", err)
 	} else {
 		fmt.Printf("Stored memory: %s\n", mem2.Memory.ID)
 	}
@@ -75,7 +75,7 @@ func main() {
 		TopK:  5,
 	})
 	if err != nil {
-		log.Printf("Recall (may not be supported): %v", err)
+		log.Fatalf("Recall failed: %v", err)
 	} else {
 		for _, m := range recallResp.Memories {
 			fmt.Printf("  [%.2f] %s — %s\n", m.Score, m.MemoryType, m.Content)
@@ -85,11 +85,11 @@ func main() {
 	// -------------------------------------------------------------------------
 	// Search memories by type
 	// -------------------------------------------------------------------------
-	fmt.Println("\n--- Search Memories (type=preference) ---")
+	fmt.Println("\n--- Search Memories (type=semantic) ---")
 
 	searched, err := client.SearchMemories(ctx, agentID, dakera.SearchMemoriesRequest{
 		Query:      "user preferences",
-		MemoryType: "preference",
+		MemoryType: "semantic",
 		TopK:       3,
 	})
 	if err != nil {
@@ -155,7 +155,7 @@ func main() {
 
 	summary, err := client.Summarize(ctx, dakera.SummarizeRequest{
 		AgentID:    agentID,
-		TargetType: "preference",
+		TargetType: "semantic",
 	})
 	if err != nil {
 		log.Printf("Summarize (may not be supported): %v", err)
