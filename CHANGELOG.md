@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.55] - 2026-05-17
+
+### Changed
+
+- **BREAKING: `HybridSearchOptions.Alpha` renamed → `VectorWeight`** — the blending
+  parameter that controls the vector-vs-BM25 weight has been renamed from `Alpha` to
+  `VectorWeight` for consistency with `RecallRequest.VectorWeight`. Update all call sites:
+  ```go
+  // Before
+  &dakera.HybridSearchOptions{Alpha: 0.6}
+  // After
+  &dakera.HybridSearchOptions{VectorWeight: 0.6}
+  ```
+
+### Fixed
+
+- **`HybridSearchOptions` nil-opts wire format** — passing `nil` for options previously sent
+  a malformed JSON field name to the server, causing unexpected results. Options are now
+  correctly omitted from the request body when `nil`.
+
+- **Docker integration tests in CI** — full end-to-end integration tests now run against a
+  live Dakera server container on every PR and push.
+
 ## [0.11.54] - 2026-05-13
 
 ### Notes
