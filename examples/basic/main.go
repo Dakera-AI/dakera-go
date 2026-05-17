@@ -141,7 +141,7 @@ func main() {
 
 	// Delete specific vectors by ID
 	fmt.Println("\n--- Delete Vectors ---")
-	deleteResp, err := client.Delete(ctx, namespace, &dakera.DeleteOptions{
+	deleteResp, err := client.Delete(ctx, namespace, dakera.DeleteOptions{
 		IDs: []string{"vec1", "vec2"},
 	})
 	if err != nil {
