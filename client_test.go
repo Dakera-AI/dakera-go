@@ -221,8 +221,8 @@ func TestIndexDocuments(t *testing.T) {
 
 	client := NewClient(server.URL)
 	resp, err := client.IndexDocuments(context.Background(), "test-ns", []DocumentInput{
-		{ID: "doc1", Content: "Hello world"},
-		{ID: "doc2", Content: "Goodbye world"},
+		{ID: "doc1", Text: "Hello world"},
+		{ID: "doc2", Text: "Goodbye world"},
 	})
 
 	require.NoError(t, err)

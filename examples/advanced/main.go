@@ -104,9 +104,9 @@ func main() {
 	fmt.Println("\n--- Index Documents for Full-Text Search ---")
 
 	_, err = client.IndexDocuments(ctx, namespace, []dakera.DocumentInput{
-		{ID: "doc-1", Content: "Go is a statically typed compiled language"},
-		{ID: "doc-2", Content: "Python is great for data science and ML"},
-		{ID: "doc-3", Content: "Rust provides memory safety without GC"},
+		{ID: "doc-1", Text: "Go is a statically typed compiled language"},
+		{ID: "doc-2", Text: "Python is great for data science and ML"},
+		{ID: "doc-3", Text: "Rust provides memory safety without GC"},
 	})
 	if err != nil {
 		log.Printf("IndexDocuments (may not be supported): %v", err)
@@ -126,7 +126,7 @@ func main() {
 		log.Printf("FulltextSearch (may not be supported): %v", err)
 	} else {
 		for _, r := range ftResults {
-			fmt.Printf("  [%.4f] %s: %s\n", r.Score, r.ID, r.Content)
+			fmt.Printf("  [%.4f] %s: %s\n", r.Score, r.ID, r.Text)
 		}
 	}
 
