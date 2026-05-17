@@ -127,6 +127,7 @@ jobs:
       - name: Run examples
         env:
           DAKERA_API_URL: http://localhost:3300
+          DAKERA_API_KEY: test-key
         run: |
           go run ./examples/basic/
           go run ./examples/advanced/

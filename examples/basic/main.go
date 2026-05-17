@@ -17,8 +17,18 @@ func dakeraURL() string {
 	return "http://localhost:3300"
 }
 
+func dakeraAPIKey() string {
+	if k := os.Getenv("DAKERA_API_KEY"); k != "" {
+		return k
+	}
+	return "dk-mykey"
+}
+
 func main() {
-	client := dakera.NewClient(dakeraURL())
+	client := dakera.NewClientWithOptions(dakera.ClientOptions{
+		BaseURL: dakeraURL(),
+		APIKey:  dakeraAPIKey(),
+	})
 	ctx := context.Background()
 
 	// Check server health
