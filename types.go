@@ -57,14 +57,14 @@ type IndexStats struct {
 // Document represents a document for full-text indexing.
 type Document struct {
 	ID       string                 `json:"id"`
-	Content  string                 `json:"content"`
+	Text     string                 `json:"text"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // DocumentInput represents input for indexing a document.
 type DocumentInput struct {
 	ID       string                 `json:"id"`
-	Content  string                 `json:"content"`
+	Text     string                 `json:"text"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -72,7 +72,7 @@ type DocumentInput struct {
 type FullTextSearchResult struct {
 	ID       string                 `json:"id"`
 	Score    float32                `json:"score"`
-	Content  string                 `json:"content,omitempty"`
+	Text     string                 `json:"text,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
