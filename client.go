@@ -270,6 +270,121 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	return nil, &DakeraError{Message: "request failed after retries"}
 }
 
+// requestRaw sends an HTTP request with a raw byte body and a custom content type.
+// It reuses the same retry and error-handling logic as request but skips JSON marshaling.
+func (c *Client) requestRaw(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
+	reqURL := c.baseURL + path
+	rc := c.retryConfig
+	var lastErr error
+
+	for attempt := 0; attempt < rc.MaxRetries; attempt++ {
+		var reqBody io.Reader
+		if body != nil {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", contentType)
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+		for k, v := range c.headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
+			}
+			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
+			if attempt < rc.MaxRetries-1 {
+				time.Sleep(c.computeBackoff(attempt))
+				continue
+			}
+			return nil, lastErr
+		}
+		defer resp.Body.Close()
+
+		c.rlMu.Lock()
+		c.lastRateLimitHeaders = parseRateLimitHeaders(resp.Header)
+		c.rlMu.Unlock()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", err)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return respBody, nil
+		}
+
+		var errBody struct {
+			Error   string    `json:"error"`
+			Code    ErrorCode `json:"code"`
+			Details string    `json:"details"`
+		}
+		json.Unmarshal(respBody, &errBody)
+		errMsg := errBody.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		errorCode := errBody.Code
+		if errorCode == "" {
+			errorCode = ErrorCodeUnknown
+		}
+
+		switch resp.StatusCode {
+		case 400:
+			return nil, NewValidationError(errMsg, resp.StatusCode, errBody, errorCode)
+		case 401:
+			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
+		case 403:
+			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
+		case 404:
+			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
+		case 429:
+			retryAfterSecs := -1
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				retryAfterSecs, _ = strconv.Atoi(ra)
+			}
+			rlErr := NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfterSecs)
+			if attempt < rc.MaxRetries-1 {
+				var wait time.Duration
+				if retryAfterSecs >= 0 {
+					wait = time.Duration(retryAfterSecs) * time.Second
+				} else {
+					wait = c.computeBackoff(attempt)
+				}
+				time.Sleep(wait)
+				lastErr = rlErr
+				continue
+			}
+			return nil, rlErr
+		default:
+			if resp.StatusCode >= 500 {
+				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
+				if attempt < rc.MaxRetries-1 {
+					time.Sleep(c.computeBackoff(attempt))
+					continue
+				}
+				return nil, lastErr
+			}
+			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, Code: errorCode, ResponseBody: errBody}
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, &DakeraError{Message: "request failed after retries"}
+}
+
 // ===========================================================================
 // Vector Operations
 // ===========================================================================
@@ -3197,4 +3312,168 @@ func (c *Client) OpsShutdown(ctx context.Context) (map[string]interface{}, error
 		return nil, fmt.Errorf("failed to unmarshal shutdown response: %w", err)
 	}
 	return result, nil
+}
+
+// ===========================================================================
+// Fulltext Operations
+// ===========================================================================
+
+// FulltextStats returns full-text index statistics for the given namespace.
+func (c *Client) FulltextStats(ctx context.Context, namespace string) (*FullTextIndexStats, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/fulltext/stats", url.PathEscape(namespace)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result FullTextIndexStats
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fulltext stats: %w", err)
+	}
+	return &result, nil
+}
+
+// FulltextDelete deletes full-text entries by their IDs within the given namespace.
+func (c *Client) FulltextDelete(ctx context.Context, namespace string, ids []string) (*FulltextDeleteResponse, error) {
+	body := FulltextDeleteRequest{IDs: ids}
+	resp, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/delete", url.PathEscape(namespace)), body)
+	if err != nil {
+		return nil, err
+	}
+	var result FulltextDeleteResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fulltext delete response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Admin Operations
+// ===========================================================================
+
+// AdminTtlStats returns TTL statistics across all namespaces.
+func (c *Client) AdminTtlStats(ctx context.Context) (*TtlStatsResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/ttl/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result TtlStatsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ttl stats: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Routing Operations
+// ===========================================================================
+
+// RouteQuery routes a query to the most relevant namespaces.
+func (c *Client) RouteQuery(ctx context.Context, req RouteRequest) (*RouteResponse, error) {
+	resp, err := c.request(ctx, "POST", "/v1/route", req)
+	if err != nil {
+		return nil, err
+	}
+	var result RouteResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal route response: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Import Operations
+// ===========================================================================
+
+// ImportJobStatus returns the status of an import job.
+func (c *Client) ImportJobStatus(ctx context.Context, jobID string) (*ImportJobStatus, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/import/%s/status", url.PathEscape(jobID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ImportJobStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal import job status: %w", err)
+	}
+	return &result, nil
+}
+
+// ===========================================================================
+// Backup Operations
+// ===========================================================================
+
+// AdminDownloadBackup downloads a backup archive as raw bytes.
+func (c *Client) AdminDownloadBackup(ctx context.Context, backupID string) ([]byte, error) {
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/%s/download", url.PathEscape(backupID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// AdminUploadBackup uploads a raw backup archive and returns the server response.
+func (c *Client) AdminUploadBackup(ctx context.Context, data []byte) (map[string]interface{}, error) {
+	resp, err := c.requestRaw(ctx, "POST", "/admin/backups/upload", "application/octet-stream", data)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal upload backup response: %w", err)
+	}
+	return result, nil
+}
+
+// ===========================================================================
+// Storage Tier Operations
+// ===========================================================================
+
+// AdminStorageTierOverview returns an overview of the storage tier architecture and activity.
+func (c *Client) AdminStorageTierOverview(ctx context.Context) (*StorageTierOverview, error) {
+	resp, err := c.request(ctx, "GET", "/admin/storage/tiers", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StorageTierOverview
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal storage tier overview: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminBackgroundActivity returns the current background activity as dynamic JSON.
+func (c *Client) AdminBackgroundActivity(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "GET", "/admin/background-activity", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal background activity: %w", err)
+	}
+	return result, nil
+}
+
+// AdminMemoryTypeStats returns memory type distribution statistics.
+func (c *Client) AdminMemoryTypeStats(ctx context.Context) (*MemoryTypeStatsResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/memory-type-stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryTypeStatsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal memory type stats: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminMigrateNamespaceDimensions migrates namespace vector dimensions to a target dimension.
+func (c *Client) AdminMigrateNamespaceDimensions(ctx context.Context, req MigrateNamespaceDimensionsRequest) (*MigrateDimensionsResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/namespaces/migrate-dimensions", req)
+	if err != nil {
+		return nil, err
+	}
+	var result MigrateDimensionsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal migrate dimensions response: %w", err)
+	}
+	return &result, nil
 }

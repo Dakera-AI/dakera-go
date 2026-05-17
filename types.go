@@ -2499,3 +2499,147 @@ type CompactionResponse struct {
 	JobID   string `json:"job_id"`
 	Message string `json:"message"`
 }
+
+// FullTextIndexStats is returned by GET /v1/namespaces/{namespace}/fulltext/stats.
+type FullTextIndexStats struct {
+	DocumentCount uint32  `json:"document_count"`
+	UniqueTerms   int     `json:"unique_terms"`
+	AvgDocLength  float64 `json:"avg_doc_length"`
+}
+
+// FulltextDeleteRequest is the request body for POST /v1/namespaces/{namespace}/fulltext/delete.
+type FulltextDeleteRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// FulltextDeleteResponse is returned by POST /v1/namespaces/{namespace}/fulltext/delete.
+type FulltextDeleteResponse struct {
+	DeletedCount int `json:"deleted_count"`
+}
+
+// TtlNamespaceStats holds TTL statistics for a single namespace.
+type TtlNamespaceStats struct {
+	Namespace             string `json:"namespace"`
+	VectorsWithTtl        uint64 `json:"vectors_with_ttl"`
+	ExpiringWithinHour    uint64 `json:"expiring_within_hour"`
+	ExpiringWithinDay     uint64 `json:"expiring_within_day"`
+	ExpiredPendingCleanup uint64 `json:"expired_pending_cleanup"`
+}
+
+// TtlStatsResponse is returned by GET /admin/ttl/stats.
+type TtlStatsResponse struct {
+	Namespaces   []TtlNamespaceStats `json:"namespaces"`
+	TotalWithTtl uint64              `json:"total_with_ttl"`
+	TotalExpired uint64              `json:"total_expired"`
+}
+
+// RouteRequest is the request body for POST /v1/route.
+type RouteRequest struct {
+	Query         string  `json:"query"`
+	TopK          int     `json:"top_k,omitempty"`
+	MinSimilarity float32 `json:"min_similarity,omitempty"`
+	Model         string  `json:"model,omitempty"`
+}
+
+// RouteMatch represents a single namespace match from routing.
+type RouteMatch struct {
+	Namespace   string  `json:"namespace"`
+	Similarity  float64 `json:"similarity"`
+	Description string  `json:"description,omitempty"`
+}
+
+// RouteResponse is returned by POST /v1/route.
+type RouteResponse struct {
+	Routes          []RouteMatch `json:"routes"`
+	Model           string       `json:"model"`
+	EmbeddingTimeMs uint64       `json:"embedding_time_ms"`
+}
+
+// ImportJobStatus is returned by GET /v1/import/{job_id}/status.
+type ImportJobStatus struct {
+	JobID      string   `json:"job_id"`
+	Status     string   `json:"status"`
+	Format     string   `json:"format"`
+	Total      int      `json:"total"`
+	Imported   int      `json:"imported"`
+	Skipped    int      `json:"skipped"`
+	Errors     []string `json:"errors"`
+	StartedAt  uint64   `json:"started_at"`
+	FinishedAt *uint64  `json:"finished_at,omitempty"`
+}
+
+// TierInfo describes a single storage tier.
+type TierInfo struct {
+	Name          string  `json:"name"`
+	TierType      string  `json:"tier_type"`
+	Technology    string  `json:"technology"`
+	Description   string  `json:"description"`
+	TargetLatency string  `json:"target_latency"`
+	Capacity      string  `json:"capacity,omitempty"`
+	Status        string  `json:"status"`
+	CurrentCount  uint64  `json:"current_count"`
+	HitCount      uint64  `json:"hit_count"`
+	HitRate       float64 `json:"hit_rate"`
+}
+
+// TierConfig holds the tiered storage configuration.
+type TierConfig struct {
+	HotTierCapacity         int    `json:"hot_tier_capacity"`
+	HotToWarmThresholdSecs  uint64 `json:"hot_to_warm_threshold_secs"`
+	WarmToColdThresholdSecs uint64 `json:"warm_to_cold_threshold_secs"`
+	AutoTierEnabled         bool   `json:"auto_tier_enabled"`
+	TierCheckIntervalSecs   uint64 `json:"tier_check_interval_secs"`
+}
+
+// TierActivity holds tiered storage activity metrics.
+type TierActivity struct {
+	Promotions      uint64  `json:"promotions"`
+	Demotions       uint64  `json:"demotions"`
+	CacheHitRate    float64 `json:"cache_hit_rate"`
+	StorageBackend  string  `json:"storage_backend"`
+	PromotionsToHot uint64  `json:"promotions_to_hot"`
+	DemotionsToWarm uint64  `json:"demotions_to_warm"`
+	DemotionsToCold uint64  `json:"demotions_to_cold"`
+}
+
+// StorageTierOverview is returned by GET /admin/storage/tiers.
+type StorageTierOverview struct {
+	TiersEnabled bool         `json:"tiers_enabled"`
+	Architecture []TierInfo   `json:"architecture"`
+	Config       TierConfig   `json:"config"`
+	Activity     TierActivity `json:"activity"`
+}
+
+// MemoryTypeStatsResponse is returned by GET /admin/memory-type-stats.
+type MemoryTypeStatsResponse struct {
+	Total           uint64 `json:"total"`
+	Working         uint64 `json:"working"`
+	Episodic        uint64 `json:"episodic"`
+	Semantic        uint64 `json:"semantic"`
+	Procedural      uint64 `json:"procedural"`
+	AgentNamespaces uint64 `json:"agent_namespaces"`
+}
+
+// MigrateNamespaceDimensionsRequest is the request body for POST /admin/namespaces/migrate-dimensions.
+type MigrateNamespaceDimensionsRequest struct {
+	Namespaces      []string `json:"namespaces,omitempty"`
+	TargetDimension int      `json:"target_dimension,omitempty"`
+}
+
+// NamespaceMigrationResult holds the migration result for a single namespace.
+type NamespaceMigrationResult struct {
+	Namespace         string  `json:"namespace"`
+	OriginalDimension int     `json:"original_dimension"`
+	VectorsMigrated   int     `json:"vectors_migrated"`
+	VectorsSkipped    int     `json:"vectors_skipped"`
+	Status            string  `json:"status"`
+	Error             *string `json:"error,omitempty"`
+}
+
+// MigrateDimensionsResponse is returned by POST /admin/namespaces/migrate-dimensions.
+type MigrateDimensionsResponse struct {
+	Migrated       int                        `json:"migrated"`
+	Failed         int                        `json:"failed"`
+	AlreadyCurrent int                        `json:"already_current"`
+	Results        []NamespaceMigrationResult `json:"results"`
+}
