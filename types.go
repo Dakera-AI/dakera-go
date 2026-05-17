@@ -33,9 +33,10 @@ type SearchResult struct {
 
 // NamespaceInfo represents information about a namespace.
 type NamespaceInfo struct {
-	Name        string                 `json:"name"`
-	VectorCount int64                  `json:"vectorCount"`
-	Dimensions  int                    `json:"dimensions,omitempty"`
+	Name        string                 `json:"namespace"`
+	VectorCount int64                  `json:"vector_count"`
+	Dimension   int                    `json:"dimension,omitempty"`
+	Distance    string                 `json:"distance,omitempty"`
 	IndexType   string                 `json:"indexType,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt   *time.Time             `json:"createdAt,omitempty"`
@@ -495,14 +496,16 @@ type StoreMemoryResponse struct {
 
 // Memory represents a stored memory.
 type Memory struct {
-	ID          string                 `json:"id"`
-	Content     string                 `json:"content"`
-	MemoryType  string                 `json:"memory_type"`
-	Importance  float32                `json:"importance"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt   string                 `json:"created_at,omitempty"`
-	UpdatedAt   string                 `json:"updated_at,omitempty"`
-	AccessCount *int                   `json:"access_count,omitempty"`
+	ID             string                 `json:"id"`
+	Content        string                 `json:"content"`
+	AgentID        string                 `json:"agent_id,omitempty"`
+	MemoryType     string                 `json:"memory_type"`
+	Importance     float32                `json:"importance"`
+	Tags           []string               `json:"tags,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt      int64                  `json:"created_at,omitempty"`
+	LastAccessedAt int64                  `json:"last_accessed_at,omitempty"`
+	AccessCount    *int                   `json:"access_count,omitempty"`
 }
 
 // RecalledMemory represents a recalled memory with similarity score.
@@ -513,7 +516,7 @@ type RecalledMemory struct {
 	Importance float32                `json:"importance"`
 	Score      float32                `json:"score"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt  string                 `json:"created_at,omitempty"`
+	CreatedAt  int64                  `json:"created_at,omitempty"`
 	// KG-3: hop depth at which this memory was found (only set on associated memories)
 	Depth *int `json:"depth,omitempty"`
 }

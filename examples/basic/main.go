@@ -130,8 +130,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get namespace: %v", err)
 	}
-	fmt.Printf("Name: %s, Vectors: %d, Dimensions: %d\n",
-		info.Name, info.VectorCount, info.Dimensions)
+	fmt.Printf("Name: %s, Vectors: %d, Dimension: %d\n",
+		info.Name, info.VectorCount, info.Dimension)
 
 	// Delete vectors
 	deleteResp, err := client.Delete(ctx, namespace, dakera.DeleteOptions{

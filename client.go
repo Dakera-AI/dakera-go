@@ -614,14 +614,14 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 // ===========================================================================
 
 // ListNamespaces returns all namespaces.
-func (c *Client) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
+func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
 	respBody, err := c.request(ctx, "GET", "/v1/namespaces", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var resp struct {
-		Namespaces []NamespaceInfo `json:"namespaces"`
+		Namespaces []string `json:"namespaces"`
 	}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)

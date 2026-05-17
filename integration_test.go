@@ -90,7 +90,7 @@ func TestIntegration_ListNamespaces(t *testing.T) {
 	}
 	found := false
 	for _, n := range namespaces {
-		if n.Name == ns {
+		if n == ns {
 			found = true
 			break
 		}

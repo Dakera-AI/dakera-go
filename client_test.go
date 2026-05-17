@@ -310,10 +310,7 @@ func TestListNamespaces(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"namespaces": []map[string]interface{}{
-				{"name": "ns1", "vectorCount": 100},
-				{"name": "ns2", "vectorCount": 200},
-			},
+			"namespaces": []string{"ns1", "ns2"},
 		})
 	}))
 	defer server.Close()
@@ -323,7 +320,7 @@ func TestListNamespaces(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, namespaces, 2)
-	assert.Equal(t, "ns1", namespaces[0].Name)
+	assert.Equal(t, "ns1", namespaces[0])
 }
 
 func TestGetNamespace(t *testing.T) {
@@ -333,9 +330,9 @@ func TestGetNamespace(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"name":        "test-ns",
-			"vectorCount": 1000,
-			"dimensions":  384,
+			"namespace":    "test-ns",
+			"vector_count": 1000,
+			"dimension":    384,
 		})
 	}))
 	defer server.Close()
@@ -355,9 +352,9 @@ func TestCreateNamespace(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"name":        "new-ns",
-			"vectorCount": 0,
-			"dimensions":  384,
+			"namespace":    "new-ns",
+			"vector_count": 0,
+			"dimension":    384,
 		})
 	}))
 	defer server.Close()
