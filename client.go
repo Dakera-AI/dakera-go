@@ -1144,7 +1144,7 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 
 // EndSession ends a session and returns the session state and memory count.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), nil)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
