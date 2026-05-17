@@ -574,7 +574,7 @@ func (c *Client) FulltextSearch(ctx context.Context, namespace string, query str
 // When provided, results are blended with vector similarity according to opts.Alpha.
 func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []float32, query string, opts *HybridSearchOptions) ([]HybridSearchResult, error) {
 	body := map[string]interface{}{
-		"query": query,
+		"text": query,
 	}
 	if vector != nil {
 		body["vector"] = vector
@@ -585,7 +585,7 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 			body["top_k"] = opts.TopK
 		}
 		if opts.Alpha > 0 {
-			body["alpha"] = opts.Alpha
+			body["vector_weight"] = opts.Alpha
 		}
 		if opts.Filter != nil {
 			body["filter"] = opts.Filter
@@ -614,14 +614,14 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 // ===========================================================================
 
 // ListNamespaces returns all namespaces.
-func (c *Client) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
+func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
 	respBody, err := c.request(ctx, "GET", "/v1/namespaces", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var resp struct {
-		Namespaces []NamespaceInfo `json:"namespaces"`
+		Namespaces []string `json:"namespaces"`
 	}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
@@ -651,7 +651,7 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 
 	if opts != nil {
 		if opts.Dimensions > 0 {
-			body["dimensions"] = opts.Dimensions
+			body["dimension"] = opts.Dimensions
 		}
 		if opts.IndexType != "" {
 			body["index_type"] = opts.IndexType
@@ -763,7 +763,8 @@ func (c *Client) Flush(ctx context.Context, namespace string) (*StatusResponse, 
 
 // StoreMemory stores a memory for an agent.
 func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemoryRequest) (*StoreMemoryResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/store", req)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +782,8 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 // the response will include AssociatedMemories surfaced via KG depth-1
 // traversal from the primary results.
 func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) (*RecallResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/recall", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/recall", req)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +802,7 @@ func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) 
 
 // GetMemory gets a specific memory.
 func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s?agent_id=%s", memoryID, url.QueryEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -814,7 +816,7 @@ func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memo
 
 // UpdateMemory updates an existing memory.
 func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req UpdateMemoryRequest) (*StoreMemoryResponse, error) {
-	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), req)
+	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/memory/update/%s", memoryID), req)
 	if err != nil {
 		return nil, err
 	}
@@ -828,7 +830,7 @@ func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req
 
 // Forget deletes a memory.
 func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
-	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/memories/%s", agentID, memoryID), nil)
+	_, err := c.request(ctx, "POST", "/v1/memory/forget", map[string]interface{}{"agent_id": agentID, "memory_ids": []string{memoryID}})
 	return err
 }
 
@@ -884,7 +886,8 @@ func (c *Client) BatchForget(ctx context.Context, req BatchForgetRequest) (*Batc
 
 // SearchMemories searches memories for an agent.
 func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchMemoriesRequest) ([]RecalledMemory, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/search", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/search", req)
 	if err != nil {
 		return nil, err
 	}
@@ -904,13 +907,23 @@ func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchM
 
 // UpdateImportance updates the importance of memories.
 func (c *Client) UpdateImportance(ctx context.Context, agentID string, req UpdateImportanceRequest) error {
-	_, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/agents/%s/memories/importance", agentID), req)
-	return err
+	for _, mid := range req.MemoryIDs {
+		body := map[string]interface{}{
+			"agent_id":   agentID,
+			"memory_id":  mid,
+			"importance": req.Importance,
+		}
+		if _, err := c.request(ctx, "POST", "/v1/memory/importance", body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Consolidate consolidates memories for an agent.
 func (c *Client) Consolidate(ctx context.Context, agentID string, req ConsolidateRequest) (*ConsolidateResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/consolidate", agentID), req)
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/consolidate", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,7 +1144,7 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 
 // EndSession ends a session and returns the session state and memory count.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), nil)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
@@ -1184,11 +1197,13 @@ func (c *Client) ListSessions(ctx context.Context, opts *ListSessionsOptions) ([
 		return nil, err
 	}
 
-	var result []Session
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wrapper struct {
+		Sessions []Session `json:"sessions"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return wrapper.Sessions, nil
 }
 
 // SessionMemories gets memories for a session.
@@ -1286,11 +1301,13 @@ func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentS
 		return nil, err
 	}
 
-	var result []Session
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wrapper struct {
+		Sessions []Session `json:"sessions"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return wrapper.Sessions, nil
 }
 
 // GetWakeUpContext returns top-N wake-up context memories for an agent (DAK-1690).
@@ -2190,7 +2207,7 @@ func (c *Client) ConfigureNamespaceNer(ctx context.Context, namespace string, co
 // entityTypes may be nil to use the server default types.
 func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) (*EntityExtractionResponse, error) {
 	body := map[string]interface{}{
-		"text": text,
+		"content": text,
 	}
 	if entityTypes != nil {
 		body["entity_types"] = entityTypes
