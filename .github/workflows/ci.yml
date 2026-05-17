@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,5 +35,49 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -v -race ./...
+      - name: Test (unit only)
+        run: go test -v -race -run '^Test[^I]' ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: [test]
+    services:
+      dakera:
+        image: ghcr.io/dakera-ai/dakera:latest
+        ports:
+          - 3300:3000
+        env:
+          DAKERA_AUTH_ENABLED: "false"
+        options: >-
+          --health-cmd "curl -f http://127.0.0.1:3000/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.23'
+
+      - name: Wait for Dakera to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3300/health; then
+              echo "Dakera is ready"
+              break
+            fi
+            echo "Waiting for Dakera... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run integration tests
+        env:
+          DAKERA_TEST_URL: http://localhost:3300
+        run: go test -v -race -run '^TestIntegration' ./...
