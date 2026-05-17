@@ -48,7 +48,7 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Printf("StoreMemory (may not be supported): %v", err)
+		log.Fatalf("StoreMemory failed: %v", err)
 	} else {
 		fmt.Printf("Stored memory: %s\n", mem1.Memory.ID)
 	}
@@ -60,7 +60,7 @@ func main() {
 		Importance: &imp2,
 	})
 	if err != nil {
-		log.Printf("StoreMemory (may not be supported): %v", err)
+		log.Fatalf("StoreMemory failed: %v", err)
 	} else {
 		fmt.Printf("Stored memory: %s\n", mem2.Memory.ID)
 	}
@@ -75,7 +75,7 @@ func main() {
 		TopK:  5,
 	})
 	if err != nil {
-		log.Printf("Recall (may not be supported): %v", err)
+		log.Fatalf("Recall failed: %v", err)
 	} else {
 		for _, m := range recallResp.Memories {
 			fmt.Printf("  [%.2f] %s — %s\n", m.Score, m.MemoryType, m.Content)
