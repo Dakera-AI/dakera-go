@@ -5,12 +5,20 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	dakera "github.com/dakera-ai/dakera-go"
 )
 
+func dakeraURL() string {
+	if u := os.Getenv("DAKERA_API_URL"); u != "" {
+		return u
+	}
+	return "http://localhost:3300"
+}
+
 func main() {
-	client := dakera.NewClient("http://localhost:3000")
+	client := dakera.NewClient(dakeraURL())
 	ctx := context.Background()
 
 	namespace := "docs-namespace"
