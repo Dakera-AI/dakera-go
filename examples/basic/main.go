@@ -155,9 +155,10 @@ func main() {
 		IDs: []string{"vec1"},
 	})
 	if err != nil {
-		log.Fatalf("Failed to delete: %v", err)
+		log.Printf("Delete not supported on this server version: %v", err)
+	} else {
+		fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
 	}
-	fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
 
 	// Cleanup - delete namespace
 	err = client.DeleteNamespace(ctx, namespace)
