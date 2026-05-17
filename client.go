@@ -574,7 +574,7 @@ func (c *Client) FulltextSearch(ctx context.Context, namespace string, query str
 // When provided, results are blended with vector similarity according to opts.Alpha.
 func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []float32, query string, opts *HybridSearchOptions) ([]HybridSearchResult, error) {
 	body := map[string]interface{}{
-		"query": query,
+		"text": query,
 	}
 	if vector != nil {
 		body["vector"] = vector
@@ -585,7 +585,7 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 			body["top_k"] = opts.TopK
 		}
 		if opts.Alpha > 0 {
-			body["alpha"] = opts.Alpha
+			body["vector_weight"] = opts.Alpha
 		}
 		if opts.Filter != nil {
 			body["filter"] = opts.Filter
@@ -907,9 +907,17 @@ func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchM
 
 // UpdateImportance updates the importance of memories.
 func (c *Client) UpdateImportance(ctx context.Context, agentID string, req UpdateImportanceRequest) error {
-	req.AgentID = agentID
-	_, err := c.request(ctx, "POST", "/v1/memory/importance", req)
-	return err
+	for _, mid := range req.MemoryIDs {
+		body := map[string]interface{}{
+			"agent_id":   agentID,
+			"memory_id":  mid,
+			"importance": req.Importance,
+		}
+		if _, err := c.request(ctx, "POST", "/v1/memory/importance", body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Consolidate consolidates memories for an agent.
