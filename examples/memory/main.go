@@ -5,12 +5,30 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	dakera "github.com/dakera-ai/dakera-go"
 )
 
+func dakeraURL() string {
+	if u := os.Getenv("DAKERA_API_URL"); u != "" {
+		return u
+	}
+	return "http://localhost:3300"
+}
+
+func dakeraAPIKey() string {
+	if k := os.Getenv("DAKERA_API_KEY"); k != "" {
+		return k
+	}
+	return "dk-mykey"
+}
+
 func main() {
-	client := dakera.NewClient("http://localhost:3000")
+	client := dakera.NewClientWithOptions(dakera.ClientOptions{
+		BaseURL: dakeraURL(),
+		APIKey:  dakeraAPIKey(),
+	})
 	ctx := context.Background()
 
 	agentID := "agent-001"

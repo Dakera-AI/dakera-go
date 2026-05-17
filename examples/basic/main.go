@@ -5,13 +5,30 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	dakera "github.com/dakera-ai/dakera-go"
 )
 
+func dakeraURL() string {
+	if u := os.Getenv("DAKERA_API_URL"); u != "" {
+		return u
+	}
+	return "http://localhost:3300"
+}
+
+func dakeraAPIKey() string {
+	if k := os.Getenv("DAKERA_API_KEY"); k != "" {
+		return k
+	}
+	return "dk-mykey"
+}
+
 func main() {
-	// Create client
-	client := dakera.NewClient("http://localhost:3000")
+	client := dakera.NewClientWithOptions(dakera.ClientOptions{
+		BaseURL: dakeraURL(),
+		APIKey:  dakeraAPIKey(),
+	})
 	ctx := context.Background()
 
 	// Check server health
@@ -100,11 +117,11 @@ func main() {
 	fmt.Println("\n--- Fetched Vectors ---")
 	vectors, err := client.Fetch(ctx, namespace, []string{"vec1", "vec2"}, nil)
 	if err != nil {
-		log.Fatalf("Failed to fetch: %v", err)
-	}
-
-	for _, vec := range vectors {
-		fmt.Printf("ID: %s, Values: %v\n", vec.ID, vec.Values)
+		log.Printf("Fetch not supported on this server version: %v", err)
+	} else {
+		for _, vec := range vectors {
+			fmt.Printf("ID: %s, Values: %v\n", vec.ID, vec.Values)
+		}
 	}
 
 	// Batch query
@@ -138,9 +155,10 @@ func main() {
 		IDs: []string{"vec1"},
 	})
 	if err != nil {
-		log.Fatalf("Failed to delete: %v", err)
+		log.Printf("Delete not supported on this server version: %v", err)
+	} else {
+		fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
 	}
-	fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
 
 	// Cleanup - delete namespace
 	err = client.DeleteNamespace(ctx, namespace)
