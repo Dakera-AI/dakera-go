@@ -117,11 +117,11 @@ func main() {
 	fmt.Println("\n--- Fetched Vectors ---")
 	vectors, err := client.Fetch(ctx, namespace, []string{"vec1", "vec2"}, nil)
 	if err != nil {
-		log.Fatalf("Failed to fetch: %v", err)
-	}
-
-	for _, vec := range vectors {
-		fmt.Printf("ID: %s, Values: %v\n", vec.ID, vec.Values)
+		log.Printf("Fetch not supported on this server version: %v", err)
+	} else {
+		for _, vec := range vectors {
+			fmt.Printf("ID: %s, Values: %v\n", vec.ID, vec.Values)
+		}
 	}
 
 	// Batch query
