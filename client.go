@@ -337,7 +337,7 @@ func (c *Client) Delete(ctx context.Context, namespace string, opts DeleteOption
 		body["delete_all"] = true
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/delete", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/delete", namespace), body)
 	if err != nil {
 		return nil, err
 	}
