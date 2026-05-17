@@ -48,9 +48,10 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatalf("Failed to store memory: %v", err)
+		log.Printf("StoreMemory (may not be supported): %v", err)
+	} else {
+		fmt.Printf("Stored memory: %s\n", mem1.Memory.ID)
 	}
-	fmt.Printf("Stored memory: %s\n", mem1.Memory.ID)
 
 	imp2 := float32(0.7)
 	mem2, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
@@ -59,9 +60,10 @@ func main() {
 		Importance: &imp2,
 	})
 	if err != nil {
-		log.Fatalf("Failed to store memory: %v", err)
+		log.Printf("StoreMemory (may not be supported): %v", err)
+	} else {
+		fmt.Printf("Stored memory: %s\n", mem2.Memory.ID)
 	}
-	fmt.Printf("Stored memory: %s\n", mem2.Memory.ID)
 
 	// -------------------------------------------------------------------------
 	// Recall memories
@@ -73,11 +75,11 @@ func main() {
 		TopK:  5,
 	})
 	if err != nil {
-		log.Fatalf("Failed to recall memories: %v", err)
-	}
-
-	for _, m := range recallResp.Memories {
-		fmt.Printf("  [%.2f] %s — %s\n", m.Score, m.MemoryType, m.Content)
+		log.Printf("Recall (may not be supported): %v", err)
+	} else {
+		for _, m := range recallResp.Memories {
+			fmt.Printf("  [%.2f] %s — %s\n", m.Score, m.MemoryType, m.Content)
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -91,11 +93,11 @@ func main() {
 		TopK:       3,
 	})
 	if err != nil {
-		log.Fatalf("Failed to search memories: %v", err)
-	}
-
-	for _, m := range searched {
-		fmt.Printf("  [%.2f] %s\n", m.Score, m.Content)
+		log.Printf("SearchMemories (may not be supported): %v", err)
+	} else {
+		for _, m := range searched {
+			fmt.Printf("  [%.2f] %s\n", m.Score, m.Content)
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -110,26 +112,27 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatalf("Failed to start session: %v", err)
-	}
-	fmt.Printf("Started session: %s\n", session.ID)
+		log.Printf("StartSession (may not be supported): %v", err)
+	} else {
+		fmt.Printf("Started session: %s\n", session.ID)
 
-	// Store a session-scoped memory
-	sessionMem, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
-		Content:   "Reviewing PR #42: refactor authentication middleware.",
-		SessionID: session.ID,
-	})
-	if err != nil {
-		log.Fatalf("Failed to store session memory: %v", err)
-	}
-	fmt.Printf("Stored session memory: %s\n", sessionMem.Memory.ID)
+		sessionMem, err := client.StoreMemory(ctx, agentID, dakera.StoreMemoryRequest{
+			Content:   "Reviewing PR #42: refactor authentication middleware.",
+			SessionID: session.ID,
+		})
+		if err != nil {
+			log.Printf("StoreMemory with session (may not be supported): %v", err)
+		} else {
+			fmt.Printf("Stored session memory: %s\n", sessionMem.Memory.ID)
+		}
 
-	// End the session
-	endResp, err := client.EndSession(ctx, session.ID)
-	if err != nil {
-		log.Fatalf("Failed to end session: %v", err)
+		endResp, err := client.EndSession(ctx, session.ID)
+		if err != nil {
+			log.Printf("EndSession (may not be supported): %v", err)
+		} else {
+			fmt.Printf("Ended session: %s (memories: %d)\n", endResp.Session.ID, endResp.MemoryCount)
+		}
 	}
-	fmt.Printf("Ended session: %s (memories: %d)\n", endResp.Session.ID, endResp.MemoryCount)
 
 	// -------------------------------------------------------------------------
 	// Agent stats
@@ -138,11 +141,12 @@ func main() {
 
 	stats, err := client.AgentStats(ctx, agentID)
 	if err != nil {
-		log.Fatalf("Failed to get agent stats: %v", err)
+		log.Printf("AgentStats (may not be supported): %v", err)
+	} else {
+		fmt.Printf("Agent: %s\n", stats.AgentID)
+		fmt.Printf("  Total memories: %d\n", stats.TotalMemories)
+		fmt.Printf("  Total sessions: %d\n", stats.TotalSessions)
 	}
-	fmt.Printf("Agent: %s\n", stats.AgentID)
-	fmt.Printf("  Total memories: %d\n", stats.TotalMemories)
-	fmt.Printf("  Total sessions: %d\n", stats.TotalSessions)
 
 	// -------------------------------------------------------------------------
 	// Summarize memories
@@ -154,9 +158,10 @@ func main() {
 		TargetType: "preference",
 	})
 	if err != nil {
-		log.Fatalf("Failed to summarize: %v", err)
+		log.Printf("Summarize (may not be supported): %v", err)
+	} else {
+		fmt.Printf("Summary (%d sources): %s\n", summary.SourceCount, summary.Summary)
 	}
-	fmt.Printf("Summary (%d sources): %s\n", summary.SourceCount, summary.Summary)
 
 	fmt.Println("\nDone!")
 }
