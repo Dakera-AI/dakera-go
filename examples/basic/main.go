@@ -139,15 +139,6 @@ func main() {
 	fmt.Printf("Name: %s, Vectors: %d, Dimension: %d\n",
 		info.Name, info.VectorCount, info.Dimension)
 
-	// Delete vectors
-	deleteResp, err := client.Delete(ctx, namespace, dakera.DeleteOptions{
-		IDs: []string{"vec1"},
-	})
-	if err != nil {
-		log.Fatalf("Failed to delete: %v", err)
-	}
-	fmt.Printf("\nDeleted %d vectors\n", deleteResp.DeletedCount)
-
 	// Cleanup - delete namespace
 	err = client.DeleteNamespace(ctx, namespace)
 	if err != nil {
