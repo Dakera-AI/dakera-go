@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.55] - 2026-05-17
+## [0.11.56] - 2026-05-17
 
 ### Changed
 
@@ -27,8 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a malformed JSON field name to the server, causing unexpected results. Options are now
   correctly omitted from the request body when `nil`.
 
-- **Docker integration tests in CI** — full end-to-end integration tests now run against a
-  live Dakera server container on every PR and push.
+### Added
+
+- **40+ new client methods** for full engine parity:
+  - **Health probes**: `HealthReady()`, `HealthLive()`
+  - **Vector bulk ops**: `BulkUpdateVectors()`, `BulkDeleteVectors()`, `CountVectors()`
+  - **Agent consolidation**: `ConsolidateAgent()`, `GetConsolidationLog()`, `PatchConsolidationConfig()`
+  - **Namespace config**: `GetNamespaceEntityConfig()`, `GetNamespaceExtractor()`
+  - **Admin cluster**: `AdminClusterReplication()`, `AdminListShards()`, `AdminRebalanceShards()`
+  - **Admin maintenance**: `AdminMaintenanceStatus()`, `AdminEnableMaintenance()`, `AdminDisableMaintenance()`
+  - **Admin quotas**: `AdminListQuotas()`, `AdminGetDefaultQuota()`, `AdminSetDefaultQuota()`, `AdminGetQuota()`, `AdminSetQuota()`, `AdminDeleteQuota()`, `AdminCheckQuota()`
+  - **Admin slow queries**: `AdminListSlowQueries()`, `AdminSlowQuerySummary()`, `AdminClearSlowQueries()`, `AdminUpdateSlowQueryConfig()`
+  - **Admin backups**: `AdminListBackups()`, `AdminCreateBackup()`, `AdminGetBackup()`, `AdminDeleteBackup()`, `AdminGetBackupSchedule()`, `AdminUpdateBackupSchedule()`, `AdminRestoreBackup()`, `AdminGetRestoreStatus()`
+  - **Ops**: `OpsDiagnostics()`, `OpsListJobs()`, `OpsGetJob()`, `OpsCompact()`, `OpsShutdown()`
+  - **Fulltext**: `FulltextStats()`, `FulltextDelete()`
+  - **TTL**: `TtlStats()`
+  - **Query routing**: `RouteQuery()`
+  - **Import jobs**: `ImportJobStatus()`
+  - **Backup I/O**: `DownloadBackup()`, `UploadBackup()`
+  - **Storage tiers**: `StorageTierOverview()`
+  - **Background activity**: `BackgroundActivity()`
+  - **Memory type stats**: `MemoryTypeStats()`
+  - **Namespace migration**: `MigrateNamespaceDimensions()`
+- **15 new Go types** for structured responses
+- **177 unit tests** covering all SDK methods
+- **6 new examples**: admin operations, analytics, fulltext search, knowledge graph, ops diagnostics, vector operations
+- **Docker integration tests in CI** — full end-to-end integration tests against a live
+  Dakera server container on every PR and push.
 
 ## [0.11.54] - 2026-05-13
 
