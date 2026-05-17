@@ -35,8 +35,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test (unit only)
-        run: go test -v -race -run '^Test[^I]' ./...
+      - name: Test
+        run: go test -v -race ./...
 
   integration:
     runs-on: ubuntu-latest
