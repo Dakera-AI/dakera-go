@@ -63,7 +63,7 @@ func TestIntegration_CreateNamespace(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	result, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	result, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestIntegration_ListNamespaces(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestIntegration_GetNamespace(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestIntegration_DeleteNamespace(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestIntegration_UpsertText(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestIntegration_QueryText(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestIntegration_HybridSearch(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestIntegration_FulltextSearch(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace()
 
-	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 384})
+	_, err := client.CreateNamespace(ctx, ns, &dakera.CreateNamespaceOptions{Dimensions: 1024})
 	if err != nil {
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
