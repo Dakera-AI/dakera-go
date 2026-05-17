@@ -107,7 +107,10 @@ func main() {
     })
 
     // Hybrid search (vector + BM25)
-    results, _ := client.HybridSearch(ctx, "my-namespace", "completed task", nil)
+    results, _ := client.HybridSearch(ctx, "my-namespace", nil, "completed task", &dakera.HybridSearchOptions{
+        TopK:         5,
+        VectorWeight: 0.7,
+    })
     for _, r := range results {
         fmt.Println(r.ID, r.Score)
     }

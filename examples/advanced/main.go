@@ -20,7 +20,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("--- Setup ---")
 	_, err := client.CreateNamespace(ctx, namespace, &dakera.CreateNamespaceOptions{
-		Dimensions: 384,
+		Dimensions: 1024,
 	})
 	if err != nil && !dakera.IsValidationError(err) {
 		log.Fatalf("Failed to create namespace: %v", err)
@@ -118,10 +118,10 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("\n--- Hybrid Search ---")
 
-	queryVec := make([]float32, 384)
+	queryVec := make([]float32, 1024)
 	hybridResults, err := client.HybridSearch(ctx, namespace, queryVec, "compiled language", &dakera.HybridSearchOptions{
-		TopK:  3,
-		Alpha: 0.5,
+		TopK:         3,
+		VectorWeight: 0.5,
 	})
 	if err != nil {
 		log.Fatalf("Failed to hybrid search: %v", err)

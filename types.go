@@ -151,9 +151,9 @@ type FullTextSearchOptions struct {
 
 // HybridSearchOptions represents options for hybrid search.
 type HybridSearchOptions struct {
-	TopK   int                    `json:"top_k,omitempty"`
-	Alpha  float32                `json:"alpha,omitempty"`
-	Filter map[string]interface{} `json:"filter,omitempty"`
+	TopK         int                    `json:"top_k,omitempty"`
+	VectorWeight float32                `json:"vector_weight,omitempty"`
+	Filter       map[string]interface{} `json:"filter,omitempty"`
 }
 
 // CreateNamespaceOptions represents options for creating a namespace.
