@@ -37,11 +37,11 @@
 ```bash
 docker run -d \
   --name dakera \
-  -p 3300:3300 \
+  -p 3000:3000 \
   -e DAKERA_ROOT_API_KEY=dk-mykey \
   ghcr.io/dakera-ai/dakera:latest
 
-curl http://localhost:3300/health  # → {"status":"ok"}
+curl http://localhost:3000/health  # → {"status":"ok"}
 ```
 
 For persistent storage with Docker Compose:
@@ -79,7 +79,7 @@ import (
 
 func main() {
     client := dakera.NewClientWithOptions(dakera.ClientOptions{
-        BaseURL: "http://localhost:3300",
+        BaseURL: "http://localhost:3000",
         APIKey:  "dk-mykey",
     })
     ctx := context.Background()
@@ -165,19 +165,19 @@ client.UpsertText(ctx, "my-namespace", []dakera.TextInput{
 ```go
 // Self-hosted
 client := dakera.NewClientWithOptions(dakera.ClientOptions{
-    BaseURL: "http://your-server:3300",
+    BaseURL: "http://your-server:3000",
     APIKey:  "your-key",
 })
 
 // Cloud (early access)
 client := dakera.NewClientWithOptions(dakera.ClientOptions{
-    BaseURL: "http://localhost:3300",
+    BaseURL: "http://localhost:3000",
     APIKey:  "your-key",
 })
 
 // With custom retry config
 client := dakera.NewClientWithOptions(dakera.ClientOptions{
-    BaseURL:     "http://localhost:3300",
+    BaseURL:     "http://localhost:3000",
     APIKey:      "your-key",
     RetryConfig: &dakera.RetryConfig{MaxRetries: 5, BaseDelayMs: 200},
 })
