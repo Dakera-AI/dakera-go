@@ -1075,6 +1075,24 @@ func (c *Client) BatchForget(ctx context.Context, req BatchForgetRequest) (*Batc
 	return &result, nil
 }
 
+// StoreMemoriesBatch stores multiple memories in a single request (DAK-5508).
+//
+// Uses POST /v1/memories/store/batch. The server embeds all contents in a
+// single ONNX inference pass, yielding ≥100× throughput vs. N sequential
+// single-store calls. Accepts up to 1 000 memories per call.
+func (c *Client) StoreMemoriesBatch(ctx context.Context, req BatchStoreMemoryRequest) (*BatchStoreMemoryResponse, error) {
+	respBody, err := c.request(ctx, "POST", "/v1/memories/store/batch", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchStoreMemoryResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse batch store response: %w", err)
+	}
+	return &result, nil
+}
+
 // SearchMemories searches memories for an agent.
 func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchMemoriesRequest) ([]RecalledMemory, error) {
 	req.AgentID = agentID

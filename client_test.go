@@ -798,6 +798,52 @@ func TestBatchForget(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// DAK-5508: Batch Store Memory
+// ---------------------------------------------------------------------------
+
+func TestStoreMemoriesBatch(t *testing.T) {
+	t.Run("POSTsToCorrectEndpointAndReturnsResponse", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "POST", r.Method)
+			assert.Equal(t, "/v1/memories/store/batch", r.URL.Path)
+
+			var body map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, "agent-1", body["agent_id"])
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"stored": []map[string]interface{}{
+					{"id": "mem-1", "content": "Dark mode", "agent_id": "agent-1", "tags": []string{}, "importance": 0.8, "created_at": 1700000000},
+					{"id": "mem-2", "content": "Berlin user", "agent_id": "agent-1", "tags": []string{}, "importance": 0.7, "created_at": 1700000001},
+				},
+				"stored_count":           2,
+				"total_embedding_time_ms": 42,
+			})
+		}))
+		defer server.Close()
+
+		imp1 := float32(0.8)
+		imp2 := float32(0.7)
+		client := NewClient(server.URL)
+		req := BatchStoreMemoryRequest{
+			AgentID: "agent-1",
+			Memories: []BatchStoreMemoryItem{
+				{Content: "Dark mode", Importance: &imp1},
+				{Content: "Berlin user", Importance: &imp2},
+			},
+		}
+		resp, err := client.StoreMemoriesBatch(context.Background(), req)
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.StoredCount)
+		assert.Len(t, resp.Stored, 2)
+		assert.Equal(t, "mem-1", resp.Stored[0].ID)
+		assert.Equal(t, int64(42), resp.TotalEmbeddingTimeMs)
+	})
+}
+
+// ---------------------------------------------------------------------------
 // OPS-1: Rate-Limit Headers (v0.7.0)
 // ---------------------------------------------------------------------------
 

@@ -171,7 +171,7 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 
 // Cloud (early access)
 client := dakera.NewClientWithOptions(dakera.ClientOptions{
-    BaseURL: "http://localhost:3000",
+    BaseURL: "http://<your-server-ip>:3000",
     APIKey:  "your-key",
 })
 
