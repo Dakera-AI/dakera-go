@@ -1476,6 +1476,66 @@ type BatchForgetResponse struct {
 }
 
 // ---------------------------------------------------------------------------
+// DAK-5508: Batch Store Memory
+// ---------------------------------------------------------------------------
+
+// BatchStoreMemoryItem is a single memory entry within a BatchStoreMemoryRequest.
+//
+// Mirrors StoreMemoryRequest but omits AgentID — supplied at batch level.
+type BatchStoreMemoryItem struct {
+	// Content is the memory content text (required, max 100 000 chars).
+	Content string `json:"content"`
+	// MemoryType is one of "episodic", "semantic", "procedural", or "working".
+	MemoryType string `json:"memory_type,omitempty"`
+	// Importance is the importance score 0.0–1.0 (default: 0.5).
+	Importance *float32 `json:"importance,omitempty"`
+	// Tags are optional tags to associate with the memory.
+	Tags []string `json:"tags,omitempty"`
+	// SessionID is an optional session ID to associate with.
+	SessionID string `json:"session_id,omitempty"`
+	// Metadata is an arbitrary metadata dictionary.
+	Metadata map[string]any `json:"metadata,omitempty"`
+	// TTLSeconds is an optional TTL in seconds.
+	TTLSeconds *int64 `json:"ttl_seconds,omitempty"`
+	// ExpiresAt is an optional explicit expiry as a Unix timestamp (seconds).
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	// ID is an optional custom ID. Auto-generated if not provided.
+	ID string `json:"id,omitempty"`
+}
+
+// BatchStoreMemoryRequest is the request body for POST /v1/memories/store/batch (DAK-5508).
+//
+// Accepts up to 1 000 memories per call. The server embeds all contents in a
+// single ONNX inference pass, yielding ≥100× throughput vs. N sequential
+// single-store calls.
+type BatchStoreMemoryRequest struct {
+	// AgentID is the agent namespace to store the memories in.
+	AgentID string `json:"agent_id"`
+	// Memories are the memories to store (1–1000 items).
+	Memories []BatchStoreMemoryItem `json:"memories"`
+}
+
+// BatchStoredMemory is a single stored memory returned in a BatchStoreMemoryResponse.
+type BatchStoredMemory struct {
+	ID        string   `json:"id"`
+	Content   string   `json:"content"`
+	AgentID   string   `json:"agent_id"`
+	Tags      []string `json:"tags"`
+	Importance float32  `json:"importance"`
+	CreatedAt int64    `json:"created_at"`
+}
+
+// BatchStoreMemoryResponse is the response from POST /v1/memories/store/batch.
+type BatchStoreMemoryResponse struct {
+	// Stored contains the stored memories in the same order as the request items.
+	Stored []BatchStoredMemory `json:"stored"`
+	// StoredCount is the number of memories successfully stored.
+	StoredCount int `json:"stored_count"`
+	// TotalEmbeddingTimeMs is the time spent on ONNX embedding (milliseconds).
+	TotalEmbeddingTimeMs int64 `json:"total_embedding_time_ms"`
+}
+
+// ---------------------------------------------------------------------------
 // CE-5 / SDK-9: Memory Knowledge Graph
 // ---------------------------------------------------------------------------
 
