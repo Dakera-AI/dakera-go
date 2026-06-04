@@ -2703,3 +2703,29 @@ type MigrateDimensionsResponse struct {
 	AlreadyCurrent int                        `json:"already_current"`
 	Results        []NamespaceMigrationResult `json:"results"`
 }
+
+// DrainReembedRequest is the optional request body for POST /admin/reembed/drain (v0.11.82+).
+// All fields are optional; zero values are omitted from the JSON payload.
+type DrainReembedRequest struct {
+	// TimeoutSecs is the hard wall-clock cap in seconds (default 600).
+	TimeoutSecs *int `json:"timeout_secs,omitempty"`
+	// BatchSize is the number of candidates upgraded per cycle (default 10000).
+	BatchSize *int `json:"batch_size,omitempty"`
+	// MinImportance is the minimum importance threshold (default 0.0 — upgrade all statics).
+	MinImportance *float32 `json:"min_importance,omitempty"`
+}
+
+// DrainReembedResponse is returned by POST /admin/reembed/drain (v0.11.82+).
+// A Remaining of 0 means all _embedding_kind=static vectors have been upgraded to full ONNX quality.
+type DrainReembedResponse struct {
+	// Processed is the total vectors upgraded across all cycles.
+	Processed int `json:"processed"`
+	// Remaining is the number of static candidates still remaining (0 on a full drain).
+	Remaining int `json:"remaining"`
+	// ElapsedMs is the wall-clock duration of the drain in milliseconds.
+	ElapsedMs int64 `json:"elapsed_ms"`
+	// Cycles is the number of upgrade cycles executed.
+	Cycles int `json:"cycles"`
+	// TimedOut is true if the drain stopped on the timeout rather than reaching zero.
+	TimedOut bool `json:"timed_out"`
+}
