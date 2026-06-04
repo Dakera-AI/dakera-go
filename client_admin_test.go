@@ -1257,3 +1257,75 @@ func TestOpsShutdown_Error(t *testing.T) {
 	_, err := client.OpsShutdown(context.Background())
 	require.Error(t, err)
 }
+
+// ===========================================================================
+// AdminDrainReembed — POST /admin/reembed/drain (v0.11.82+, DAK-6326)
+// ===========================================================================
+
+func TestAdminDrainReembedFullDrain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/admin/reembed/drain", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"processed":  1280,
+			"remaining":  0,
+			"elapsed_ms": 4210,
+			"cycles":     3,
+			"timed_out":  false,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.AdminDrainReembed(context.Background(), DrainReembedRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1280, result.Processed)
+	assert.Equal(t, 0, result.Remaining)
+	assert.Equal(t, 3, result.Cycles)
+	assert.False(t, result.TimedOut)
+}
+
+func TestAdminDrainReembedForwardsParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/admin/reembed/drain", r.URL.Path)
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.EqualValues(t, 600, body["timeout_secs"])
+		assert.EqualValues(t, 5000, body["batch_size"])
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"processed":  500,
+			"remaining":  120,
+			"elapsed_ms": 600000,
+			"cycles":     50,
+			"timed_out":  true,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	timeout := 600
+	batch := 5000
+	minImp := float32(0.5)
+	result, err := client.AdminDrainReembed(context.Background(), DrainReembedRequest{
+		TimeoutSecs:   &timeout,
+		BatchSize:     &batch,
+		MinImportance: &minImp,
+	})
+	require.NoError(t, err)
+	assert.True(t, result.TimedOut)
+	assert.Equal(t, 120, result.Remaining)
+}
+
+func TestAdminDrainReembedRequiresAdminScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{"error": "admin scope required"})
+	}))
+	defer server.Close()
+	client := NewClientWithOptions(ClientOptions{BaseURL: server.URL, MaxRetries: 1})
+	_, err := client.AdminDrainReembed(context.Background(), DrainReembedRequest{})
+	require.Error(t, err)
+}
