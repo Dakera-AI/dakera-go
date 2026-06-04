@@ -3495,3 +3495,23 @@ func (c *Client) AdminMigrateNamespaceDimensions(ctx context.Context, req Migrat
 	}
 	return &result, nil
 }
+
+// AdminDrainReembed synchronously drains all static vectors to full ONNX quality via
+// POST /admin/reembed/drain (v0.11.82+).
+//
+// Runs the re-embedding upgrade loop until zero _embedding_kind=static candidates remain
+// across all namespaces, or req.TimeoutSecs elapses. Requires Admin scope. Useful as a
+// pre-benchmark steady-state gate when DAKERA_TIERED=1.
+//
+// A DrainReembedResponse.Remaining of 0 guarantees all vectors are at full ONNX quality.
+func (c *Client) AdminDrainReembed(ctx context.Context, req DrainReembedRequest) (*DrainReembedResponse, error) {
+	resp, err := c.request(ctx, "POST", "/admin/reembed/drain", req)
+	if err != nil {
+		return nil, err
+	}
+	var result DrainReembedResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal drain reembed response: %w", err)
+	}
+	return &result, nil
+}
