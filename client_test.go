@@ -402,6 +402,41 @@ func TestHealth(t *testing.T) {
 	assert.Equal(t, "healthy", health.Status)
 }
 
+func TestHealthBuildSha(t *testing.T) {
+	t.Run("returns build_sha when server provides it (v0.11.84+)", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "GET", r.Method)
+			assert.Equal(t, "/health", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":    "healthy",
+				"version":   "0.11.84",
+				"build_sha": "abc1234def5678",
+			})
+		}))
+		defer server.Close()
+		client := NewClient(server.URL)
+		health, err := client.Health(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "abc1234def5678", health.BuildSha)
+	})
+
+	t.Run("empty build_sha on older servers", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "healthy",
+				"version": "0.11.83",
+			})
+		}))
+		defer server.Close()
+		client := NewClient(server.URL)
+		health, err := client.Health(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "", health.BuildSha)
+	})
+}
+
 func TestErrorHandling(t *testing.T) {
 	t.Run("NotFoundError", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
