@@ -89,8 +89,10 @@ type HybridSearchResult struct {
 
 // HealthResponse represents the server health check response.
 type HealthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version,omitempty"`
+	Status   string `json:"status"`
+	Version  string `json:"version,omitempty"`
+	// BuildSha is the git commit SHA baked into the binary at build time. Present since server v0.11.84.
+	BuildSha string `json:"build_sha,omitempty"`
 }
 
 // UpsertResponse represents the response from an upsert operation.
