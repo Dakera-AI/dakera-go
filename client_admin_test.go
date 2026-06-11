@@ -22,7 +22,7 @@ func TestHealthReady(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ready":   true,
-			"version": "0.11.54",
+			"version": "0.11.89",
 			"checks": map[string]interface{}{
 				"storage": map[string]interface{}{"status": "ok"},
 			},
@@ -33,7 +33,7 @@ func TestHealthReady(t *testing.T) {
 	result, err := client.HealthReady(context.Background())
 	require.NoError(t, err)
 	assert.True(t, result.Ready)
-	assert.Equal(t, "0.11.54", result.Version)
+	assert.Equal(t, "0.11.89", result.Version)
 }
 
 func TestHealthLive(t *testing.T) {
@@ -43,7 +43,7 @@ func TestHealthLive(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"alive":          true,
-			"version":        "0.11.54",
+			"version":        "0.11.89",
 			"uptime_seconds": 86400,
 		})
 	}))
@@ -115,7 +115,7 @@ func TestOpsStats(t *testing.T) {
 		assert.Equal(t, "/v1/ops/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"version":         "0.11.54",
+			"version":         "0.11.89",
 			"total_vectors":   100000,
 			"namespace_count": 5,
 			"uptime_seconds":  3600,
@@ -127,7 +127,7 @@ func TestOpsStats(t *testing.T) {
 	client := NewClient(server.URL)
 	result, err := client.OpsStats(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "0.11.54", result.Version)
+	assert.Equal(t, "0.11.89", result.Version)
 	assert.Equal(t, int64(100000), result.TotalVectors)
 	assert.Equal(t, "running", result.State)
 }
@@ -141,7 +141,7 @@ func TestClusterStatus(t *testing.T) {
 			"status":        "healthy",
 			"nodes":         3,
 			"healthy":       true,
-			"version":       "0.11.54",
+			"version":       "0.11.89",
 			"redis_healthy": true,
 		})
 	}))

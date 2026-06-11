@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.89] - 2026-06-11
+
+### Changed
+
+- **Server compatibility**: tracks Dakera server v0.11.86–v0.11.89.
+  - v0.11.86: CE-OVERHAUL safe subset — RRF single-modality virtual ranking, temporal
+    date-range inference, cross-session entity bridging. All engine-internal; no client
+    API changes required.
+  - v0.11.87: Honor cross-session `fetch_n` override in session-scoped recall path — inert
+    for SDK consumers; server-side env knob only.
+  - v0.11.88: Opt-in CE-31 sentence decomposition on batch ingest
+    (`DAKERA_BATCH_SENTENCE_DECOMP` server env) — no client API changes.
+  - v0.11.89: List-aware CE-31 decomposition + hardened supersession demotion, both
+    inert-by-default server-side env flags — no client API changes.
+
 ## [0.11.85] - 2026-06-05
 
 ### Added
