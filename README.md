@@ -151,6 +151,7 @@ client.UpsertText(ctx, "my-namespace", []dakera.TextInput{
 - **Text Auto-Embedding** — server-side embedding generation (no local model needed)
 - **Namespaces** — isolated vector stores per project, tenant, or use case
 - **Feedback Loop** — upvote/downvote/flag memories to improve recall quality
+- **T-I-F Reliability** — `TifScore` struct and `EvaluateTif()` for Truth-Indeterminacy-Falsity scoring of memory reliability
 - **Entity Extraction** — GLiNER NER for automatic entity detection
 - **SSE Streaming** — Server-sent event subscriptions for real-time memory updates
 - **Typed Filters** — `Eq()`, `Gt()`, `Contains()`, `ArrayContains()` and more

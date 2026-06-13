@@ -1233,6 +1233,18 @@ func (c *Client) GetMemoryFeedbackHistory(ctx context.Context, memoryID string) 
 	return &result, nil
 }
 
+// EvaluateTif computes a T-I-F reliability score for a memory (T-I-F RFC Phase 3).
+//
+// It fetches the memory's full feedback history and reduces it to a TifScore
+// with Truth/Indeterminacy/Falsity proportions and a Classification label.
+func (c *Client) EvaluateTif(ctx context.Context, memoryID string) (TifScore, error) {
+	history, err := c.GetMemoryFeedbackHistory(ctx, memoryID)
+	if err != nil {
+		return TifScore{}, err
+	}
+	return ComputeTifScore(history), nil
+}
+
 // GetAgentFeedbackSummary returns aggregate feedback counts and health score for an agent (INT-1).
 func (c *Client) GetAgentFeedbackSummary(ctx context.Context, agentID string) (*AgentFeedbackSummary, error) {
 	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/feedback/summary", agentID), nil)

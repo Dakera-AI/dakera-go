@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`TifScore`** — new struct in `models.go` for Truth-Indeterminacy-Falsity reliability
+  scoring (T-I-F RFC Phase 3). Fields: `Truth`, `Indeterminacy`, `Falsity` (`float64`,
+  0–1), `FeedbackCount` (`int`). Method `Classification() string` returns
+  `"confident_reuse"`, `"ask_clarification"`, `"surface_contradiction"`, or
+  `"verify_before_use"`.
+  - `TifScore.FromFeedbackHistory(history *FeedbackHistoryResponse) TifScore` — compute
+    T-I-F proportions from a feedback history response.
+  - `TifScore.FromMetadata(data map[string]any) (TifScore, error)` — parse a
+    `metadata.reliability` dict stored by T-I-F Phase 1/2 scripts.
+- **`Client.EvaluateTif(ctx context.Context, memoryID string) (TifScore, error)`** —
+  fetches feedback history and returns a `TifScore` in one call.
+
 ## [0.11.89] - 2026-06-11
 
 ### Changed

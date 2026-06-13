@@ -1751,6 +1751,150 @@ type FeedbackHealthResponse struct {
 }
 
 // =============================================================================
+// T-I-F Reliability Scoring (Phase 3 T-I-F RFC)
+// =============================================================================
+
+// TifClassification is the reliability label derived from a TifScore.
+type TifClassification string
+
+const (
+	// TifSurfaceContradiction means majority of feedback is negative.
+	TifSurfaceContradiction TifClassification = "surface_contradiction"
+	// TifAskClarification means majority of feedback is uncertain.
+	TifAskClarification TifClassification = "ask_clarification"
+	// TifConfidentReuse means strong positive signal — safe to reuse.
+	TifConfidentReuse TifClassification = "confident_reuse"
+	// TifVerifyBeforeUse means mixed or weak signals — verify first.
+	TifVerifyBeforeUse TifClassification = "verify_before_use"
+)
+
+// TifScore is the Truth-Indeterminacy-Falsity reliability score for a memory
+// (T-I-F RFC Phase 3).
+//
+// All three proportions (Truth, Indeterminacy, Falsity) sum to 1.0.
+// Build via ComputeTifScore or TifScoreFromMetadata.
+type TifScore struct {
+	// Truth is the proportion of positive feedback signals (upvote/positive).
+	Truth float64 `json:"truth"`
+	// Indeterminacy is the proportion of uncertainty signals (flag).
+	Indeterminacy float64 `json:"indeterminacy"`
+	// Falsity is the proportion of negative feedback signals (downvote/negative).
+	Falsity float64 `json:"falsity"`
+	// FeedbackCount is the total feedback events used to compute this score.
+	FeedbackCount uint64 `json:"feedback_count"`
+	// Classification is the human-readable reliability label.
+	Classification TifClassification `json:"classification"`
+}
+
+func classifyTif(truth, indeterminacy, falsity float64) TifClassification {
+	if falsity >= 0.5 {
+		return TifSurfaceContradiction
+	}
+	if indeterminacy >= 0.5 {
+		return TifAskClarification
+	}
+	if truth >= 0.7 {
+		return TifConfidentReuse
+	}
+	return TifVerifyBeforeUse
+}
+
+// ComputeTifScore builds a TifScore from a FeedbackHistoryResponse.
+//
+// Signals are bucketed as:
+//   - FeedbackSignalUpvote / FeedbackSignalPositive → truth
+//   - FeedbackSignalDownvote / FeedbackSignalNegative → falsity
+//   - FeedbackSignalFlag → indeterminacy
+//
+// With no feedback: TifScore{Truth:0, Indeterminacy:1, Falsity:0, FeedbackCount:0}.
+func ComputeTifScore(history *FeedbackHistoryResponse) TifScore {
+	var upvotes, downvotes, flags uint64
+	for _, e := range history.Entries {
+		switch e.Signal {
+		case FeedbackSignalUpvote, FeedbackSignalPositive:
+			upvotes++
+		case FeedbackSignalDownvote, FeedbackSignalNegative:
+			downvotes++
+		case FeedbackSignalFlag:
+			flags++
+		}
+	}
+	total := upvotes + downvotes + flags
+	if total == 0 {
+		return TifScore{Truth: 0, Indeterminacy: 1, Falsity: 0, FeedbackCount: 0, Classification: TifAskClarification}
+	}
+	tf := float64(total)
+	var baseIndeterminacy float64
+	if total < 3 {
+		baseIndeterminacy = float64(3-total) * 0.25
+	}
+	truth := float64(upvotes) / tf
+	falsity := float64(downvotes) / tf
+	indeterminacy := float64(flags)/tf + baseIndeterminacy
+	sum := truth + falsity + indeterminacy
+	truth /= sum
+	falsity /= sum
+	indeterminacy /= sum
+	return TifScore{
+		Truth:          truth,
+		Indeterminacy:  indeterminacy,
+		Falsity:        falsity,
+		FeedbackCount:  total,
+		Classification: classifyTif(truth, indeterminacy, falsity),
+	}
+}
+
+// TifScoreFromMetadata deserialises a TifScore from a metadata["reliability"] map.
+// Expected keys: "truth", "indeterminacy", "falsity", "feedback_count".
+func TifScoreFromMetadata(data map[string]interface{}) (TifScore, bool) {
+	truth, ok1 := toFloat64(data["truth"])
+	indeterminacy, ok2 := toFloat64(data["indeterminacy"])
+	falsity, ok3 := toFloat64(data["falsity"])
+	if !ok1 || !ok2 || !ok3 {
+		return TifScore{}, false
+	}
+	var feedbackCount uint64
+	if v, ok := data["feedback_count"]; ok {
+		feedbackCount, _ = toUint64(v)
+	}
+	return TifScore{
+		Truth:          truth,
+		Indeterminacy:  indeterminacy,
+		Falsity:        falsity,
+		FeedbackCount:  feedbackCount,
+		Classification: classifyTif(truth, indeterminacy, falsity),
+	}, true
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func toUint64(v interface{}) (uint64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return uint64(n), true
+	case uint64:
+		return n, true
+	case int:
+		return uint64(n), true
+	default:
+		return 0, false
+	}
+}
+
+// =============================================================================
 // Namespace API Keys (SEC-1)
 // =============================================================================
 
