@@ -1,0 +1,60 @@
+# NOTE: Out-of-network repos that removed fork relationship are not detectable via GitHub API.
+name: License Integrity Monitor
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-forks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute LICENSE hash
+        id: ref-hash
+        run: |
+          HASH=$(sha256sum LICENSE | awk '{print $1}')
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Check fork LICENSE integrity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_HASH: ${{ steps.ref-hash.outputs.hash }}
+        run: |
+          VIOLATIONS=""
+          PAGE=1
+          while true; do
+            FORKS=$(gh api "/repos/dakera-ai/dakera-go/forks?per_page=100&page=$PAGE" --jq '.[].full_name' 2>/dev/null || true)
+            if [ -z "$FORKS" ]; then
+              break
+            fi
+            while IFS= read -r FORK; do
+              if [ -z "$FORK" ]; then continue; fi
+              CONTENT=$(gh api "/repos/$FORK/contents/LICENSE" --jq '.content' 2>/dev/null || true)
+              if [ -z "$CONTENT" ]; then
+                VIOLATIONS="$VIOLATIONS\n- $FORK: LICENSE file missing or inaccessible"
+              else
+                FORK_HASH=$(echo "$CONTENT" | base64 -d 2>/dev/null | sha256sum | awk '{print $1}')
+                if [ "$FORK_HASH" != "$REF_HASH" ]; then
+                  VIOLATIONS="$VIOLATIONS\n- $FORK: LICENSE hash mismatch (expected $REF_HASH, got $FORK_HASH)"
+                fi
+              fi
+              sleep 0.5
+            done <<< "$FORKS"
+            PAGE=$((PAGE + 1))
+          done
+          if [ -n "$VIOLATIONS" ]; then
+            echo -e "License integrity violations detected:\n$VIOLATIONS"
+            gh issue create \
+              --title "License integrity violation detected" \
+              --body "$(printf 'The following forks have a modified or missing LICENSE file:\n\n%b\n\nThis is an automated report from the License Integrity Monitor workflow.' "$VIOLATIONS")"
+          else
+            echo "All accessible forks have matching LICENSE files."
+          fi
