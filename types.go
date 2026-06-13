@@ -1824,9 +1824,17 @@ func ComputeTifScore(history *FeedbackHistoryResponse) TifScore {
 		return TifScore{Truth: 0, Indeterminacy: 1, Falsity: 0, FeedbackCount: 0, Classification: TifAskClarification}
 	}
 	tf := float64(total)
+	var baseIndeterminacy float64
+	if total < 3 {
+		baseIndeterminacy = float64(3-total) * 0.25
+	}
 	truth := float64(upvotes) / tf
-	indeterminacy := float64(flags) / tf
 	falsity := float64(downvotes) / tf
+	indeterminacy := float64(flags)/tf + baseIndeterminacy
+	sum := truth + falsity + indeterminacy
+	truth /= sum
+	falsity /= sum
+	indeterminacy /= sum
 	return TifScore{
 		Truth:          truth,
 		Indeterminacy:  indeterminacy,
