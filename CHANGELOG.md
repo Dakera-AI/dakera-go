@@ -20,6 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `metadata.reliability` dict stored by T-I-F Phase 1/2 scripts.
 - **`Client.EvaluateTif(ctx context.Context, memoryID string) (TifScore, error)`** —
   fetches feedback history and returns a `TifScore` in one call.
+- **`(*Client).BatchRecall(ctx context.Context, req BatchRecallRequest) (*BatchRecallResponse, error)`**
+  — filter-based memory listing by agent, tags, importance range, time window, or session
+  id. Returns paginated results without a query string. (API: `POST /recall/batch`)
+- **`(*Client).HybridSearch(ctx context.Context, namespace string, vector []float32, query string, opts *HybridSearchOptions) ([]HybridSearchResult, error)`**
+  — BM25 full-text + HNSW vector similarity search in a single call. Pass an empty
+  `vector` and non-empty `query` for server-side ONNX auto-embedding, or supply a
+  pre-computed vector. `HybridSearchOptions.Alpha` (0.0–1.0) blends BM25 and vector
+  scores. (API: `POST /namespaces/{ns}/search/hybrid`)
+- **`(*Client).StoreMemoriesBatch(ctx context.Context, req BatchStoreMemoryRequest) (*BatchStoreMemoryResponse, error)`**
+  — batch ingest of multiple memory records in one HTTP request. Response contains
+  `Stored`, `Failed`, and per-item `Errors`. (API: `POST /memories/batch`)
+- **`(*Client).AutopilotStatus(ctx context.Context) (*AutoPilotStatusResponse, error)`**,
+  **`(*Client).AutopilotUpdateConfig(ctx context.Context, req AutoPilotConfigRequest) (*AutoPilotConfigResponse, error)`**,
+  **`(*Client).AutopilotTrigger(ctx context.Context, action string) (*AutoPilotTriggerResponse, error)`**
+  — read and control the server's Autopilot dedup/consolidation engine.
+  (API: `GET/POST /admin/autopilot/*`)
+- **`(*Client).DecayConfig(ctx context.Context) (*DecayConfigResponse, error)`**,
+  **`(*Client).DecayUpdateConfig(ctx context.Context, req DecayConfigUpdateRequest) (*DecayConfigUpdateResponse, error)`**,
+  **`(*Client).DecayStats(ctx context.Context) (*DecayStatsResponse, error)`** —
+  introspect and tune the decay engine at runtime. `DecayStats` reports
+  `MemoriesDecayed`, `TotalDecayed`, `TotalHardDeleted`, `LastDecayAt`, and
+  `CyclesCompleted`. (API: `GET/POST /admin/decay/*`)
+
+### Documentation
+
+- **Quickstart README overhaul** — added a minimal 3-line quickstart at the top of the
+  README so new users can reach their first memory store/recall in under 60 seconds.
 
 ## [0.11.89] - 2026-06-11
 
