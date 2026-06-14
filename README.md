@@ -69,6 +69,14 @@ Requires Go 1.21+. Uses only the standard library — no external runtime depend
 ## Quick Start
 
 ```go
+client := dakera.NewClientWithOptions(dakera.ClientOptions{BaseURL: "http://localhost:3000", APIKey: "dk-mykey"})
+imp := float32(0.9)
+client.StoreMemory(context.Background(), "my-agent", dakera.StoreMemoryRequest{Content: "User prefers brevity", Importance: &imp})
+```
+
+Full example — store, recall, upsert, and hybrid search:
+
+```go
 package main
 
 import (
