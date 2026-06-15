@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.11.91] - 2026-06-14
+
+### Documentation
+
+- **CHANGELOG.md expanded** — v0.11.90 entry updated to include the complete feature
+  set: `BatchRecall()`, `HybridSearch()`, `StoreMemoriesBatch()`,
+  `AutopilotStatus/UpdateConfig/Trigger()`, `DecayConfig/UpdateConfig/Stats()`,
+  `TifScore`, and `EvaluateTif()`. Previously the entry only noted the sync bump.
+  ([#110](https://github.com/Dakera-AI/dakera-go/pull/110))
+- **Quickstart README overhaul** — minimal 3-line quickstart added so new users reach
+  their first `StoreMemory` / `Recall` in under 60 seconds.
+  ([#109](https://github.com/Dakera-AI/dakera-go/pull/109))
+
 ## [0.11.90] - 2026-06-13
 
 ### Added
