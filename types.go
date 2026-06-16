@@ -2882,3 +2882,10 @@ type DrainReembedResponse struct {
 	// TimedOut is true if the drain stopped on the timeout rather than reaching zero.
 	TimedOut bool `json:"timed_out"`
 }
+
+// StaticCountResponse is returned by GET /admin/reembed/static-count (v0.11.91+).
+// A StaticCount of 0 means steady state — all vectors are at full ONNX quality.
+type StaticCountResponse struct {
+	// StaticCount is the number of _embedding_kind=static vectors pending re-embedding.
+	StaticCount int `json:"static_count"`
+}

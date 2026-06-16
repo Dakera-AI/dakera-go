@@ -1329,3 +1329,43 @@ func TestAdminDrainReembedRequiresAdminScope(t *testing.T) {
 	_, err := client.AdminDrainReembed(context.Background(), DrainReembedRequest{})
 	require.Error(t, err)
 }
+
+// AdminReembedStaticCount — GET /admin/reembed/static-count (v0.11.91+, DAK-6781)
+
+func TestAdminReembedStaticCountReturnsCount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/admin/reembed/static-count", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"static_count": 42})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.AdminReembedStaticCount(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 42, result.StaticCount)
+}
+
+func TestAdminReembedStaticCountZeroIsSteadyState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"static_count": 0})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.AdminReembedStaticCount(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.StaticCount)
+}
+
+func TestAdminReembedStaticCountRequiresAdminScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{"error": "admin scope required"})
+	}))
+	defer server.Close()
+	client := NewClientWithOptions(ClientOptions{BaseURL: server.URL, MaxRetries: 1})
+	_, err := client.AdminReembedStaticCount(context.Background())
+	require.Error(t, err)
+}
