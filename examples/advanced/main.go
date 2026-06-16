@@ -171,7 +171,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("\n--- Admin: Index Stats ---")
 
-	indexStats, err := client.AdminIndexStats(ctx, namespace)
+	indexStats, err := client.AdminIndexStats(ctx)
 	if err != nil {
 		log.Printf("AdminIndexStats (may require admin key): %v", err)
 	} else {
