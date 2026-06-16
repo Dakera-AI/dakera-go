@@ -474,6 +474,7 @@ type StoreMemoryRequest struct {
 	Content    string                 `json:"content"`
 	MemoryType string                 `json:"memory_type,omitempty"`
 	Importance *float32               `json:"importance,omitempty"`
+	Tags       []string               `json:"tags,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	// TTLSeconds is an optional TTL in seconds. The memory is hard-deleted after
 	// this many seconds from creation.
