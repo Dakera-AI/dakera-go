@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`(*Client).AdminReembedStaticCount()`** — new admin method for
+  `GET /v1/admin/reembed/static-count` (v0.11.91+, DAK-6781). Returns
+  `*StaticCountResponse` with the count of static vectors pending ONNX upgrade.
+  A `StaticCount` of 0 means steady state.
+
 ### Fixed
 
 - **`RecalledMemory` nesting mismatch** — `Recall()`, `SearchMemories()`,

@@ -3531,3 +3531,21 @@ func (c *Client) AdminDrainReembed(ctx context.Context, req DrainReembedRequest)
 	}
 	return &result, nil
 }
+
+// AdminReembedStaticCount returns the count of static vectors pending re-embedding via
+// GET /admin/reembed/static-count (v0.11.91+).
+//
+// Operators can poll this alongside AdminDrainReembed to monitor drain progress.
+// A StaticCountResponse.StaticCount of 0 means steady state — all vectors are
+// at full ONNX quality. Requires Admin scope.
+func (c *Client) AdminReembedStaticCount(ctx context.Context) (*StaticCountResponse, error) {
+	resp, err := c.request(ctx, "GET", "/admin/reembed/static-count", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result StaticCountResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal static count response: %w", err)
+	}
+	return &result, nil
+}
