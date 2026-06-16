@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`RecalledMemory` nesting mismatch** — `Recall()`, `SearchMemories()`,
+  `AgentMemories()`, and `SessionMemories()` now correctly populate `ID`,
+  `Content`, `MemoryType`, `Importance`, and the new `Tags` field from the
+  server's nested wire format
+  (`{"memory": {"id": "...", "content": "..."}, "score": N}`).
+  Previously these fields were always empty because the struct expected
+  flat JSON while the server returned a nested envelope. A custom
+  `UnmarshalJSON` on `RecalledMemory` handles the nested format while
+  remaining backward-compatible with the flat format used by older clients
+  and test mocks. (`DAK-6763`)
+
 ## [0.11.91] - 2026-06-14
 
 ### Documentation

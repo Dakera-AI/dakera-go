@@ -512,12 +512,18 @@ type Memory struct {
 }
 
 // RecalledMemory represents a recalled memory with similarity score.
+//
+// The server wraps memory fields under a nested "memory" key with score at the
+// top level: {"memory": {"id": "...", "content": "...", ...}, "score": 0.95}.
+// UnmarshalJSON handles this nested wire format transparently so callers always
+// see populated ID, Content, and other fields.
 type RecalledMemory struct {
 	ID         string                 `json:"id"`
 	Content    string                 `json:"content"`
 	MemoryType string                 `json:"memory_type"`
 	Importance float32                `json:"importance"`
 	Score      float32                `json:"score"`
+	Tags       []string               `json:"tags,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt  int64                  `json:"created_at,omitempty"`
 	// KG-3: hop depth at which this memory was found (only set on associated memories)

@@ -49,14 +49,28 @@ func TestStoreMemory(t *testing.T) {
 }
 
 func TestRecall(t *testing.T) {
+	// Use the nested server wire format: {"memory": {...}, "score": N}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/v1/memory/recall", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"memories": []map[string]interface{}{
-				{"id": "mem-001", "content": "user likes coffee", "memory_type": "episodic", "importance": 0.8, "score": 0.95},
-				{"id": "mem-002", "content": "user works at ACME", "memory_type": "semantic", "importance": 0.9, "score": 0.82},
+				{
+					"memory": map[string]interface{}{
+						"id": "mem-001", "content": "user likes coffee",
+						"memory_type": "episodic", "importance": 0.8,
+						"tags": []string{"coffee", "preference"},
+					},
+					"score": 0.95,
+				},
+				{
+					"memory": map[string]interface{}{
+						"id": "mem-002", "content": "user works at ACME",
+						"memory_type": "semantic", "importance": 0.9,
+					},
+					"score": 0.82,
+				},
 			},
 		})
 	}))
@@ -66,7 +80,32 @@ func TestRecall(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result.Memories, 2)
 	assert.Equal(t, "mem-001", result.Memories[0].ID)
+	assert.Equal(t, "user likes coffee", result.Memories[0].Content)
+	assert.Equal(t, []string{"coffee", "preference"}, result.Memories[0].Tags)
 	assert.InDelta(t, 0.95, float64(result.Memories[0].Score), 0.01)
+	assert.Equal(t, "mem-002", result.Memories[1].ID)
+	assert.Equal(t, "user works at ACME", result.Memories[1].Content)
+	assert.InDelta(t, 0.82, float64(result.Memories[1].Score), 0.01)
+}
+
+func TestRecall_FlatFallback(t *testing.T) {
+	// Flat format (used by /v1/agents/{id}/memories and legacy mocks) must also decode.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memories": []map[string]interface{}{
+				{"id": "mem-003", "content": "flat format", "memory_type": "episodic", "importance": 0.7, "score": 0.75},
+			},
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.Recall(context.Background(), "agent-1", RecallRequest{Query: "flat"})
+	require.NoError(t, err)
+	assert.Len(t, result.Memories, 1)
+	assert.Equal(t, "mem-003", result.Memories[0].ID)
+	assert.Equal(t, "flat format", result.Memories[0].Content)
+	assert.InDelta(t, 0.75, float64(result.Memories[0].Score), 0.01)
 }
 
 func TestGetMemory(t *testing.T) {
@@ -128,13 +167,20 @@ func TestForget(t *testing.T) {
 }
 
 func TestSearchMemories(t *testing.T) {
+	// Use the nested server wire format: {"memory": {...}, "score": N}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/v1/memory/search", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"memories": []map[string]interface{}{
-				{"id": "mem-001", "content": "coffee", "memory_type": "episodic", "importance": 0.8, "score": 0.9},
+				{
+					"memory": map[string]interface{}{
+						"id": "mem-001", "content": "coffee",
+						"memory_type": "episodic", "importance": 0.8,
+					},
+					"score": 0.9,
+				},
 			},
 		})
 	}))
@@ -143,6 +189,9 @@ func TestSearchMemories(t *testing.T) {
 	result, err := client.SearchMemories(context.Background(), "agent-1", SearchMemoriesRequest{Query: "coffee"})
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
+	assert.Equal(t, "mem-001", result[0].ID)
+	assert.Equal(t, "coffee", result[0].Content)
+	assert.InDelta(t, 0.9, float64(result[0].Score), 0.01)
 }
 
 func TestUpdateImportance(t *testing.T) {
@@ -355,8 +404,15 @@ func TestSessionMemories(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/v1/sessions/sess-001/memories", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
+		// Session memories use nested format: {"memory": {...}, "score": N}
 		json.NewEncoder(w).Encode([]map[string]interface{}{
-			{"id": "mem-001", "content": "hello", "memory_type": "episodic", "importance": 0.7, "score": 1.0},
+			{
+				"memory": map[string]interface{}{
+					"id": "mem-001", "content": "hello",
+					"memory_type": "episodic", "importance": 0.7,
+				},
+				"score": 1.0,
+			},
 		})
 	}))
 	defer server.Close()
@@ -364,6 +420,8 @@ func TestSessionMemories(t *testing.T) {
 	result, err := client.SessionMemories(context.Background(), "sess-001")
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
+	assert.Equal(t, "mem-001", result[0].ID)
+	assert.Equal(t, "hello", result[0].Content)
 }
 
 // ===========================================================================
@@ -393,8 +451,15 @@ func TestAgentMemories(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Contains(t, r.URL.Path, "/v1/agents/agent-1/memories")
 		w.Header().Set("Content-Type", "application/json")
+		// Agent memories use nested format: {"memory": {...}, "score": N}
 		json.NewEncoder(w).Encode([]map[string]interface{}{
-			{"id": "mem-001", "content": "coffee", "memory_type": "episodic", "importance": 0.8, "score": 0.0},
+			{
+				"memory": map[string]interface{}{
+					"id": "mem-001", "content": "coffee",
+					"memory_type": "episodic", "importance": 0.8,
+				},
+				"score": 0.0,
+			},
 		})
 	}))
 	defer server.Close()
@@ -402,6 +467,8 @@ func TestAgentMemories(t *testing.T) {
 	result, err := client.AgentMemories(context.Background(), "agent-1", nil)
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
+	assert.Equal(t, "mem-001", result[0].ID)
+	assert.Equal(t, "coffee", result[0].Content)
 }
 
 func TestAgentStats(t *testing.T) {
