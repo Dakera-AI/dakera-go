@@ -7,25 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.92] - 2026-06-16
+
 ### Added
 
 - **`(*Client).AdminReembedStaticCount()`** — new admin method for
-  `GET /v1/admin/reembed/static-count` (v0.11.91+, DAK-6781). Returns
+  `GET /v1/admin/reembed/static-count` (v0.11.91+, DAK-6781,
+  [#118](https://github.com/Dakera-AI/dakera-go/pull/118)). Returns
   `*StaticCountResponse` with the count of static vectors pending ONNX upgrade.
   A `StaticCount` of 0 means steady state.
+
+- **Playground quickstart** — `examples/playground/main.go` demonstrates store,
+  recall, search, and knowledge-graph link against the public sandbox. (DAK-6737,
+  [#113](https://github.com/Dakera-AI/dakera-go/pull/113))
 
 ### Fixed
 
 - **`RecalledMemory` nesting mismatch** — `Recall()`, `SearchMemories()`,
   `AgentMemories()`, and `SessionMemories()` now correctly populate `ID`,
-  `Content`, `MemoryType`, `Importance`, and the new `Tags` field from the
-  server's nested wire format
-  (`{"memory": {"id": "...", "content": "..."}, "score": N}`).
-  Previously these fields were always empty because the struct expected
-  flat JSON while the server returned a nested envelope. A custom
-  `UnmarshalJSON` on `RecalledMemory` handles the nested format while
-  remaining backward-compatible with the flat format used by older clients
-  and test mocks. (`DAK-6763`)
+  `Content`, `MemoryType`, `Importance`, and `Tags` from the server's nested
+  wire format (`{"memory": {"id": "...", "content": "..."}, "score": N}`).
+  Previously these fields were always empty. A custom `UnmarshalJSON` handles
+  both nested and flat formats for backward compatibility. (DAK-6763,
+  [#116](https://github.com/Dakera-AI/dakera-go/pull/116))
+
+- **Admin URL corrections** — `AdminIndexStats()`, `RebuildIndexes()`, and
+  `RestoreBackup()` used incorrect URL patterns causing 404s. (DAK-6775,
+  [#117](https://github.com/Dakera-AI/dakera-go/pull/117))
+
+- **Sandbox KG-link restriction** — playground examples now handle the sandbox
+  403 on `POST /v1/memories/{id}/links` gracefully. (DAK-6749,
+  [#114](https://github.com/Dakera-AI/dakera-go/pull/114))
+
+### Testing
+
+- **Playground integration tests** — `playground_integration_test.go` added;
+  covers store, recall, search, and KG-link (graceful). Tests skip automatically
+  when `DAKERA_TEST_URL` is absent.
+  ([#115](https://github.com/Dakera-AI/dakera-go/pull/115))
+
+### CI
+
+- **`actions/checkout` 4 → 6** — CI workflow dependency upgrade. No runtime changes.
+  ([#111](https://github.com/Dakera-AI/dakera-go/pull/111))
 
 ## [0.11.91] - 2026-06-14
 
