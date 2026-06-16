@@ -190,7 +190,7 @@ func TestOptimizeNamespace(t *testing.T) {
 func TestAdminIndexStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/admin/namespaces/test-ns/index/stats", r.URL.Path)
+		assert.Equal(t, "/v1/admin/indexes/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"index_type":  "hnsw",
@@ -200,7 +200,7 @@ func TestAdminIndexStats(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
-	result, err := client.AdminIndexStats(context.Background(), "test-ns")
+	result, err := client.AdminIndexStats(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "hnsw", result["index_type"])
 }
@@ -208,7 +208,7 @@ func TestAdminIndexStats(t *testing.T) {
 func TestRebuildIndexes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/admin/namespaces/test-ns/index/rebuild", r.URL.Path)
+		assert.Equal(t, "/v1/admin/indexes/rebuild", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "rebuild_started"})
 	}))
@@ -373,7 +373,7 @@ func TestListBackups(t *testing.T) {
 func TestRestoreBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/admin/backups/backup-001/restore", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/restore", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "restoring"})
 	}))
