@@ -7,13 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.93] - 2026-06-16
+
 ### Added
 
 - **`ChatMemorySession`** — new high-level session helper in `session.go`.
   Wraps `StartSession` + `StoreMemory` + `Recall` + `EndSession` into the three-step
   pattern used by the playground LLM comparison feature. Create via
   `NewChatMemorySession`; methods: `Store`, `StoreWithOptions`, `Recall`, `Close`,
-  `SessionID`, `AgentID`. (DAK-6863, parity with dakera-py/dakera-js)
+  `SessionID`, `AgentID`. (DAK-6863, parity with dakera-py/dakera-js,
+  [#121](https://github.com/Dakera-AI/dakera-go/pull/121))
+
+### Fixed
+
+- **Playground quickstart session isolation** — `examples/playground/main.go` now
+  sets `X-Playground-Session` header to isolate sandbox runs from other concurrent
+  users. (DAK-6806, [#120](https://github.com/Dakera-AI/dakera-go/pull/120))
 
 ## [0.11.92] - 2026-06-16
 
