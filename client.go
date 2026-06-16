@@ -1937,9 +1937,9 @@ func (c *Client) OptimizeNamespace(ctx context.Context, namespace string) (*Stat
 	return &result, nil
 }
 
-// AdminIndexStats gets index stats for a namespace via admin endpoint.
-func (c *Client) AdminIndexStats(ctx context.Context, namespace string) (map[string]interface{}, error) {
-	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/namespaces/%s/index/stats", url.PathEscape(namespace)), nil)
+// AdminIndexStats gets index statistics across all namespaces.
+func (c *Client) AdminIndexStats(ctx context.Context) (map[string]interface{}, error) {
+	data, err := c.request(ctx, "GET", "/v1/admin/indexes/stats", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1950,9 +1950,13 @@ func (c *Client) AdminIndexStats(ctx context.Context, namespace string) (map[str
 	return result, nil
 }
 
-// RebuildIndexes rebuilds indexes for a namespace.
+// RebuildIndexes rebuilds indexes. Pass namespace to target a specific namespace, or empty string for all.
 func (c *Client) RebuildIndexes(ctx context.Context, namespace string) (*StatusResponse, error) {
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/index/rebuild", url.PathEscape(namespace)), nil)
+	var body interface{}
+	if namespace != "" {
+		body = map[string]string{"namespace": namespace}
+	}
+	data, err := c.request(ctx, "POST", "/v1/admin/indexes/rebuild", body)
 	if err != nil {
 		return nil, err
 	}
@@ -2100,7 +2104,7 @@ func (c *Client) ListBackups(ctx context.Context) ([]BackupInfo, error) {
 
 // RestoreBackup restores a backup.
 func (c *Client) RestoreBackup(ctx context.Context, backupID string) (*StatusResponse, error) {
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/backups/%s/restore", url.PathEscape(backupID)), nil)
+	data, err := c.request(ctx, "POST", "/v1/admin/backups/restore", map[string]string{"backup_id": backupID})
 	if err != nil {
 		return nil, err
 	}
