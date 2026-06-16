@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -33,9 +35,18 @@ func playgroundKey() string {
 }
 
 func main() {
+	// Generate a unique session ID so the sandbox proxy can isolate this run's
+	// memories from other concurrent playground sessions (DAK-6806).
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		log.Fatalf("session id generation failed: %v", err)
+	}
+	sessionID := "pg_" + hex.EncodeToString(raw[:])
+
 	client := dakera.NewClientWithOptions(dakera.ClientOptions{
 		BaseURL: playgroundURL(),
 		APIKey:  playgroundKey(),
+		Headers: map[string]string{"X-Playground-Session": sessionID},
 	})
 	ctx := context.Background()
 
