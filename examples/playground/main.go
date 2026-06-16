@@ -22,7 +22,7 @@ func playgroundURL() string {
 	if u := os.Getenv("DAKERA_API_URL"); u != "" {
 		return u
 	}
-	return "http://5.75.177.31"
+	return "https://5-75-177-31.sslip.io"
 }
 
 func playgroundKey() string {
@@ -43,7 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("health check failed: %v", err)
 	}
-	fmt.Printf("Playground: %s (healthy: %v)\n", health.Version, health.Healthy)
+	fmt.Printf("Playground: status=%s version=%s\n", health.Status, health.Version)
 
 	// -------------------------------------------------------------------------
 	// 1. Store memories
