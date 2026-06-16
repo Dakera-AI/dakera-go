@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.93] - 2026-06-16
+
 ### Added
 
 - **`ChatMemorySession`** — new high-level session helper in `session.go`.
   Wraps `StartSession` + `StoreMemory` + `Recall` + `EndSession` into the three-step
   pattern used by the playground LLM comparison feature. Create via
   `NewChatMemorySession`; methods: `Store`, `StoreWithOptions`, `Recall`, `Close`,
-  `SessionID`, `AgentID`. (DAK-6863, parity with dakera-py/dakera-js)
+  `SessionID`, `AgentID`. ([#121](https://github.com/Dakera-AI/dakera-go/pull/121), DAK-6863, parity with dakera-py/dakera-js)
 
 ## [0.11.92] - 2026-06-16
 
