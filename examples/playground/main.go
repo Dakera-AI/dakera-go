@@ -132,15 +132,18 @@ func main() {
 
 	// -------------------------------------------------------------------------
 	// 4. Knowledge graph link
+	// Note: requires a full Dakera account; not available on the public sandbox.
 	// -------------------------------------------------------------------------
 	fmt.Println("\n--- 4. Knowledge Graph Link ---")
 
 	linkResp, err := client.MemoryLink(ctx, mem1.Memory.ID, mem2.Memory.ID, dakera.EdgeTypeRelatedTo)
 	if err != nil {
-		log.Fatalf("MemoryLink failed: %v", err)
+		log.Printf("KG link not available in sandbox: %v", err)
+		fmt.Println("  Sign up at https://dakera.ai for full knowledge graph access.")
+	} else {
+		fmt.Printf("Linked %s → %s: edge_type=%s\n",
+			mem1.Memory.ID, mem2.Memory.ID, linkResp.Edge.EdgeType)
 	}
-	fmt.Printf("Linked %s → %s: edge_type=%s\n",
-		mem1.Memory.ID, mem2.Memory.ID, linkResp.Edge.EdgeType)
 
 	fmt.Printf("\nPlayground quickstart complete! Visit https://dakera.ai to learn more.\n")
 
