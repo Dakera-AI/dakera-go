@@ -117,3 +117,78 @@ func TestChatMemorySession_DefaultTopK(t *testing.T) {
 	_, err = session.Recall(context.Background(), "anything", 0) // topK=0 → default 5
 	require.NoError(t, err)
 }
+
+func TestChatMemorySession_StoreWithOptions(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sessions/start", sessionStartHandler("sess-005", "agent-opts"))
+	mux.HandleFunc("/v1/memory/store", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+
+		// Custom importance must be sent.
+		imp, _ := body["importance"].(float64)
+		assert.InDelta(t, 0.9, imp, 0.001, "custom importance must be 0.9")
+
+		// Tags must include role + extra tag but not duplicate the role.
+		tags, _ := body["tags"].([]interface{})
+		tagSet := make(map[string]bool)
+		for _, tag := range tags {
+			tagSet[tag.(string)] = true
+		}
+		assert.True(t, tagSet["assistant"], "role tag 'assistant' must be present")
+		assert.True(t, tagSet["important"], "extra tag 'important' must be present")
+		// Role tag must not appear twice.
+		count := 0
+		for _, tag := range tags {
+			if tag == "assistant" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "role tag must not be duplicated")
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory": map[string]interface{}{
+				"id": "mem-opts", "content": "custom opts", "agent_id": "agent-opts",
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	session, err := dakera.NewChatMemorySession(context.Background(), newTestClient(srv.URL), "agent-opts", nil)
+	require.NoError(t, err)
+
+	resp, err := session.StoreWithOptions(context.Background(), "assistant", "custom opts", dakera.ChatMemorySessionOptions{
+		Importance: 0.9,
+		ExtraTags:  []string{"important", "assistant"}, // "assistant" is a dupe — must be deduped
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, resp)
+}
+
+func TestChatMemorySession_Close(t *testing.T) {
+	sessionEndCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sessions/start", sessionStartHandler("sess-006", "agent-close"))
+	mux.HandleFunc("/v1/sessions/sess-006/end", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		sessionEndCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"session": map[string]interface{}{
+				"id": "sess-006", "agent_id": "agent-close", "ended_at": 9999,
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	session, err := dakera.NewChatMemorySession(context.Background(), newTestClient(srv.URL), "agent-close", nil)
+	require.NoError(t, err)
+
+	resp, err := session.Close(context.Background())
+	require.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.True(t, sessionEndCalled, "EndSession must be called on Close()")
+}
