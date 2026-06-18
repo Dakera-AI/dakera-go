@@ -75,7 +75,7 @@ func main() {
 	})
 	ctx := context.Background()
 
-	fmt.Println("=== Dakera Playground — LLM Chat Comparison Demo ===\n")
+	fmt.Println("=== Dakera Playground — LLM Chat Comparison Demo ===")
 
 	// ------------------------------------------------------------------
 	// Step 1: Seed some prior conversation turns
