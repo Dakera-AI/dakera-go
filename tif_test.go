@@ -1,7 +1,11 @@
 package dakera_test
 
 import (
+	"context"
+	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	dakera "github.com/dakera-ai/dakera-go"
@@ -306,5 +310,57 @@ func TestGolden_3Down3Flag(t *testing.T) {
 	}
 	if s.Classification != dakera.TifSurfaceContradiction {
 		t.Errorf("expected TifSurfaceContradiction, got %s", s.Classification)
+	}
+}
+
+// ── EvaluateTif (client method) ───────────────────────────────────────────
+
+func TestEvaluateTif_HappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/memories/mem-xyz/feedback" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dakera.FeedbackHistoryResponse{
+			MemoryID: "mem-xyz",
+			Entries: []dakera.FeedbackHistoryEntry{
+				{Signal: "upvote", OldImportance: 0.5, NewImportance: 0.6},
+				{Signal: "upvote", OldImportance: 0.6, NewImportance: 0.7},
+				{Signal: "upvote", OldImportance: 0.7, NewImportance: 0.8},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := dakera.NewClient(server.URL)
+	score, err := client.EvaluateTif(context.Background(), "mem-xyz")
+	if err != nil {
+		t.Fatalf("EvaluateTif returned unexpected error: %v", err)
+	}
+	if score.FeedbackCount != 3 {
+		t.Errorf("expected FeedbackCount=3, got %d", score.FeedbackCount)
+	}
+	if !approxEqual(score.Truth, 1.0) {
+		t.Errorf("expected truth=1.0 for 3 upvotes, got %f", score.Truth)
+	}
+	if score.Classification != dakera.TifConfidentReuse {
+		t.Errorf("expected TifConfidentReuse, got %s", score.Classification)
+	}
+}
+
+func TestEvaluateTif_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "memory not found"})
+	}))
+	defer server.Close()
+
+	client := dakera.NewClient(server.URL)
+	_, err := client.EvaluateTif(context.Background(), "no-such-mem")
+	if err == nil {
+		t.Fatal("expected error from EvaluateTif on 404, got nil")
 	}
 }
