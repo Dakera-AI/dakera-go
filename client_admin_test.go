@@ -509,7 +509,7 @@ func TestOpsShutdown(t *testing.T) {
 func TestAdminFulltextReindex(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/fulltext/reindex", r.URL.Path)
+		assert.Equal(t, "/v1/admin/fulltext/reindex", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"namespaces_processed": 3,
@@ -529,7 +529,7 @@ func TestAdminFulltextReindex(t *testing.T) {
 func TestAdminClusterReplication(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/cluster/replication", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/replication", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"replication_factor": 3,
@@ -548,7 +548,7 @@ func TestAdminClusterReplication(t *testing.T) {
 func TestAdminListShards(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/cluster/shards", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/shards", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"shards": []map[string]interface{}{
@@ -568,7 +568,7 @@ func TestAdminListShards(t *testing.T) {
 func TestAdminRebalanceShards(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/cluster/shards/rebalance", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/shards/rebalance", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"initiated":      true,
@@ -588,7 +588,7 @@ func TestAdminRebalanceShards(t *testing.T) {
 func TestAdminMaintenanceStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/cluster/maintenance", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/maintenance", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":               false,
@@ -606,7 +606,7 @@ func TestAdminMaintenanceStatus(t *testing.T) {
 func TestAdminEnableMaintenance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/cluster/maintenance/enable", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/maintenance/enable", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":              true,
@@ -628,7 +628,7 @@ func TestAdminEnableMaintenance(t *testing.T) {
 func TestAdminDisableMaintenance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/cluster/maintenance/disable", r.URL.Path)
+		assert.Equal(t, "/v1/admin/cluster/maintenance/disable", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":              false,
@@ -650,7 +650,7 @@ func TestAdminDisableMaintenance(t *testing.T) {
 func TestAdminListQuotas(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/quotas", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"quotas": []map[string]interface{}{},
@@ -667,7 +667,7 @@ func TestAdminListQuotas(t *testing.T) {
 func TestAdminGetDefaultQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/quotas/default", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/default", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"config": map[string]interface{}{"max_vectors": 1000000},
@@ -683,7 +683,7 @@ func TestAdminGetDefaultQuota(t *testing.T) {
 func TestAdminSetDefaultQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/admin/quotas/default", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/default", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
@@ -705,7 +705,7 @@ func TestAdminSetDefaultQuota(t *testing.T) {
 func TestAdminGetQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/quotas/test-ns", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/test-ns", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"namespace":   "test-ns",
@@ -725,7 +725,7 @@ func TestAdminGetQuota(t *testing.T) {
 func TestAdminSetQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/admin/quotas/test-ns", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/test-ns", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
@@ -744,7 +744,7 @@ func TestAdminSetQuota(t *testing.T) {
 func TestAdminDeleteQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/admin/quotas/test-ns", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/test-ns", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	}))
@@ -758,7 +758,7 @@ func TestAdminDeleteQuota(t *testing.T) {
 func TestAdminCheckQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/quotas/test-ns/check", r.URL.Path)
+		assert.Equal(t, "/v1/admin/quotas/test-ns/check", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"allowed": true,
@@ -779,7 +779,7 @@ func TestAdminCheckQuota(t *testing.T) {
 func TestAdminListSlowQueries(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Contains(t, r.URL.Path, "/admin/slow-queries")
+		assert.Contains(t, r.URL.Path, "/v1/admin/slow-queries")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]map[string]interface{}{
 			{"query": "vector search", "duration_ms": 2500.0, "namespace": "ns-1"},
@@ -795,7 +795,7 @@ func TestAdminListSlowQueries(t *testing.T) {
 func TestAdminSlowQuerySummary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/slow-queries/summary", r.URL.Path)
+		assert.Equal(t, "/v1/admin/slow-queries/summary", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_slow_queries": 15,
@@ -812,7 +812,7 @@ func TestAdminSlowQuerySummary(t *testing.T) {
 func TestAdminClearSlowQueries(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Contains(t, r.URL.Path, "/admin/slow-queries")
+		assert.Contains(t, r.URL.Path, "/v1/admin/slow-queries")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"cleared": 15})
 	}))
@@ -826,7 +826,7 @@ func TestAdminClearSlowQueries(t *testing.T) {
 func TestAdminUpdateSlowQueryConfig(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PATCH", r.Method)
-		assert.Equal(t, "/admin/slow-queries/config", r.URL.Path)
+		assert.Equal(t, "/v1/admin/slow-queries/config", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"threshold_ms": 500})
 	}))
@@ -844,7 +844,7 @@ func TestAdminUpdateSlowQueryConfig(t *testing.T) {
 func TestAdminListBackups(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/backups", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"backups": []map[string]interface{}{
@@ -863,7 +863,7 @@ func TestAdminListBackups(t *testing.T) {
 func TestAdminCreateBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/backups", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"backup": map[string]interface{}{
@@ -882,7 +882,7 @@ func TestAdminCreateBackup(t *testing.T) {
 func TestAdminGetBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/backups/bk-1", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/bk-1", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"backup_id": "bk-1", "name": "daily", "backup_type": "full", "status": "completed",
@@ -899,7 +899,7 @@ func TestAdminGetBackup(t *testing.T) {
 func TestAdminDeleteBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/admin/backups/bk-1", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/bk-1", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	}))
@@ -913,7 +913,7 @@ func TestAdminDeleteBackup(t *testing.T) {
 func TestAdminGetBackupSchedule(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/backups/schedule", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/schedule", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":        true,
@@ -936,7 +936,7 @@ func TestAdminGetBackupSchedule(t *testing.T) {
 func TestAdminUpdateBackupSchedule(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/backups/schedule", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/schedule", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":        true,
@@ -962,7 +962,7 @@ func TestAdminUpdateBackupSchedule(t *testing.T) {
 func TestAdminRestoreBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/backups/restore", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/restore", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"restore_id": "restore-001",
@@ -983,7 +983,7 @@ func TestAdminRestoreBackup(t *testing.T) {
 func TestAdminGetRestoreStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/backups/restore/restore-001", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/restore/restore-001", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"restore_id": "restore-001",
@@ -1039,7 +1039,7 @@ func TestFulltextDelete(t *testing.T) {
 func TestAdminTtlStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/ttl/stats", r.URL.Path)
+		assert.Equal(t, "/v1/admin/ttl/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"namespaces":    []map[string]interface{}{},
@@ -1102,7 +1102,7 @@ func TestImportJobStatusMethod(t *testing.T) {
 func TestAdminDownloadBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/backups/bk-1/download", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/bk-1/download", r.URL.Path)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Write([]byte("fake-backup-data"))
 	}))
@@ -1116,7 +1116,7 @@ func TestAdminDownloadBackup(t *testing.T) {
 func TestAdminUploadBackup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/backups/upload", r.URL.Path)
+		assert.Equal(t, "/v1/admin/backups/upload", r.URL.Path)
 		assert.Equal(t, "application/octet-stream", r.Header.Get("Content-Type"))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"backup_id": "bk-uploaded", "status": "uploaded"})
@@ -1131,7 +1131,7 @@ func TestAdminUploadBackup(t *testing.T) {
 func TestAdminStorageTierOverview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/storage/tiers", r.URL.Path)
+		assert.Equal(t, "/v1/admin/storage/tiers", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"tiers_enabled": true,
@@ -1164,7 +1164,7 @@ func TestAdminStorageTierOverview(t *testing.T) {
 func TestAdminBackgroundActivity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/background-activity", r.URL.Path)
+		assert.Equal(t, "/v1/admin/background-activity", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"active_jobs": 2,
@@ -1181,7 +1181,7 @@ func TestAdminBackgroundActivity(t *testing.T) {
 func TestAdminMemoryTypeStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/admin/memory-type-stats", r.URL.Path)
+		assert.Equal(t, "/v1/admin/memory-type-stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total":            5000,
@@ -1203,7 +1203,7 @@ func TestAdminMemoryTypeStats(t *testing.T) {
 func TestAdminMigrateNamespaceDimensions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/namespaces/migrate-dimensions", r.URL.Path)
+		assert.Equal(t, "/v1/admin/namespaces/migrate-dimensions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"migrated":        2,
@@ -1265,7 +1265,7 @@ func TestOpsShutdown_Error(t *testing.T) {
 func TestAdminDrainReembedFullDrain(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/reembed/drain", r.URL.Path)
+		assert.Equal(t, "/v1/admin/reembed/drain", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"processed":  1280,
@@ -1289,7 +1289,7 @@ func TestAdminDrainReembedFullDrain(t *testing.T) {
 func TestAdminDrainReembedForwardsParams(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/admin/reembed/drain", r.URL.Path)
+		assert.Equal(t, "/v1/admin/reembed/drain", r.URL.Path)
 		var body map[string]interface{}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.EqualValues(t, 600, body["timeout_secs"])
@@ -1335,7 +1335,7 @@ func TestAdminDrainReembedRequiresAdminScope(t *testing.T) {
 func TestAdminReembedStaticCountReturnsCount(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/admin/reembed/static-count", r.URL.Path)
+		assert.Equal(t, "/v1/admin/reembed/static-count", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"static_count": 42})
 	}))

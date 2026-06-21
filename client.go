@@ -2867,7 +2867,7 @@ func (c *Client) AdminFulltextReindex(ctx context.Context, namespace string) (*F
 	} else {
 		body = map[string]string{}
 	}
-	data, err := c.request(ctx, "POST", "/admin/fulltext/reindex", body)
+	data, err := c.request(ctx, "POST", "/v1/admin/fulltext/reindex", body)
 	if err != nil {
 		return nil, err
 	}
@@ -2926,7 +2926,7 @@ func (c *Client) SetMemoryPolicy(ctx context.Context, namespace string, policy M
 
 // AdminClusterReplication returns cluster replication status.
 func (c *Client) AdminClusterReplication(ctx context.Context) (*ReplicationStatus, error) {
-	resp, err := c.request(ctx, "GET", "/admin/cluster/replication", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/cluster/replication", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2939,7 +2939,7 @@ func (c *Client) AdminClusterReplication(ctx context.Context) (*ReplicationStatu
 
 // AdminListShards returns the list of shards.
 func (c *Client) AdminListShards(ctx context.Context) (*ShardListResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/cluster/shards", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/cluster/shards", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2952,7 +2952,7 @@ func (c *Client) AdminListShards(ctx context.Context) (*ShardListResponse, error
 
 // AdminRebalanceShards triggers shard rebalancing.
 func (c *Client) AdminRebalanceShards(ctx context.Context, req ShardRebalanceRequest) (*ShardRebalanceResponse, error) {
-	resp, err := c.request(ctx, "POST", "/admin/cluster/shards/rebalance", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/cluster/shards/rebalance", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2965,7 +2965,7 @@ func (c *Client) AdminRebalanceShards(ctx context.Context, req ShardRebalanceReq
 
 // AdminMaintenanceStatus returns current maintenance mode status.
 func (c *Client) AdminMaintenanceStatus(ctx context.Context) (*MaintenanceStatus, error) {
-	resp, err := c.request(ctx, "GET", "/admin/cluster/maintenance", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/cluster/maintenance", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2978,7 +2978,7 @@ func (c *Client) AdminMaintenanceStatus(ctx context.Context) (*MaintenanceStatus
 
 // AdminEnableMaintenance enables maintenance mode.
 func (c *Client) AdminEnableMaintenance(ctx context.Context, req EnableMaintenanceRequest) (*MaintenanceStatus, error) {
-	resp, err := c.request(ctx, "POST", "/admin/cluster/maintenance/enable", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/cluster/maintenance/enable", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2991,7 +2991,7 @@ func (c *Client) AdminEnableMaintenance(ctx context.Context, req EnableMaintenan
 
 // AdminDisableMaintenance disables maintenance mode.
 func (c *Client) AdminDisableMaintenance(ctx context.Context, req DisableMaintenanceRequest) (*MaintenanceStatus, error) {
-	resp, err := c.request(ctx, "POST", "/admin/cluster/maintenance/disable", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/cluster/maintenance/disable", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3008,7 +3008,7 @@ func (c *Client) AdminDisableMaintenance(ctx context.Context, req DisableMainten
 
 // AdminListQuotas lists all namespace quotas.
 func (c *Client) AdminListQuotas(ctx context.Context) (*QuotaListResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/quotas", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/quotas", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3021,7 +3021,7 @@ func (c *Client) AdminListQuotas(ctx context.Context) (*QuotaListResponse, error
 
 // AdminGetDefaultQuota returns the default quota configuration.
 func (c *Client) AdminGetDefaultQuota(ctx context.Context) (*DefaultQuotaResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/quotas/default", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/quotas/default", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3034,7 +3034,7 @@ func (c *Client) AdminGetDefaultQuota(ctx context.Context) (*DefaultQuotaRespons
 
 // AdminSetDefaultQuota sets the default quota configuration.
 func (c *Client) AdminSetDefaultQuota(ctx context.Context, req SetDefaultQuotaRequest) (*SetQuotaResponse, error) {
-	resp, err := c.request(ctx, "PUT", "/admin/quotas/default", req)
+	resp, err := c.request(ctx, "PUT", "/v1/admin/quotas/default", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3047,7 +3047,7 @@ func (c *Client) AdminSetDefaultQuota(ctx context.Context, req SetDefaultQuotaRe
 
 // AdminGetQuota returns the quota for a specific namespace.
 func (c *Client) AdminGetQuota(ctx context.Context, namespace string) (*QuotaStatus, error) {
-	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), nil)
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3060,7 +3060,7 @@ func (c *Client) AdminGetQuota(ctx context.Context, namespace string) (*QuotaSta
 
 // AdminSetQuota sets the quota for a specific namespace.
 func (c *Client) AdminSetQuota(ctx context.Context, namespace string, req SetQuotaRequest) (*SetQuotaResponse, error) {
-	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), req)
+	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -3073,7 +3073,7 @@ func (c *Client) AdminSetQuota(ctx context.Context, namespace string, req SetQuo
 
 // AdminDeleteQuota removes the quota for a specific namespace.
 func (c *Client) AdminDeleteQuota(ctx context.Context, namespace string) (map[string]interface{}, error) {
-	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/quotas/%s", url.PathEscape(namespace)), nil)
+	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3086,7 +3086,7 @@ func (c *Client) AdminDeleteQuota(ctx context.Context, namespace string) (map[st
 
 // AdminCheckQuota checks if an operation would exceed quota for a namespace.
 func (c *Client) AdminCheckQuota(ctx context.Context, namespace string, req QuotaCheckRequest) (*QuotaCheckResult, error) {
-	resp, err := c.request(ctx, "POST", fmt.Sprintf("/admin/quotas/%s/check", url.PathEscape(namespace)), req)
+	resp, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/quotas/%s/check", url.PathEscape(namespace)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -3103,7 +3103,7 @@ func (c *Client) AdminCheckQuota(ctx context.Context, namespace string, req Quot
 
 // AdminListSlowQueries lists recent slow queries.
 func (c *Client) AdminListSlowQueries(ctx context.Context, namespace, queryType string, limit int) ([]map[string]interface{}, error) {
-	path := "/admin/slow-queries"
+	path := "/v1/admin/slow-queries"
 	params := url.Values{}
 	if namespace != "" {
 		params.Set("namespace", namespace)
@@ -3130,7 +3130,7 @@ func (c *Client) AdminListSlowQueries(ctx context.Context, namespace, queryType 
 
 // AdminSlowQuerySummary returns the slow query summary.
 func (c *Client) AdminSlowQuerySummary(ctx context.Context) (map[string]interface{}, error) {
-	resp, err := c.request(ctx, "GET", "/admin/slow-queries/summary", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/slow-queries/summary", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3143,7 +3143,7 @@ func (c *Client) AdminSlowQuerySummary(ctx context.Context) (map[string]interfac
 
 // AdminClearSlowQueries clears the slow query log.
 func (c *Client) AdminClearSlowQueries(ctx context.Context, namespace string) (map[string]interface{}, error) {
-	path := "/admin/slow-queries"
+	path := "/v1/admin/slow-queries"
 	if namespace != "" {
 		path += "?namespace=" + url.QueryEscape(namespace)
 	}
@@ -3160,7 +3160,7 @@ func (c *Client) AdminClearSlowQueries(ctx context.Context, namespace string) (m
 
 // AdminUpdateSlowQueryConfig updates the slow query configuration.
 func (c *Client) AdminUpdateSlowQueryConfig(ctx context.Context, config map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := c.request(ctx, "PATCH", "/admin/slow-queries/config", config)
+	resp, err := c.request(ctx, "PATCH", "/v1/admin/slow-queries/config", config)
 	if err != nil {
 		return nil, err
 	}
@@ -3177,7 +3177,7 @@ func (c *Client) AdminUpdateSlowQueryConfig(ctx context.Context, config map[stri
 
 // AdminListBackups lists all backups.
 func (c *Client) AdminListBackups(ctx context.Context) (*BackupListResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/backups", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/backups", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3190,7 +3190,7 @@ func (c *Client) AdminListBackups(ctx context.Context) (*BackupListResponse, err
 
 // AdminCreateBackup creates a new backup.
 func (c *Client) AdminCreateBackup(ctx context.Context, req CreateBackupRequest) (*CreateBackupResponse, error) {
-	resp, err := c.request(ctx, "POST", "/admin/backups", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/backups", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3203,7 +3203,7 @@ func (c *Client) AdminCreateBackup(ctx context.Context, req CreateBackupRequest)
 
 // AdminGetBackup returns backup details by ID.
 func (c *Client) AdminGetBackup(ctx context.Context, backupID string) (*AdminBackupInfo, error) {
-	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/%s", url.PathEscape(backupID)), nil)
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/backups/%s", url.PathEscape(backupID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3216,7 +3216,7 @@ func (c *Client) AdminGetBackup(ctx context.Context, backupID string) (*AdminBac
 
 // AdminDeleteBackup deletes a backup by ID.
 func (c *Client) AdminDeleteBackup(ctx context.Context, backupID string) (map[string]interface{}, error) {
-	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/backups/%s", url.PathEscape(backupID)), nil)
+	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/backups/%s", url.PathEscape(backupID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3229,7 +3229,7 @@ func (c *Client) AdminDeleteBackup(ctx context.Context, backupID string) (map[st
 
 // AdminGetBackupSchedule returns the backup schedule configuration.
 func (c *Client) AdminGetBackupSchedule(ctx context.Context) (*BackupSchedule, error) {
-	resp, err := c.request(ctx, "GET", "/admin/backups/schedule", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/backups/schedule", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3242,7 +3242,7 @@ func (c *Client) AdminGetBackupSchedule(ctx context.Context) (*BackupSchedule, e
 
 // AdminUpdateBackupSchedule updates the backup schedule.
 func (c *Client) AdminUpdateBackupSchedule(ctx context.Context, req UpdateBackupScheduleRequest) (*BackupSchedule, error) {
-	resp, err := c.request(ctx, "POST", "/admin/backups/schedule", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/backups/schedule", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3255,7 +3255,7 @@ func (c *Client) AdminUpdateBackupSchedule(ctx context.Context, req UpdateBackup
 
 // AdminRestoreBackup initiates a backup restore.
 func (c *Client) AdminRestoreBackup(ctx context.Context, req RestoreBackupRequest) (*RestoreBackupResponse, error) {
-	resp, err := c.request(ctx, "POST", "/admin/backups/restore", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/backups/restore", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3268,7 +3268,7 @@ func (c *Client) AdminRestoreBackup(ctx context.Context, req RestoreBackupReques
 
 // AdminGetRestoreStatus returns the status of a restore operation.
 func (c *Client) AdminGetRestoreStatus(ctx context.Context, restoreID string) (*RestoreBackupResponse, error) {
-	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/restore/%s", url.PathEscape(restoreID)), nil)
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/backups/restore/%s", url.PathEscape(restoreID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3385,7 +3385,7 @@ func (c *Client) FulltextDelete(ctx context.Context, namespace string, ids []str
 
 // AdminTtlStats returns TTL statistics across all namespaces.
 func (c *Client) AdminTtlStats(ctx context.Context) (*TtlStatsResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/ttl/stats", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/ttl/stats", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3436,7 +3436,7 @@ func (c *Client) ImportJobStatus(ctx context.Context, jobID string) (*ImportJobS
 
 // AdminDownloadBackup downloads a backup archive as raw bytes.
 func (c *Client) AdminDownloadBackup(ctx context.Context, backupID string) ([]byte, error) {
-	resp, err := c.request(ctx, "GET", fmt.Sprintf("/admin/backups/%s/download", url.PathEscape(backupID)), nil)
+	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/admin/backups/%s/download", url.PathEscape(backupID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3445,7 +3445,7 @@ func (c *Client) AdminDownloadBackup(ctx context.Context, backupID string) ([]by
 
 // AdminUploadBackup uploads a raw backup archive and returns the server response.
 func (c *Client) AdminUploadBackup(ctx context.Context, data []byte) (map[string]interface{}, error) {
-	resp, err := c.requestRaw(ctx, "POST", "/admin/backups/upload", "application/octet-stream", data)
+	resp, err := c.requestRaw(ctx, "POST", "/v1/admin/backups/upload", "application/octet-stream", data)
 	if err != nil {
 		return nil, err
 	}
@@ -3462,7 +3462,7 @@ func (c *Client) AdminUploadBackup(ctx context.Context, data []byte) (map[string
 
 // AdminStorageTierOverview returns an overview of the storage tier architecture and activity.
 func (c *Client) AdminStorageTierOverview(ctx context.Context) (*StorageTierOverview, error) {
-	resp, err := c.request(ctx, "GET", "/admin/storage/tiers", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/storage/tiers", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3475,7 +3475,7 @@ func (c *Client) AdminStorageTierOverview(ctx context.Context) (*StorageTierOver
 
 // AdminBackgroundActivity returns the current background activity as dynamic JSON.
 func (c *Client) AdminBackgroundActivity(ctx context.Context) (map[string]interface{}, error) {
-	resp, err := c.request(ctx, "GET", "/admin/background-activity", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/background-activity", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3488,7 +3488,7 @@ func (c *Client) AdminBackgroundActivity(ctx context.Context) (map[string]interf
 
 // AdminMemoryTypeStats returns memory type distribution statistics.
 func (c *Client) AdminMemoryTypeStats(ctx context.Context) (*MemoryTypeStatsResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/memory-type-stats", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/memory-type-stats", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3501,7 +3501,7 @@ func (c *Client) AdminMemoryTypeStats(ctx context.Context) (*MemoryTypeStatsResp
 
 // AdminMigrateNamespaceDimensions migrates namespace vector dimensions to a target dimension.
 func (c *Client) AdminMigrateNamespaceDimensions(ctx context.Context, req MigrateNamespaceDimensionsRequest) (*MigrateDimensionsResponse, error) {
-	resp, err := c.request(ctx, "POST", "/admin/namespaces/migrate-dimensions", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/namespaces/migrate-dimensions", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3521,7 +3521,7 @@ func (c *Client) AdminMigrateNamespaceDimensions(ctx context.Context, req Migrat
 //
 // A DrainReembedResponse.Remaining of 0 guarantees all vectors are at full ONNX quality.
 func (c *Client) AdminDrainReembed(ctx context.Context, req DrainReembedRequest) (*DrainReembedResponse, error) {
-	resp, err := c.request(ctx, "POST", "/admin/reembed/drain", req)
+	resp, err := c.request(ctx, "POST", "/v1/admin/reembed/drain", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3539,7 +3539,7 @@ func (c *Client) AdminDrainReembed(ctx context.Context, req DrainReembedRequest)
 // A StaticCountResponse.StaticCount of 0 means steady state — all vectors are
 // at full ONNX quality. Requires Admin scope.
 func (c *Client) AdminReembedStaticCount(ctx context.Context) (*StaticCountResponse, error) {
-	resp, err := c.request(ctx, "GET", "/admin/reembed/static-count", nil)
+	resp, err := c.request(ctx, "GET", "/v1/admin/reembed/static-count", nil)
 	if err != nil {
 		return nil, err
 	}
