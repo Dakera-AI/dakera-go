@@ -14,7 +14,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/Dakera-AI/dakera-go" /></a>
   <a href="https://dakera.ai/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-dakera.ai%2Fdocs-3b82f6?style=flat-square" /></a>
   <a href="https://dakera.ai/benchmark"><img alt="LoCoMo 88.2%" src="https://img.shields.io/badge/LoCoMo-88.2%25-22c55e?style=flat-square" /></a>
-  <a href="https://playground.dakera.ai"><img alt="Playground" src="https://img.shields.io/badge/playground-try_it-ff6b35?style=flat-square" /></a>
+  <a href="https://dakera.ai/playground"><img alt="Playground" src="https://img.shields.io/badge/playground-try_it-ff6b35?style=flat-square" /></a>
 </p>
 
 ---
@@ -29,7 +29,7 @@
 | **Search modes** | Vector · BM25 · Hybrid · Knowledge Graph | Usually one or two |
 | **Dependencies** | stdlib `net/http` only | Often pulls in gRPC or third-party HTTP clients |
 
-→ [Try the playground](https://playground.dakera.ai) · [Full benchmark results](https://dakera.ai/benchmark) · [dakera.ai](https://dakera.ai)
+→ [Try the playground](https://dakera.ai/playground) · [Full benchmark results](https://dakera.ai/benchmark) · [dakera.ai](https://dakera.ai)
 
 ---
 
