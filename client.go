@@ -2257,7 +2257,7 @@ func (c *Client) GetKpis(ctx context.Context) (*KpiSnapshot, error) {
 
 // CreateKey creates a new API key.
 func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*ApiKey, error) {
-	data, err := c.request(ctx, "POST", "/v1/keys", req)
+	data, err := c.request(ctx, "POST", "/admin/keys", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2270,7 +2270,7 @@ func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*ApiKey, 
 
 // ListKeys lists all API keys.
 func (c *Client) ListKeys(ctx context.Context) ([]ApiKey, error) {
-	data, err := c.request(ctx, "GET", "/v1/keys", nil)
+	data, err := c.request(ctx, "GET", "/admin/keys", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2283,7 +2283,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]ApiKey, error) {
 
 // GetKey gets an API key by ID.
 func (c *Client) GetKey(ctx context.Context, keyID string) (*ApiKey, error) {
-	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/keys/%s", url.PathEscape(keyID)), nil)
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/admin/keys/%s", url.PathEscape(keyID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2296,13 +2296,13 @@ func (c *Client) GetKey(ctx context.Context, keyID string) (*ApiKey, error) {
 
 // DeleteKey deletes an API key.
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
-	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/keys/%s", url.PathEscape(keyID)), nil)
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/keys/%s", url.PathEscape(keyID)), nil)
 	return err
 }
 
 // DeactivateKey deactivates an API key.
 func (c *Client) DeactivateKey(ctx context.Context, keyID string) (*ApiKey, error) {
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/keys/%s/deactivate", url.PathEscape(keyID)), nil)
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/admin/keys/%s/deactivate", url.PathEscape(keyID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2315,7 +2315,7 @@ func (c *Client) DeactivateKey(ctx context.Context, keyID string) (*ApiKey, erro
 
 // RotateKey rotates an API key.
 func (c *Client) RotateKey(ctx context.Context, keyID string) (*ApiKey, error) {
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/keys/%s/rotate", url.PathEscape(keyID)), nil)
+	data, err := c.request(ctx, "POST", fmt.Sprintf("/admin/keys/%s/rotate", url.PathEscape(keyID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2328,7 +2328,7 @@ func (c *Client) RotateKey(ctx context.Context, keyID string) (*ApiKey, error) {
 
 // KeyUsage gets usage statistics for an API key.
 func (c *Client) KeyUsage(ctx context.Context, keyID string) (*KeyUsage, error) {
-	data, err := c.request(ctx, "GET", fmt.Sprintf("/v1/keys/%s/usage", url.PathEscape(keyID)), nil)
+	data, err := c.request(ctx, "GET", fmt.Sprintf("/admin/keys/%s/usage", url.PathEscape(keyID)), nil)
 	if err != nil {
 		return nil, err
 	}
