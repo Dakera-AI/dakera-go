@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.95] - 2026-06-23
+
+### Fixed
+
+- **`AdminTtlCleanup()`** — add missing binding for `POST /v1/admin/ttl/cleanup`; previous
+  callers received a 404 silently. (DAK-7069,
+  [#131](https://github.com/Dakera-AI/dakera-go/pull/131))
+- **Key management routes** — fix `CreateKey`, `ListKeys`, `GetKey`, `DeleteKey`,
+  `DeactivateKey`, `RotateKey`, `GetKeyUsage` to use `/admin/keys` instead of the
+  incorrect `/v1/keys` path. (DAK-7066,
+  [#132](https://github.com/Dakera-AI/dakera-go/pull/132))
+
+## [0.11.94] - 2026-06-21
+
+### Internal
+
+- Bump version tag for crates.io / pkg.go.dev alignment (DAK-7031)
+
 ## [0.11.93] - 2026-06-16
 
 ### Added
