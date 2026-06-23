@@ -1054,6 +1054,47 @@ func TestAdminTtlStats(t *testing.T) {
 	assert.Equal(t, uint64(100), result.TotalWithTtl)
 }
 
+func TestAdminTtlCleanup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/admin/ttl/cleanup", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":            true,
+			"vectors_removed":    uint64(42),
+			"namespaces_cleaned": []string{"ns-1"},
+			"message":            "Cleanup complete",
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.AdminTtlCleanup(context.Background(), "ns-1")
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, uint64(42), result.VectorsRemoved)
+	assert.Contains(t, result.NamespacesCleaned, "ns-1")
+}
+
+func TestAdminTtlCleanupGlobal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/admin/ttl/cleanup", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":            true,
+			"vectors_removed":    uint64(100),
+			"namespaces_cleaned": []string{"ns-1", "ns-2"},
+			"message":            "Global cleanup complete",
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.AdminTtlCleanup(context.Background(), "")
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, uint64(100), result.VectorsRemoved)
+}
+
 func TestRouteQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
