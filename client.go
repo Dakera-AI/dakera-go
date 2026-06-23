@@ -3396,6 +3396,23 @@ func (c *Client) AdminTtlStats(ctx context.Context) (*TtlStatsResponse, error) {
 	return &result, nil
 }
 
+// AdminTtlCleanup removes expired vectors. Optionally scoped to namespace (empty = global).
+func (c *Client) AdminTtlCleanup(ctx context.Context, namespace string) (*TtlCleanupResponse, error) {
+	var body interface{}
+	if namespace != "" {
+		body = TtlCleanupRequest{Namespace: namespace}
+	}
+	resp, err := c.request(ctx, "POST", "/v1/admin/ttl/cleanup", body)
+	if err != nil {
+		return nil, err
+	}
+	var result TtlCleanupResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ttl cleanup response: %w", err)
+	}
+	return &result, nil
+}
+
 // ===========================================================================
 // Routing Operations
 // ===========================================================================

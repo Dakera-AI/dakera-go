@@ -2746,6 +2746,19 @@ type TtlStatsResponse struct {
 	TotalExpired uint64              `json:"total_expired"`
 }
 
+// TtlCleanupRequest is the request body for POST /admin/ttl/cleanup.
+type TtlCleanupRequest struct {
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// TtlCleanupResponse is returned by POST /admin/ttl/cleanup.
+type TtlCleanupResponse struct {
+	Success           bool     `json:"success"`
+	VectorsRemoved    uint64   `json:"vectors_removed"`
+	NamespacesCleaned []string `json:"namespaces_cleaned"`
+	Message           string   `json:"message"`
+}
+
 // RouteRequest is the request body for POST /v1/route.
 type RouteRequest struct {
 	Query         string  `json:"query"`
