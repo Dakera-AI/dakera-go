@@ -801,7 +801,7 @@ func TestSetMemoryPolicy(t *testing.T) {
 func TestCreateKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/keys", r.URL.Path)
+		assert.Equal(t, "/admin/keys", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":          "key-001",
@@ -823,7 +823,7 @@ func TestCreateKey(t *testing.T) {
 func TestListKeys(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/keys", r.URL.Path)
+		assert.Equal(t, "/admin/keys", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]map[string]interface{}{
 			{"id": "key-001", "name": "test-key", "created_at": "2026-05-17T00:00:00Z", "active": true},
@@ -839,7 +839,7 @@ func TestListKeys(t *testing.T) {
 func TestGetKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/keys/key-001", r.URL.Path)
+		assert.Equal(t, "/admin/keys/key-001", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "key-001", "name": "test-key", "created_at": "2026-05-17T00:00:00Z", "active": true,
@@ -855,7 +855,7 @@ func TestGetKey(t *testing.T) {
 func TestDeleteKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/v1/keys/key-001", r.URL.Path)
+		assert.Equal(t, "/admin/keys/key-001", r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "deleted"})
 	}))
@@ -868,7 +868,7 @@ func TestDeleteKey(t *testing.T) {
 func TestDeactivateKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/keys/key-001/deactivate", r.URL.Path)
+		assert.Equal(t, "/admin/keys/key-001/deactivate", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "key-001", "name": "test-key", "created_at": "2026-05-17T00:00:00Z", "active": false,
@@ -884,7 +884,7 @@ func TestDeactivateKey(t *testing.T) {
 func TestRotateKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/keys/key-001/rotate", r.URL.Path)
+		assert.Equal(t, "/admin/keys/key-001/rotate", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "key-001", "name": "test-key", "key": "dk_live_new_xxxx", "created_at": "2026-05-17T00:00:00Z", "active": true,
@@ -900,7 +900,7 @@ func TestRotateKey(t *testing.T) {
 func TestKeyUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/keys/key-001/usage", r.URL.Path)
+		assert.Equal(t, "/admin/keys/key-001/usage", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"key_id":         "key-001",
