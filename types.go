@@ -399,6 +399,10 @@ const (
 	EmbeddingModelBGESmall EmbeddingModel = "bge-small"
 	// EmbeddingModelE5Small is the E5-small model - High quality (384 dimensions).
 	EmbeddingModelE5Small EmbeddingModel = "e5-small"
+	// EmbeddingModelModernBertEmbedBase is the ModernBERT-embed-base model - 768 dimensions, MRL, 8192 tokens.
+	EmbeddingModelModernBertEmbedBase EmbeddingModel = "modernbert-embed-base"
+	// EmbeddingModelGteModernBertBase is the GTE-ModernBERT-base model - 768 dimensions, MTEB retrieval 64.38.
+	EmbeddingModelGteModernBertBase EmbeddingModel = "gte-modernbert-base"
 )
 
 // TextDocument represents input for upserting a text document with automatic embedding.
