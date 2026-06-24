@@ -332,6 +332,57 @@ func TestBatchQueryText(t *testing.T) {
 }
 
 // ===========================================================================
+// EmbeddingModel — ModernBERT wire-value tests (DAK-7098/7102)
+// ===========================================================================
+
+func TestEmbeddingModelModernBertEmbedBaseWireValue(t *testing.T) {
+	assert.Equal(t, EmbeddingModel("modernbert-embed-base"), EmbeddingModelModernBertEmbedBase)
+}
+
+func TestEmbeddingModelGteModernBertBaseWireValue(t *testing.T) {
+	assert.Equal(t, EmbeddingModel("gte-modernbert-base"), EmbeddingModelGteModernBertBase)
+}
+
+func TestUpsertTextWithModernBertModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "modernbert-embed-base", body["model"])
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"upserted_count":    1,
+			"tokens_processed":  42,
+			"model":             "modernbert-embed-base",
+			"embedding_time_ms": 12,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.UpsertText(context.Background(), "test-ns", []TextDocument{
+		{ID: "d1", Text: "Hello ModernBERT"},
+	}, &TextUpsertOptions{Model: EmbeddingModelModernBertEmbedBase})
+	require.NoError(t, err)
+	assert.Equal(t, EmbeddingModelModernBertEmbedBase, result.Model)
+}
+
+func TestQueryTextDeserializesGteModernBertModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results":           []map[string]interface{}{{"id": "d1", "score": 0.95}},
+			"model":             "gte-modernbert-base",
+			"embedding_time_ms": 8,
+			"search_time_ms":    2,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.QueryText(context.Background(), "test-ns", "hello", &TextQueryOptions{TopK: 1})
+	require.NoError(t, err)
+	assert.Equal(t, EmbeddingModelGteModernBertBase, result.Model)
+}
+
+// ===========================================================================
 // Analytics Operations
 // ===========================================================================
 
