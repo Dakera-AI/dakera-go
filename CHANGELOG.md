@@ -431,7 +431,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.2] - 2026-04-13
 
 ### Added
-- **CE-13:** `Rerank *bool` field on `RecallRequest` (server default: `true`) and `SearchMemoriesRequest` (server default: `false`). Enables cross-encoder reranking via `Xenova/bge-reranker-base`. Pass pointer-to-false on `RecallRequest` to disable on latency-sensitive paths.
+- **CE-13:** `Rerank *bool` field on `RecallRequest` (server default: `true`) and `SearchMemoriesRequest` (server default: `false`). Enables cross-encoder reranking via `Xenova/bge-reranker-v2-m3` (upgraded from `bge-reranker-base` in server v0.11.94 CE-C). Pass pointer-to-false on `RecallRequest` to disable on latency-sensitive paths.
 - **CE-13:** `EmbeddingModelBGELarge` constant (`"bge-large"`, 1024 dimensions) — new server-default embedding model.
 
 ## [0.10.1] - 2026-04-13
