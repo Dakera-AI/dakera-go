@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.98] - 2026-07-02
+
+### Changed
+
+- **Server sync v0.11.96** — no SDK API surface changes; bundled with server v0.11.96
+  engine and routes-handler improvements (DAK-7243).
+
+## [0.11.97] - 2026-06-27
+
+### Changed
+
+- fix(changelog): correct reranker model ref and version in CE-13 entry
+
 ## [0.11.96] - 2026-06-24
 
 ### Added
