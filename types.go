@@ -518,18 +518,24 @@ type Memory struct {
 // RecalledMemory represents a recalled memory with similarity score.
 //
 // The server wraps memory fields under a nested "memory" key with score at the
-// top level: {"memory": {"id": "...", "content": "...", ...}, "score": 0.95}.
+// top level: {"memory": {"id": "...", "content": "...", ...}, "score": 0.95, "smart_score": 0.87}.
 // UnmarshalJSON handles this nested wire format transparently so callers always
 // see populated ID, Content, and other fields.
+//
+// Score is set to SmartScore when present, then WeightedScore, then raw Score —
+// matching the server's ranking key so results appear in true rank order.
 type RecalledMemory struct {
 	ID         string                 `json:"id"`
 	Content    string                 `json:"content"`
 	MemoryType string                 `json:"memory_type"`
 	Importance float32                `json:"importance"`
-	Score      float32                `json:"score"`
-	Tags       []string               `json:"tags,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt  int64                  `json:"created_at,omitempty"`
+	// Ranking score — equals SmartScore when present, then WeightedScore, then raw score.
+	Score         float32  `json:"score"`
+	SmartScore    *float32 `json:"smart_score,omitempty"`
+	WeightedScore *float32 `json:"weighted_score,omitempty"`
+	Tags          []string               `json:"tags,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt     int64                  `json:"created_at,omitempty"`
 	// KG-3: hop depth at which this memory was found (only set on associated memories)
 	Depth *int `json:"depth,omitempty"`
 }

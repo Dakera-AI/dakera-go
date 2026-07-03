@@ -7,7 +7,7 @@ import "encoding/json"
 // The Dakera server returns recall/search results with memory fields nested
 // under a "memory" key and score at the top level:
 //
-//	{"memory": {"id": "...", "content": "...", ...}, "score": 0.95}
+//	{"memory": {"id": "...", "content": "...", ...}, "score": 0.95, "smart_score": 0.87}
 //
 // The flat fields (ID, Content, …) are retained so that the flat format used
 // in unit test mocks and by the /v1/agents/{id}/memories endpoint continues to
@@ -17,8 +17,10 @@ type recalledMemoryWire struct {
 	Memory *Memory `json:"memory"`
 
 	// Top-level fields present in all formats
-	Score float32 `json:"score"`
-	Depth *int    `json:"depth,omitempty"`
+	Score        float32  `json:"score"`
+	WeightedScore *float32 `json:"weighted_score,omitempty"`
+	SmartScore    *float32 `json:"smart_score,omitempty"`
+	Depth        *int     `json:"depth,omitempty"`
 
 	// Flat fields — populated when the "memory" wrapper is absent
 	ID         string                 `json:"id"`
@@ -33,7 +35,7 @@ type recalledMemoryWire struct {
 // UnmarshalJSON implements json.Unmarshaler for RecalledMemory.
 //
 // Handles two wire formats:
-//   - Nested (server): {"memory": {"id": "...", "content": "..."}, "score": N}
+//   - Nested (server): {"memory": {"id": "...", "content": "..."}, "score": N, "smart_score": N}
 //   - Flat (unit tests, /v1/agents/{id}/memories): {"id": "...", "content": "...", "score": N}
 func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 	var wire recalledMemoryWire
@@ -61,7 +63,17 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.CreatedAt = wire.CreatedAt
 	}
 
-	r.Score = wire.Score
+	// smart_score is the server's ranking key; prefer it over weighted_score and raw score.
+	r.SmartScore = wire.SmartScore
+	r.WeightedScore = wire.WeightedScore
+	switch {
+	case wire.SmartScore != nil:
+		r.Score = *wire.SmartScore
+	case wire.WeightedScore != nil:
+		r.Score = *wire.WeightedScore
+	default:
+		r.Score = wire.Score
+	}
 	r.Depth = wire.Depth
 	return nil
 }
