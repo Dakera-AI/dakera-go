@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.100] - 2026-07-05
+
+### Changed
+
+- **Server sync v0.11.97** — no SDK API surface changes; bundled with server v0.11.97
+  security dep pins (quick-xml/memmap2), CI improvements (DAK-7362).
+
+## [0.11.99] - 2026-07-03
+
+### Fixed
+
+- **`RecalledMemory.Score` now returns server-rank ordering** — `.Score` previously exposed the
+  raw `score` field, which did not match the server's actual ranking key (`smart_score` →
+  `weighted_score` → `score` fallback). `.Score` now resolves `SmartScore` when present, then
+  `WeightedScore`, then raw `score`. New optional fields `SmartScore` and `WeightedScore` are
+  exposed on `RecalledMemory` for consumers that need the raw components.
+  ([#139](https://github.com/Dakera-AI/dakera-go/pull/139))
+
 ## [0.11.98] - 2026-07-02
 
 ### Changed
