@@ -3,9 +3,11 @@ package dakera
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1409,4 +1411,106 @@ func TestAdminReembedStaticCountRequiresAdminScope(t *testing.T) {
 	client := NewClientWithOptions(ClientOptions{BaseURL: server.URL, MaxRetries: 1})
 	_, err := client.AdminReembedStaticCount(context.Background())
 	require.Error(t, err)
+}
+
+// ===========================================================================
+// DebugConfig (DAK-7477)
+// ===========================================================================
+
+func TestDebugConfigReturnsEnvMap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/debug/config", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"DAKERA_ENABLE_BM25":      "true",
+			"DAKERA_RERANKER_ENABLED": "true",
+			"_version":                "0.11.102",
+			"_build_sha":              "abc1234",
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	result, err := client.DebugConfig(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "0.11.102", result["_version"])
+	assert.Equal(t, "true", result["DAKERA_ENABLE_BM25"])
+}
+
+func TestDebugConfigRequiresAdminScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Admin scope required",
+			"code":  "AUTHORIZATION_ERROR",
+		})
+	}))
+	defer server.Close()
+	client := NewClientWithOptions(ClientOptions{BaseURL: server.URL, MaxRetries: 1})
+	_, err := client.DebugConfig(context.Background())
+	require.Error(t, err)
+	var authErr *AuthorizationError
+	require.ErrorAs(t, err, &authErr)
+}
+
+// ===========================================================================
+// StreamAuditEvents (DAK-7534)
+// ===========================================================================
+
+func TestStreamAuditEventsYieldsEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/v1/audit/stream", r.URL.Path)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("responsewriter does not support flushing")
+			return
+		}
+		events := []map[string]interface{}{
+			{"id": "evt-1", "event_type": "memory.store", "agent_id": "agent-a", "timestamp": 1700000000},
+			{"id": "evt-2", "event_type": "memory.recall", "agent_id": "agent-b", "timestamp": 1700000001},
+		}
+		for _, ev := range events {
+			data, _ := json.Marshal(ev)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := client.StreamAuditEvents(ctx, "", "")
+	require.NoError(t, err)
+
+	var received []*AuditEvent
+	for ev := range ch {
+		received = append(received, ev)
+	}
+	require.Len(t, received, 2)
+	assert.Equal(t, "evt-1", received[0].ID)
+	assert.Equal(t, "memory.store", received[0].EventType)
+	assert.Equal(t, "evt-2", received[1].ID)
+}
+
+func TestStreamAuditEventsRequiresAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Authentication required",
+			"code":  "AUTHENTICATION_ERROR",
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	_, err := client.StreamAuditEvents(context.Background(), "", "")
+	require.Error(t, err)
+	var authErr *AuthenticationError
+	require.ErrorAs(t, err, &authErr)
 }

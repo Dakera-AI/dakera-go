@@ -14,6 +14,7 @@
 package dakera
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1898,6 +1899,25 @@ func (c *Client) OpsMetrics(ctx context.Context) (string, error) {
 	return string(data), nil
 }
 
+// DebugConfig returns all active DAKERA_* env vars (non-secret) from the running server (DAK-7477).
+// Requires Admin scope. The returned map contains DAKERA_* env var names mapped to their values,
+// plus "_version" and optionally "_build_sha". Secret-bearing keys (TOKEN, KEY, SECRET, PASSWORD,
+// CRED, URL, URI, DSN) are filtered server-side.
+//
+// Used by bench harnesses to verify the server is running with the exact feature-flag configuration
+// requested before scoring.
+func (c *Client) DebugConfig(ctx context.Context) (map[string]string, error) {
+	data, err := c.request(ctx, "GET", "/debug/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]string
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal debug config: %w", err)
+	}
+	return result, nil
+}
+
 // ClusterStatus gets the cluster status.
 func (c *Client) ClusterStatus(ctx context.Context) (*ClusterStatus, error) {
 	data, err := c.request(ctx, "GET", "/v1/admin/cluster/status", nil)
@@ -2701,6 +2721,105 @@ func (c *Client) ExportAudit(ctx context.Context, format string, agentID string,
 		return nil, fmt.Errorf("failed to unmarshal audit export response: %w", err)
 	}
 	return &result, nil
+}
+
+// StreamAuditEvents opens a long-lived SSE connection to GET /v1/audit/stream (OBS-1) and
+// returns a channel that yields *AuditEvent values as they arrive. The channel is closed
+// when the context is cancelled, the connection drops, or the stream ends.
+//
+// agentID and eventType are optional filters (empty = no filter).
+//
+// Example:
+//
+//	events, err := client.StreamAuditEvents(ctx, "", "")
+//	for event := range events {
+//	    fmt.Printf("event: %s agent: %s\n", event.EventType, event.AgentID)
+//	}
+func (c *Client) StreamAuditEvents(ctx context.Context, agentID string, eventType string) (<-chan *AuditEvent, error) {
+	params := url.Values{}
+	if agentID != "" {
+		params.Set("agent_id", agentID)
+	}
+	if eventType != "" {
+		params.Set("event_type", eventType)
+	}
+	path := "/v1/audit/stream"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	reqURL := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stream request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, NewConnectionError(fmt.Sprintf("failed to connect to audit stream: %v", err))
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var errBody struct {
+			Error string    `json:"error"`
+			Code  ErrorCode `json:"code"`
+		}
+		json.Unmarshal(body, &errBody)
+		errMsg := errBody.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		errorCode := errBody.Code
+		if errorCode == "" {
+			errorCode = ErrorCodeUnknown
+		}
+		switch resp.StatusCode {
+		case 401:
+			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
+		case 403:
+			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
+		case 404:
+			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
+		default:
+			return nil, NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
+		}
+	}
+
+	ch := make(chan *AuditEvent, 16)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if payload == "" || payload == "[DONE]" {
+				continue
+			}
+			var event AuditEvent
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+				continue
+			}
+			select {
+			case ch <- &event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ch, nil
 }
 
 // ExtractText extracts entities from text using a pluggable provider (EXT-1).
