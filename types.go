@@ -956,6 +956,8 @@ type UnifiedQueryRequest struct {
 	TextWeight      *float32               `json:"text_weight,omitempty"`
 	FusionMethod    string                 `json:"fusion_method,omitempty"`
 	Rerank          bool                   `json:"rerank,omitempty"`
+	// Cursor is an opaque pagination token from a previous UnifiedQueryResponse.NextCursor.
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // UnifiedSearchResult represents a single result from unified query.
@@ -974,6 +976,8 @@ type UnifiedQueryResponse struct {
 	Results      []UnifiedSearchResult `json:"results"`
 	SearchTimeMs *int64                `json:"search_time_ms,omitempty"`
 	FusionMethod string                `json:"fusion_method,omitempty"`
+	// NextCursor is set when more results are available; pass it as UnifiedQueryRequest.Cursor in the next call.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // AggregationRequest represents an aggregation request with grouping.
