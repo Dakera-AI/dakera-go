@@ -489,6 +489,10 @@ type StoreMemoryRequest struct {
 	ExpiresAt *int64  `json:"expires_at,omitempty"`
 	SessionID string  `json:"session_id,omitempty"`
 	Embedding []float32 `json:"embedding,omitempty"`
+	// ValidFrom is an optional Unix timestamp (seconds) indicating when this
+	// memory becomes temporally valid. Defaults to ingest time when omitted.
+	// Used by temporal recall queries (server v0.11.98+, DAK-7424).
+	ValidFrom *int64 `json:"valid_from,omitempty"`
 }
 
 // StoreMemoryResponse represents the response from storing a memory.
