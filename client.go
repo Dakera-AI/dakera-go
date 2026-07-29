@@ -31,6 +31,10 @@ import (
 	"time"
 )
 
+// Version is the dakera-go client version, sent in the User-Agent header so the
+// Dakera engine can attribute Go SDK usage.
+const Version = "0.11.102"
+
 const defaultTimeout = 30 * time.Second
 
 // Client is the Dakera client for interacting with the vector database.
@@ -173,6 +177,7 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "dakera-go/"+Version)
 		if c.apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
