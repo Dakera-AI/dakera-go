@@ -917,6 +917,55 @@ func TestKeyUsage(t *testing.T) {
 }
 
 // ===========================================================================
+// ValidFrom bi-temporal field tests (DAK-7424)
+// ===========================================================================
+
+func TestStoreMemory_ValidFrom(t *testing.T) {
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory": map[string]interface{}{
+				"id":          "mem-vf1",
+				"content":     "past event",
+				"agent_id":    "agent-1",
+				"memory_type": "episodic",
+			},
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	ts := int64(1700000000)
+	_, err := client.StoreMemory(context.Background(), "agent-1", StoreMemoryRequest{
+		Content:   "past event",
+		ValidFrom: &ts,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, float64(ts), capturedBody["valid_from"], "valid_from must be forwarded in request body")
+}
+
+func TestStoreMemory_ValidFrom_Omitted(t *testing.T) {
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory": map[string]interface{}{
+				"id": "mem-vf2", "content": "now", "agent_id": "agent-1", "memory_type": "episodic",
+			},
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	_, err := client.StoreMemory(context.Background(), "agent-1", StoreMemoryRequest{
+		Content: "now",
+	})
+	require.NoError(t, err)
+	_, present := capturedBody["valid_from"]
+	assert.False(t, present, "valid_from must be omitted from request body when nil")
+}
+
 // Error Tests
 // ===========================================================================
 
