@@ -23,7 +23,7 @@
 
 | | Dakera | Others |
 |---|---|---|
-| **LoCoMo accuracy** | **88.2%** (1,540 Q standard eval) | 60–92% |
+| **LoCoMo accuracy** | **88.2% Recall@20** (1,540 Q · LLM-judge scored) | 60–92% |
 | **Deployment** | Single binary, Docker one-liner | External vector DB + embedding service required |
 | **Embeddings** | Built-in — no OpenAI key needed | Requires external embedding API |
 | **Search modes** | Vector · BM25 · Hybrid · Knowledge Graph | Usually one or two |
