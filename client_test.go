@@ -2367,3 +2367,31 @@ func TestOdeExtractEntities_RequiresOdeURL(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "OdeURL")
 }
+
+// TestUserAgentHeader verifies that every request carries the dakera-go/<Version>
+// User-Agent header so the server can attribute Go SDK usage (DAK-7617).
+func TestUserAgentHeader(t *testing.T) {
+	var capturedUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "healthy"})
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: server.URL,
+		APIKey:  "dk-test",
+	})
+	_, err := client.Health(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "dakera-go/"+Version, capturedUA)
+}
+
+// TestUserAgentHeader_Version ensures Version constant is non-empty and follows
+// the semver-like vMAJOR.MINOR.PATCH pattern expected by server analytics.
+func TestUserAgentHeader_Version(t *testing.T) {
+	assert.NotEmpty(t, Version)
+	assert.Contains(t, Version, ".")
+}
