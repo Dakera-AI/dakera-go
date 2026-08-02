@@ -2395,3 +2395,48 @@ func TestUserAgentHeader_Version(t *testing.T) {
 	assert.NotEmpty(t, Version)
 	assert.Contains(t, Version, ".")
 }
+
+// TestDebugConfig verifies that DebugConfig calls GET /debug/config and returns
+// the env-var map from the server response (DAK-7477).
+func TestDebugConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/debug/config", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"DAKERA_ENABLE_BM25":       "true",
+			"DAKERA_RERANKER_ENABLED":  "true",
+			"_version":                 "0.11.104",
+			"_build_sha":               "abc1234",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: server.URL,
+		APIKey:  "dk-test",
+	})
+	cfg, err := client.DebugConfig(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "true", cfg["DAKERA_ENABLE_BM25"])
+	assert.Equal(t, "0.11.104", cfg["_version"])
+	assert.Contains(t, cfg, "DAKERA_RERANKER_ENABLED")
+}
+
+// TestDebugConfig_Forbidden verifies that DebugConfig propagates a 403 error
+// when the caller lacks Admin scope (DAK-7477).
+func TestDebugConfig_Forbidden(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"Forbidden: Admin scope required"}`, http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: server.URL,
+		APIKey:  "dk-test",
+	})
+	_, err := client.DebugConfig(context.Background())
+
+	require.Error(t, err)
+}
