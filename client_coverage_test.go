@@ -149,7 +149,7 @@ func TestDeduplicate_SendsThreshold(t *testing.T) {
 	resp, err := client.Deduplicate(context.Background(), DeduplicateRequest{
 		AgentID:   "agent-42",
 		Threshold: &threshold,
-		DryRun:    &dryRun,
+		DryRun:    dryRun,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 5, resp.DuplicatesFound)
