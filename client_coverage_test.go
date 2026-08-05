@@ -70,6 +70,9 @@ func TestStreamGlobalEvents_ChannelClosesOnContextCancel(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 		<-r.Context().Done()
 	}))
 	defer server.Close()
