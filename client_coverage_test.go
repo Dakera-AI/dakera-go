@@ -85,11 +85,17 @@ func TestStreamGlobalEvents_ChannelClosesOnContextCancel(t *testing.T) {
 
 	// Cancel immediately; channel must eventually close.
 	cancel()
-	select {
-	case _, ok := <-ch:
-		assert.False(t, ok, "channel should be closed after context cancel")
-	case <-time.After(2 * time.Second):
-		t.Fatal("channel was not closed within 2s after context cancel")
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // channel closed — pass
+			}
+			// Go 1.21: scanner.Err() sends an error result before close; drain it.
+		case <-deadline:
+			t.Fatal("channel was not closed within 2s after context cancel")
+		}
 	}
 }
 
