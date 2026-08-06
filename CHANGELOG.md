@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.103] - 2026-08-05
+
+### Added
+
+- **`DebugConfig()` and `StreamAuditEvents()`** — new client methods for
+  `GET /debug/config` (server configuration snapshot) and `GET /audit/events`
+  (SSE audit event stream). Useful for runtime introspection and audit log consumption
+  (DAK-7477, DAK-7534). ([#146](https://github.com/Dakera-AI/dakera-go/pull/146))
+
+- **`ValidFrom` on `StoreMemoryRequest`** — bi-temporal anchor support: set the
+  effective-from timestamp when storing a memory for backdated ingestion and replay
+  (DAK-7424). ([#145](https://github.com/Dakera-AI/dakera-go/pull/145))
+
+- **Cursor pagination on `UnifiedQuery`** — `UnifiedQueryRequest` gains a `Cursor` field;
+  `UnifiedQueryResponse` returns one when more pages remain, enabling page-stable
+  iteration without offset drift (DAK-7424 follow-up).
+  ([#144](https://github.com/Dakera-AI/dakera-go/pull/144))
+
+- **Default `User-Agent` header** — all requests now include
+  `User-Agent: dakera-go/0.11.103` for SDK attribution and observability (DAK-7617).
+  ([#147](https://github.com/Dakera-AI/dakera-go/pull/147))
+
+## [0.11.102] - 2026-07-24
+
+### Changed
+
+- **Error-type test coverage** — full unit-test coverage for all error types and type
+  guards added; no API surface changes. ([#142](https://github.com/Dakera-AI/dakera-go/pull/142))
+- **Dependency maintenance** — `actions/setup-go` bumped from v6 to v7.
+
+
 ## [0.11.101] - 2026-07-16
 
 ### Changed
