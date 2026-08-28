@@ -33,7 +33,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.11.102"
+const Version = "0.11.106"
 
 const defaultTimeout = 30 * time.Second
 
