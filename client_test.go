@@ -800,6 +800,43 @@ func TestBatchRecall(t *testing.T) {
 		assert.Equal(t, 0, resp.Filtered)
 		assert.Empty(t, resp.Memories)
 	})
+
+	t.Run("TruncatedTrueWhenResultCapped", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"memories":  []interface{}{},
+				"total":     500,
+				"filtered":  100,
+				"truncated": true,
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		resp, err := client.BatchRecall(context.Background(), BatchRecallRequest{AgentID: "agent-x", Limit: 100})
+
+		require.NoError(t, err)
+		assert.True(t, resp.Truncated)
+	})
+
+	t.Run("TruncatedFalseByDefault", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"memories": []interface{}{},
+				"total":    3,
+				"filtered": 3,
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL)
+		resp, err := client.BatchRecall(context.Background(), BatchRecallRequest{AgentID: "agent-x"})
+
+		require.NoError(t, err)
+		assert.False(t, resp.Truncated)
+	})
 }
 
 func TestBatchForget(t *testing.T) {
