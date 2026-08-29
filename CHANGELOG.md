@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.106] - 2026-08-29
+
+### Changed
+
+- **`Version` constant** — bumped to `0.11.106` so every request carries
+  `User-Agent: dakera-go/0.11.106` for accurate SDK attribution (DAK-7617).
+  The header was introduced in v0.11.103 but the constant was not updated across
+  subsequent releases, causing the engine telemetry to under-count Go SDK usage
+  for the correct version. No API surface changes; bundles server v0.11.104–v0.11.106.
+  ([#154](https://github.com/Dakera-AI/dakera-go/pull/154))
+
+## [0.11.105] - 2026-08-06
+
+### Changed
+
+- **Server sync v0.11.105** — no SDK API surface changes; syncs to server v0.11.105:
+  CE-160 multi-hop evidence-cluster retention (temporal window ±10 min, neighbourhood cap
+  doubled), DAK-7652 Telemetry v2 schema (deployment type, container runtime, usage buckets),
+  ONNX Runtime rc.12 → rc.13 CUDA EP import-path fix.
+
+## [0.11.104] - 2026-07-31
+
+### Changed
+
+- **Server sync v0.11.104** — no SDK API surface changes; syncs to server v0.11.104:
+  CE-153 all-evidence recall for list/aggregation queries, CE-156 curated specificity
+  boost in precision reranking (configurable via `DAKERA_CURATED_SPECIFICITY_DELTA`),
+  CE-154 pool-mult 5.0× diagnostic test.
+
 ## [0.11.103] - 2026-08-05
 
 ### Added
