@@ -1487,6 +1487,8 @@ type BatchRecallResponse struct {
 	Total int `json:"total"`
 	// Filtered is the number of memories that passed the filter.
 	Filtered int `json:"filtered"`
+	// Truncated is true when the result set was capped by Limit and more matching memories exist.
+	Truncated bool `json:"truncated"`
 }
 
 // BatchForgetRequest is the request body for DELETE /v1/memories/forget/batch.
