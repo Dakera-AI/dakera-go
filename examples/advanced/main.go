@@ -14,7 +14,7 @@ func dakeraURL() string {
 	if u := os.Getenv("DAKERA_API_URL"); u != "" {
 		return u
 	}
-	return "http://localhost:3300"
+	return "http://localhost:3000"
 }
 
 func dakeraAPIKey() string {
