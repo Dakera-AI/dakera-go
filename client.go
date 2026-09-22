@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -33,7 +34,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.11.107"
+const Version = "0.12.0"
 
 const defaultTimeout = 30 * time.Second
 
@@ -49,6 +50,92 @@ type Client struct {
 	// OPS-1: last seen rate-limit headers
 	rlMu                sync.Mutex
 	lastRateLimitHeaders *RateLimitHeaders
+
+	// R9: per-instance capabilities cache (GET /v1/capabilities) + pre-flight switch
+	capMu                   sync.Mutex
+	capabilities            *ServerCapabilities
+	capabilitiesUnavailable bool
+	preflight               bool
+}
+
+// ===========================================================================
+// Server capabilities (R9 / DAK-10004)
+// ===========================================================================
+
+// Capabilities returns what the connected server can do — GET /v1/capabilities
+// (server v0.12+): the models it can load (and which one is active), index
+// kinds, distance metrics, the search mode it runs, whether the R2 records
+// surface is enabled and whether a re-embed is still pending. The document is
+// cached on this client; use RefreshCapabilities to fetch it again. Unknown
+// fields and unknown strings in the document are kept rather than rejected.
+// A server that predates the endpoint returns a *NotFoundError.
+func (c *Client) Capabilities(ctx context.Context) (*ServerCapabilities, error) {
+	c.capMu.Lock()
+	cached := c.capabilities
+	c.capMu.Unlock()
+	if cached != nil {
+		return cached, nil
+	}
+	return c.RefreshCapabilities(ctx)
+}
+
+// RefreshCapabilities fetches GET /v1/capabilities again and replaces the cache.
+func (c *Client) RefreshCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/capabilities", nil)
+	if err != nil {
+		return nil, err
+	}
+	caps, err := ParseCapabilities(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse capabilities: %w", err)
+	}
+	c.capMu.Lock()
+	c.capabilities = caps
+	c.capabilitiesUnavailable = false
+	c.capMu.Unlock()
+	return caps, nil
+}
+
+// RequireSupported returns an *UnsupportedCapabilityError unless the server
+// advertises value for kind (CapabilityModel, CapabilityIndexKind,
+// CapabilityDistanceMetric, CapabilitySearchMode, CapabilityQueryLanguage).
+// Fetches (and caches) capabilities on first use. Search mode is process-wide
+// on the server (DAKERA_SEARCH_MODE), so this is the pre-flight for tooling
+// that configures it rather than for a per-request field.
+func (c *Client) RequireSupported(ctx context.Context, kind CapabilityKind, value string) error {
+	caps, err := c.Capabilities(ctx)
+	if err != nil {
+		return err
+	}
+	return caps.Require(kind, value)
+}
+
+// preflightCheck validates value against cached capabilities before a request.
+// Uses the cache when populated; fetches only when ClientOptions.Preflight was
+// set. A 404 (pre-0.12 server) disables the check for the lifetime of this client.
+func (c *Client) preflightCheck(ctx context.Context, kind CapabilityKind, value string) error {
+	c.capMu.Lock()
+	caps := c.capabilities
+	unavailable := c.capabilitiesUnavailable
+	c.capMu.Unlock()
+	if caps == nil {
+		if !c.preflight || unavailable {
+			return nil
+		}
+		fetched, err := c.RefreshCapabilities(ctx)
+		if err != nil {
+			var notFound *NotFoundError
+			if errors.As(err, &notFound) {
+				c.capMu.Lock()
+				c.capabilitiesUnavailable = true
+				c.capMu.Unlock()
+				return nil
+			}
+			return err
+		}
+		caps = fetched
+	}
+	return caps.Require(kind, value)
 }
 
 // LastRateLimitHeaders returns the rate-limit headers from the most recent
@@ -117,6 +204,7 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 			Timeout:   timeout,
 			Transport: transport,
 		},
+		preflight: opts.Preflight,
 	}
 }
 
@@ -598,6 +686,9 @@ func (c *Client) UpsertText(ctx context.Context, namespace string, documents []T
 	}
 
 	if opts != nil && opts.Model != "" {
+		if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+			return nil, err
+		}
 		body["model"] = opts.Model
 	}
 
@@ -632,6 +723,9 @@ func (c *Client) QueryText(ctx context.Context, namespace string, text string, o
 			body["filter"] = opts.Filter
 		}
 		if opts.Model != "" {
+			if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+				return nil, err
+			}
 			body["model"] = opts.Model
 		}
 	} else {
@@ -668,6 +762,9 @@ func (c *Client) BatchQueryText(ctx context.Context, namespace string, queries [
 			body["filter"] = opts.Filter
 		}
 		if opts.Model != "" {
+			if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+				return nil, err
+			}
 			body["model"] = opts.Model
 		}
 	} else {
@@ -825,6 +922,9 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 			body["dimension"] = opts.Dimensions
 		}
 		if opts.IndexType != "" {
+			if err := c.preflightCheck(ctx, CapabilityIndexKind, opts.IndexType); err != nil {
+				return nil, err
+			}
 			body["index_type"] = opts.IndexType
 		}
 		if opts.Metadata != nil {
@@ -850,6 +950,11 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 // configuration if it already exists. Dimension changes are rejected by the
 // server to prevent silent data corruption. Requires Write scope.
 func (c *Client) ConfigureNamespace(ctx context.Context, namespace string, req ConfigureNamespaceRequest) (*ConfigureNamespaceResponse, error) {
+	if req.Distance != "" {
+		if err := c.preflightCheck(ctx, CapabilityDistanceMetric, string(req.Distance)); err != nil {
+			return nil, err
+		}
+	}
 	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s", namespace), req)
 	if err != nil {
 		return nil, err

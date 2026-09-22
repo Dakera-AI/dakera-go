@@ -1,6 +1,9 @@
 package dakera
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ErrorCode represents a typed server error code from the Dakera API.
 type ErrorCode string
@@ -97,6 +100,50 @@ func NewValidationError(message string, statusCode int, body interface{}, code E
 
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("ValidationError: %s", e.Message)
+}
+
+// UnsupportedCapabilityError is returned *before* a request is sent when the
+// server's advertised capabilities (GET /v1/capabilities) do not include what
+// was asked for (R9 / DAK-10004). Kind names the registry, Requested is the
+// wire string that was rejected and Supported is what the server does accept,
+// so the message is actionable on its own. Matches errors.As for both
+// *UnsupportedCapabilityError and (via embedding) the ValidationError message.
+type UnsupportedCapabilityError struct {
+	ValidationError
+	Kind          CapabilityKind
+	Requested     string
+	Supported     []string
+	ServerVersion string
+}
+
+// NewUnsupportedCapabilityError builds the error with a message that names the
+// supported values.
+func NewUnsupportedCapabilityError(kind CapabilityKind, requested string, supported []string, serverVersion string) *UnsupportedCapabilityError {
+	server := "this Dakera server"
+	if serverVersion != "" {
+		server = "Dakera server v" + serverVersion
+	}
+	accepted := "(none advertised)"
+	if len(supported) > 0 {
+		accepted = strings.Join(supported, ", ")
+	}
+	msg := fmt.Sprintf("%s '%s' is not supported by %s; supported %s values: %s", kind, requested, server, kind, accepted)
+	return &UnsupportedCapabilityError{
+		ValidationError: ValidationError{
+			DakeraError: DakeraError{
+				Message: msg,
+				Code:    ErrorCodeInvalidRequest,
+			},
+		},
+		Kind:          kind,
+		Requested:     requested,
+		Supported:     append([]string(nil), supported...),
+		ServerVersion: serverVersion,
+	}
+}
+
+func (e *UnsupportedCapabilityError) Error() string {
+	return fmt.Sprintf("UnsupportedCapabilityError: %s", e.Message)
 }
 
 // RateLimitError is raised when rate limit is exceeded.

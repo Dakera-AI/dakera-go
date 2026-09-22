@@ -175,6 +175,24 @@ const (
 	DistanceMetricDotProduct DistanceMetric = "dot_product"
 )
 
+// KnownDistanceMetrics lists the metrics this SDK version declares. A newer
+// server string still decodes; IsKnown reports false for it.
+var KnownDistanceMetrics = []DistanceMetric{
+	DistanceMetricCosine,
+	DistanceMetricEuclidean,
+	DistanceMetricDotProduct,
+}
+
+// IsKnown reports whether this SDK version declares the metric (R9 forward-compat).
+func (m DistanceMetric) IsKnown() bool {
+	for _, known := range KnownDistanceMetrics {
+		if m == known {
+			return true
+		}
+	}
+	return false
+}
+
 // ConfigureNamespaceRequest is the request body for PUT /v1/namespaces/:namespace.
 //
 // Uses upsert semantics: creates the namespace if it does not exist, or
@@ -250,6 +268,15 @@ type ClientOptions struct {
 
 	// Headers are additional HTTP headers to include in requests.
 	Headers map[string]string
+
+	// Preflight (R9) validates the requested embedding model, index kind and
+	// distance metric against GET /v1/capabilities *before* sending a request,
+	// returning *UnsupportedCapabilityError that names what the server supports.
+	// Capabilities are fetched lazily on first use and cached (see
+	// Client.Capabilities); a server that predates the endpoint (404) disables
+	// the check silently. When false (default) the check still runs whenever
+	// capabilities have already been fetched through Client.Capabilities.
+	Preflight bool
 
 	// OdeURL is the base URL of the dakera-ode sidecar (e.g. "http://localhost:8080").
 	// Required to call Client.ExtractEntities.
@@ -403,7 +430,33 @@ const (
 	EmbeddingModelModernBertEmbedBase EmbeddingModel = "modernbert-embed-base"
 	// EmbeddingModelGteModernBertBase is the GTE-ModernBERT-base model - 768 dimensions, MTEB retrieval 64.38.
 	EmbeddingModelGteModernBertBase EmbeddingModel = "gte-modernbert-base"
+	// EmbeddingModelBgeM3 is the BGE-M3 multilingual model - 1024 dimensions, 8192-token window (server v0.12+).
+	EmbeddingModelBgeM3 EmbeddingModel = "bge-m3"
 )
+
+// KnownEmbeddingModels lists the models this SDK version declares. The list the
+// *server* supports is authoritative — read it from Client.Capabilities. A model
+// string the server returns that is not in this list still decodes (EmbeddingModel
+// is a string type); IsKnown reports false for it.
+var KnownEmbeddingModels = []EmbeddingModel{
+	EmbeddingModelBGELarge,
+	EmbeddingModelMiniLM,
+	EmbeddingModelBGESmall,
+	EmbeddingModelE5Small,
+	EmbeddingModelModernBertEmbedBase,
+	EmbeddingModelGteModernBertBase,
+	EmbeddingModelBgeM3,
+}
+
+// IsKnown reports whether this SDK version declares the model (R9 forward-compat).
+func (m EmbeddingModel) IsKnown() bool {
+	for _, known := range KnownEmbeddingModels {
+		if m == known {
+			return true
+		}
+	}
+	return false
+}
 
 // TextDocument represents input for upserting a text document with automatic embedding.
 type TextDocument struct {

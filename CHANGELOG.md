@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-22
+
+### Added
+
+- **Forward-compat contract (R9, DAK-10004)** — the server's registries (models, index kinds,
+  search modes, distance metrics, record representation kinds, block dtypes) grow over time and
+  `GET /v1/capabilities` documents the rule: every field is additive; unknown fields and unknown
+  strings inside lists MUST be ignored; `capabilities_version` bumps only on a breaking reshape.
+  This release makes the SDK honour that rule end to end and moves it to the 0.12 line.
+- **Lenient wire enums** — `EmbeddingModel` and `DistanceMetric` were already string types (a
+  newer server string decodes without error); they gain `IsKnown()` and `Known*` lists. New
+  string types `IndexKind`, `SearchMode`, `RepresentationKind`, `BlockDType` with the same shape.
+  `EmbeddingModelBgeM3`, `IndexKindIvfPq` and `SearchModeRaBitQ` are declared for the strings
+  server v0.12 adds.
+- **`Client.Capabilities(ctx)` / `RefreshCapabilities(ctx)`** — typed `ServerCapabilities` for
+  `GET /v1/capabilities`: models (name, aliases, dimension, context window, active flag, MRL
+  dims), index kinds (all / vector / live), distance metrics, the search mode the server runs and
+  every value it accepts (`SearchModesAccepted` — the prose field parsed, aliases expanded, a JSON
+  list accepted too), `Records` (`SupportsRecords()`, kinds, dtypes, limits), `QueryLanguages`,
+  `ReembedPending`. Cached per client; the verbatim document is kept in `Raw`. Helpers:
+  `FindModel` (name or alias), `ActiveModel`, `ModelNames`, `SupportedValues`, `Supports`,
+  `Require`.
+- **Pre-flight validation** — `UpsertText` / `QueryText` / `BatchQueryText` (model),
+  `CreateNamespace` (index type) and `ConfigureNamespace` (distance metric) check the requested
+  value against cached capabilities *before* sending and return `*UnsupportedCapabilityError`
+  (embeds `ValidationError`; `Kind`, `Requested`, `Supported`, `ServerVersion`; message names what
+  the server accepts). Runs whenever `Capabilities` has been called; `ClientOptions{Preflight:
+  true}` fetches lazily on first use and degrades silently on a pre-0.12 server (404).
+  `Client.RequireSupported(ctx, kind, value)` exposes the same check for `CapabilitySearchMode`
+  and `CapabilityQueryLanguage`.
+
+### Changed
+
+- `Version` constant 0.11.107 → 0.12.0 (SDK line now tracks server v0.12).
+
 ## [0.11.106] - 2026-08-29
 
 ### Changed
