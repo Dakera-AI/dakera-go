@@ -417,6 +417,91 @@ func TestIntegration_MemoryGraph(t *testing.T) {
 	}
 }
 
+// TestIntegration_GraphContractRoundTrip checks update, link, graph, path,
+// export, knowledge query and entities against the server's real answers.
+func TestIntegration_GraphContractRoundTrip(t *testing.T) {
+	client := integrationClient(t)
+	ctx := context.Background()
+	agent := testAgent()
+
+	m1, err := client.StoreMemory(ctx, agent, dakera.StoreMemoryRequest{Content: "Anna lives in Berlin and works at Siemens"})
+	if err != nil {
+		t.Fatalf("StoreMemory 1 failed: %v", err)
+	}
+	m2, err := client.StoreMemory(ctx, agent, dakera.StoreMemoryRequest{Content: "Bob met Anna in Paris"})
+	if err != nil {
+		t.Fatalf("StoreMemory 2 failed: %v", err)
+	}
+	id1, id2 := m1.Memory.ID, m2.Memory.ID
+
+	content := "Anna lives in Hamburg now"
+	updated, err := client.UpdateMemory(ctx, agent, id1, dakera.UpdateMemoryRequest{Content: &content})
+	if err != nil {
+		t.Fatalf("UpdateMemory failed: %v", err)
+	}
+	if updated.Memory == nil || updated.Memory.ID != id1 || updated.Memory.Content != content {
+		t.Fatalf("UpdateMemory: unexpected answer %+v", updated.Memory)
+	}
+
+	link, err := client.MemoryLink(ctx, agent, id1, id2, "")
+	if err != nil {
+		t.Fatalf("MemoryLink failed: %v", err)
+	}
+	if link.FromID != id1 || link.ToID != id2 || link.Edge.SourceID != id1 || link.Edge.TargetID != id2 ||
+		link.Edge.EdgeType != dakera.EdgeTypeLinkedBy {
+		t.Fatalf("MemoryLink: unexpected answer %+v", link)
+	}
+
+	hasLink := func(edges []dakera.GraphEdge) bool {
+		for _, e := range edges {
+			if e.SourceID == id1 && e.TargetID == id2 && e.EdgeType == dakera.EdgeTypeLinkedBy {
+				return true
+			}
+		}
+		return false
+	}
+
+	graph, err := client.MemoryGraph(ctx, id1, &dakera.GraphOptions{Depth: 2})
+	if err != nil {
+		t.Fatalf("MemoryGraph failed: %v", err)
+	}
+	if graph.RootID != id1 || !hasLink(graph.Edges) {
+		t.Fatalf("MemoryGraph: link %s -> %s missing in %+v", id1, id2, graph)
+	}
+
+	path, err := client.MemoryPath(ctx, id1, id2)
+	if err != nil {
+		t.Fatalf("MemoryPath failed: %v", err)
+	}
+	if path.SourceID != id1 || path.TargetID != id2 || path.Hops != 1 || len(path.Path) != 2 {
+		t.Fatalf("MemoryPath: unexpected answer %+v", path)
+	}
+
+	export, err := client.AgentGraphExport(ctx, agent, "")
+	if err != nil {
+		t.Fatalf("AgentGraphExport failed: %v", err)
+	}
+	if export.AgentID != agent || export.Namespace != "_dakera_agent_"+agent || export.EdgeCount < 1 || !hasLink(export.Edges) {
+		t.Fatalf("AgentGraphExport: unexpected answer %+v", export)
+	}
+
+	kg, err := client.KnowledgeQuery(ctx, agent, "", "linked_by", 0, 0, 0)
+	if err != nil {
+		t.Fatalf("KnowledgeQuery failed: %v", err)
+	}
+	if !hasLink(kg.Edges) {
+		t.Fatalf("KnowledgeQuery: link missing in %+v", kg)
+	}
+
+	entities, err := client.MemoryEntities(ctx, id1)
+	if err != nil {
+		t.Fatalf("MemoryEntities failed: %v", err)
+	}
+	if entities.MemoryID != id1 || entities.Count != len(entities.Entities) {
+		t.Fatalf("MemoryEntities: unexpected answer %+v", entities)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Consolidate
 // ---------------------------------------------------------------------------

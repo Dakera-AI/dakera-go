@@ -34,7 +34,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.12.0"
+const Version = "0.12.1"
 
 const defaultTimeout = 30 * time.Second
 
@@ -943,17 +943,38 @@ func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memo
 }
 
 // UpdateMemory updates an existing memory.
+//
+// PUT /v1/memory/update/{id}?agent_id=... — the server reads agent_id from the
+// query string and answers with the updated memory object, which is returned
+// in StoreMemoryResponse.Memory.
 func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req UpdateMemoryRequest) (*StoreMemoryResponse, error) {
-	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/memory/update/%s", memoryID), req)
+	path := fmt.Sprintf("/v1/memory/update/%s?agent_id=%s", url.PathEscape(memoryID), url.QueryEscape(agentID))
+	respBody, err := c.request(ctx, "PUT", path, req)
 	if err != nil {
 		return nil, err
 	}
+	return parseUpdatedMemory(respBody)
+}
 
-	var result StoreMemoryResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+// parseUpdatedMemory reads the answer of PUT /v1/memory/update/{id}: the flat
+// memory object the server sends, or a {"memory": {...}} wrapper.
+func parseUpdatedMemory(respBody []byte) (*StoreMemoryResponse, error) {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(respBody, &probe); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	if _, wrapped := probe["memory"]; wrapped {
+		var result StoreMemoryResponse
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		return &result, nil
+	}
+	var memory Memory
+	if err := json.Unmarshal(respBody, &memory); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &StoreMemoryResponse{Memory: &memory}, nil
 }
 
 // Forget deletes a memory.
@@ -1272,10 +1293,13 @@ func (c *Client) MemoryGraph(ctx context.Context, memoryID string, opts *GraphOp
 		depth = opts.Depth
 	}
 	path := fmt.Sprintf("/v1/memories/%s/graph?depth=%d", url.PathEscape(memoryID), depth)
+	var wanted map[EdgeType]bool
 	if opts != nil && len(opts.Types) > 0 {
 		typeStrs := make([]string, len(opts.Types))
+		wanted = make(map[EdgeType]bool, len(opts.Types))
 		for i, t := range opts.Types {
 			typeStrs[i] = string(t)
+			wanted[t] = true
 		}
 		path += "&types=" + strings.Join(typeStrs, ",")
 	}
@@ -1287,14 +1311,58 @@ func (c *Client) MemoryGraph(ctx context.Context, memoryID string, opts *GraphOp
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+	collectGraphEdges(&result, wanted)
 	return &result, nil
 }
 
+// collectGraphEdges fills MemoryGraph.Edges from the per-node edges the server
+// sends (when the answer has no top-level edges) and, when wanted is non-nil,
+// keeps only edges of those types (the server does not filter by type).
+func collectGraphEdges(g *MemoryGraph, wanted map[EdgeType]bool) {
+	keep := func(e GraphEdge) bool { return wanted == nil || wanted[e.EdgeType] }
+	if len(g.Edges) == 0 {
+		type edgeKey struct {
+			from, to string
+			kind     EdgeType
+		}
+		seen := make(map[edgeKey]bool)
+		for _, n := range g.Nodes {
+			for _, e := range n.Edges {
+				k := edgeKey{e.SourceID, e.TargetID, e.EdgeType}
+				if !seen[k] {
+					seen[k] = true
+					g.Edges = append(g.Edges, e)
+				}
+			}
+		}
+	}
+	if wanted == nil {
+		return
+	}
+	filtered := g.Edges[:0]
+	for _, e := range g.Edges {
+		if keep(e) {
+			filtered = append(filtered, e)
+		}
+	}
+	g.Edges = filtered
+	for i := range g.Nodes {
+		nodeEdges := g.Nodes[i].Edges[:0]
+		for _, e := range g.Nodes[i].Edges {
+			if keep(e) {
+				nodeEdges = append(nodeEdges, e)
+			}
+		}
+		g.Nodes[i].Edges = nodeEdges
+	}
+}
+
 // MemoryPath finds the shortest path between two memories in the knowledge graph.
+// GET /v1/memories/{sourceID}/path?to={targetID}
 //
 // Requires CE-5 (Memory Knowledge Graph) on the server.
 func (c *Client) MemoryPath(ctx context.Context, sourceID, targetID string) (*GraphPath, error) {
-	path := fmt.Sprintf("/v1/memories/%s/path?target=%s",
+	path := fmt.Sprintf("/v1/memories/%s/path?to=%s",
 		url.PathEscape(sourceID),
 		url.QueryEscape(targetID),
 	)
@@ -1309,13 +1377,19 @@ func (c *Client) MemoryPath(ctx context.Context, sourceID, targetID string) (*Gr
 	return &result, nil
 }
 
-// MemoryLink creates an explicit edge between two memories.
+// MemoryLink creates an explicit linked_by edge from sourceID to targetID.
+// POST /v1/memories/{sourceID}/links
+//
+// agentID is the agent that owns both memories (the server requires it and
+// answers 404 when either memory is not one of the agent's). label is an
+// optional human-readable label; pass "" for none.
 //
 // Requires CE-5 (Memory Knowledge Graph) on the server.
-func (c *Client) MemoryLink(ctx context.Context, sourceID, targetID string, edgeType EdgeType) (*GraphLinkResponse, error) {
+func (c *Client) MemoryLink(ctx context.Context, agentID, sourceID, targetID, label string) (*GraphLinkResponse, error) {
 	req := GraphLinkRequest{
 		TargetID: targetID,
-		EdgeType: edgeType,
+		AgentID:  agentID,
+		Label:    label,
 	}
 	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/memories/%s/links", url.PathEscape(sourceID)), req)
 	if err != nil {
@@ -1328,16 +1402,17 @@ func (c *Client) MemoryLink(ctx context.Context, sourceID, targetID string, edge
 	return &result, nil
 }
 
-// AgentGraphExport exports the full knowledge graph for an agent.
+// AgentGraphExport exports all graph edges of an agent's memory namespace.
+// GET /v1/agents/{agentID}/graph/export
+//
+// The server always answers JSON ({agent_id, namespace, node_count,
+// edge_count, edges}); format is ignored and kept for compatibility. For a
+// GraphML export use KnowledgeExport.
 //
 // Requires CE-5 (Memory Knowledge Graph) on the server.
-//
-// format should be "json" (default), "graphml", or "csv".
 func (c *Client) AgentGraphExport(ctx context.Context, agentID, format string) (*GraphExport, error) {
-	if format == "" {
-		format = "json"
-	}
-	path := fmt.Sprintf("/v1/agents/%s/graph/export?format=%s", url.PathEscape(agentID), url.QueryEscape(format))
+	_ = format
+	path := fmt.Sprintf("/v1/agents/%s/graph/export", url.PathEscape(agentID))
 	respBody, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -1345,6 +1420,9 @@ func (c *Client) AgentGraphExport(ctx context.Context, agentID, format string) (
 	var result GraphExport
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if result.Format == "" {
+		result.Format = "json"
 	}
 	return &result, nil
 }
@@ -2586,6 +2664,13 @@ func (c *Client) MemoryEntities(ctx context.Context, memoryID string) (*MemoryEn
 	var result MemoryEntitiesResponse
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal memory entities response: %w", err)
+	}
+	// The server answers {entities, count} without the memory id.
+	if result.MemoryID == "" {
+		result.MemoryID = memoryID
+	}
+	if result.Count == 0 {
+		result.Count = len(result.Entities)
 	}
 	return &result, nil
 }

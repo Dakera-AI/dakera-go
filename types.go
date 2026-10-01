@@ -1859,12 +1859,17 @@ const (
 )
 
 // GraphEdge is a directed edge in the memory knowledge graph.
+//
+// The server sends an edge as {from_id, to_id, edge_type, weight, created_at}
+// (no id); UnmarshalJSON fills SourceID / TargetID from from_id / to_id and
+// also accepts source_id / target_id.
 type GraphEdge struct {
-	// ID is the unique edge identifier.
-	ID string `json:"id"`
-	// SourceID is the source memory ID.
+	// ID is an edge identifier. The server does not assign edge ids, so it is
+	// empty for edges read from the server.
+	ID string `json:"id,omitempty"`
+	// SourceID is the source memory ID (the server's from_id).
 	SourceID string `json:"source_id"`
-	// TargetID is the target memory ID.
+	// TargetID is the target memory ID (the server's to_id).
 	TargetID string `json:"target_id"`
 	// EdgeType is the relationship type between the two memories.
 	EdgeType EdgeType `json:"edge_type"`
@@ -1874,16 +1879,41 @@ type GraphEdge struct {
 	CreatedAt int64 `json:"created_at"`
 }
 
+// UnmarshalJSON reads the server's {from_id, to_id, ...} edge as well as the
+// source_id / target_id spelling.
+func (e *GraphEdge) UnmarshalJSON(data []byte) error {
+	type plain GraphEdge
+	aux := struct {
+		*plain
+		FromID string `json:"from_id"`
+		ToID   string `json:"to_id"`
+	}{plain: (*plain)(e)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if e.SourceID == "" {
+		e.SourceID = aux.FromID
+	}
+	if e.TargetID == "" {
+		e.TargetID = aux.ToID
+	}
+	return nil
+}
+
 // GraphNode is a memory node in the knowledge graph traversal result.
 type GraphNode struct {
 	// MemoryID is the memory identifier.
 	MemoryID string `json:"memory_id"`
-	// ContentPreview is the first 200 characters of memory content.
-	ContentPreview string `json:"content_preview"`
-	// Importance is the memory importance score.
-	Importance float64 `json:"importance"`
+	// ContentPreview is the first 200 characters of memory content. The
+	// server's traversal does not send it, so it is empty for server results.
+	ContentPreview string `json:"content_preview,omitempty"`
+	// Importance is the memory importance score. Not sent by the server's
+	// traversal (zero for server results).
+	Importance float64 `json:"importance,omitempty"`
 	// Depth is the traversal depth from the root node (root = 0).
 	Depth int `json:"depth"`
+	// Edges are the edges through which the traversal reached this node.
+	Edges []GraphEdge `json:"edges,omitempty"`
 }
 
 // MemoryGraph is the graph traversal result from GET /v1/memories/{id}/graph.
@@ -1892,59 +1922,154 @@ type MemoryGraph struct {
 	RootID string `json:"root_id"`
 	// Depth is the maximum traversal depth used.
 	Depth int `json:"depth"`
+	// NodeCount is the number of nodes returned.
+	NodeCount int `json:"node_count"`
 	// Nodes contains all memory nodes reachable within the requested depth.
 	Nodes []GraphNode `json:"nodes"`
-	// Edges contains all edges connecting the returned nodes.
+	// Edges contains all edges connecting the returned nodes. The server sends
+	// the edges per node; Client.MemoryGraph collects them here.
 	Edges []GraphEdge `json:"edges"`
 }
 
 // GraphPath is the shortest path between two memories from GET /v1/memories/{id}/path.
+//
+// The server answers {from_id, to_id, path, hop_count}; UnmarshalJSON fills
+// SourceID / TargetID / Hops from those as well.
 type GraphPath struct {
-	// SourceID is the starting memory ID.
+	// SourceID is the starting memory ID (the server's from_id).
 	SourceID string `json:"source_id"`
-	// TargetID is the destination memory ID.
+	// TargetID is the destination memory ID (the server's to_id).
 	TargetID string `json:"target_id"`
 	// Path is the ordered list of memory IDs from source to target (inclusive).
 	Path []string `json:"path"`
-	// Hops is the number of edges traversed (len(Path) - 1). -1 if no path exists.
+	// Hops is the number of edges traversed (len(Path) - 1); the server's hop_count.
 	Hops int `json:"hops"`
-	// Edges are the edges along the path, in traversal order.
-	Edges []GraphEdge `json:"edges"`
+	// HopCount is the server's hop_count (same value as Hops).
+	HopCount int `json:"hop_count"`
+	// Edges are the edges along the path, in traversal order. The server does
+	// not send them, so they are empty for server results.
+	Edges []GraphEdge `json:"edges,omitempty"`
+}
+
+// UnmarshalJSON reads the server's {from_id, to_id, path, hop_count} answer as
+// well as the source_id / target_id / hops spelling.
+func (p *GraphPath) UnmarshalJSON(data []byte) error {
+	type plain GraphPath
+	aux := struct {
+		*plain
+		FromID string `json:"from_id"`
+		ToID   string `json:"to_id"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if p.SourceID == "" {
+		p.SourceID = aux.FromID
+	}
+	if p.TargetID == "" {
+		p.TargetID = aux.ToID
+	}
+	if p.Hops == 0 && p.HopCount != 0 {
+		p.Hops = p.HopCount
+	}
+	if p.HopCount == 0 && p.Hops != 0 {
+		p.HopCount = p.Hops
+	}
+	return nil
 }
 
 // GraphLinkRequest is the request body for POST /v1/memories/{id}/links.
 type GraphLinkRequest struct {
 	// TargetID is the target memory ID to link to.
 	TargetID string `json:"target_id"`
-	// EdgeType is the edge type — must be EdgeTypeLinkedBy for explicit links.
-	EdgeType EdgeType `json:"edge_type"`
+	// AgentID is the agent that owns both memories (required by the server).
+	AgentID string `json:"agent_id"`
+	// Label is an optional human-readable label for the link.
+	Label string `json:"label,omitempty"`
+	// EdgeType is ignored by the server, which always records an explicit
+	// link as linked_by; Client.MemoryLink does not set it.
+	EdgeType EdgeType `json:"edge_type,omitempty"`
 }
 
 // GraphLinkResponse is the response from POST /v1/memories/{id}/links.
+//
+// The server answers {from_id, to_id, edge_type}; UnmarshalJSON builds Edge
+// from it (Weight 1.0, the weight of an explicit link; CreatedAt 0 = unknown).
 type GraphLinkResponse struct {
 	// Edge is the newly created edge.
 	Edge GraphEdge `json:"edge"`
+	// FromID is the source memory ID.
+	FromID string `json:"from_id,omitempty"`
+	// ToID is the target memory ID.
+	ToID string `json:"to_id,omitempty"`
+	// EdgeType is the recorded edge type (linked_by).
+	EdgeType EdgeType `json:"edge_type,omitempty"`
+}
+
+// UnmarshalJSON accepts both the server's flat {from_id, to_id, edge_type}
+// answer and an {"edge": {...}} object.
+func (r *GraphLinkResponse) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Edge     *GraphEdge `json:"edge"`
+		FromID   string     `json:"from_id"`
+		ToID     string     `json:"to_id"`
+		EdgeType EdgeType   `json:"edge_type"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.FromID, r.ToID, r.EdgeType = aux.FromID, aux.ToID, aux.EdgeType
+	if aux.Edge != nil {
+		r.Edge = *aux.Edge
+		if r.FromID == "" {
+			r.FromID = r.Edge.SourceID
+		}
+		if r.ToID == "" {
+			r.ToID = r.Edge.TargetID
+		}
+		if r.EdgeType == "" {
+			r.EdgeType = r.Edge.EdgeType
+		}
+		return nil
+	}
+	r.Edge = GraphEdge{
+		SourceID: aux.FromID,
+		TargetID: aux.ToID,
+		EdgeType: aux.EdgeType,
+		Weight:   1.0,
+	}
+	return nil
 }
 
 // GraphExport is the agent graph export from GET /v1/agents/{id}/graph/export.
+//
+// The server always answers JSON: {agent_id, namespace, node_count,
+// edge_count, edges}.
 type GraphExport struct {
 	// AgentID is the agent whose graph was exported.
 	AgentID string `json:"agent_id"`
-	// Format is the export format: "json", "graphml", or "csv".
-	Format string `json:"format"`
-	// Data is the serialised graph in the requested format.
-	Data string `json:"data"`
+	// Namespace is the agent's memory namespace.
+	Namespace string `json:"namespace"`
+	// Format is "json": the server exports JSON only.
+	Format string `json:"format,omitempty"`
+	// Data is not sent by the server (the edges are in Edges); kept for
+	// compatibility and empty for server results.
+	Data string `json:"data,omitempty"`
 	// NodeCount is the total number of memory nodes in the export.
 	NodeCount int64 `json:"node_count"`
 	// EdgeCount is the total number of edges in the export.
 	EdgeCount int64 `json:"edge_count"`
+	// Edges contains all graph edges of the agent.
+	Edges []GraphEdge `json:"edges"`
 }
 
 // GraphOptions holds options for the MemoryGraph method.
 type GraphOptions struct {
-	// Depth is the maximum traversal depth (default: 1, max: 3).
+	// Depth is the maximum traversal depth (default: 1; the server caps it).
 	Depth int
-	// Types filters by edge types. nil or empty returns all types.
+	// Types filters by edge types. nil or empty returns all types. The
+	// server does not filter the traversal by type, so Client.MemoryGraph
+	// applies the filter to the returned edges.
 	Types []EdgeType
 }
 
@@ -1996,10 +2121,12 @@ type EntityExtractionResponse struct {
 	Entities []ExtractedEntity `json:"entities"`
 }
 
-// MemoryEntitiesResponse is returned by MemoryEntities.
+// MemoryEntitiesResponse is returned by MemoryEntities. The server answers
+// {entities, count}; MemoryID is the requested memory id.
 type MemoryEntitiesResponse struct {
 	MemoryID string            `json:"memory_id"`
 	Entities []ExtractedEntity `json:"entities"`
+	Count    int               `json:"count"`
 }
 
 // ===========================================================================

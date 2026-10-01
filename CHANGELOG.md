@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-01
+
+Fixes calls whose requests or answers did not match the server. Each was checked against
+`ghcr.io/dakera-ai/dakera:0.12.0`; the v0.11.108 server has the same request and response types.
+
+### Fixed
+
+- **`UpdateMemory`** sends `agent_id` as a query parameter (`PUT /v1/memory/update/{id}?agent_id=`).
+  Without it every update failed with `400 INVALID_REQUEST` ("missing field `agent_id`"). The
+  server answers with the memory object itself, which is now returned in
+  `StoreMemoryResponse.Memory` (it was always nil); a `{"memory": ...}` answer is still accepted.
+- **`MemoryLink`** sends the `agent_id` the server requires (it answered `422` on every call) and
+  an optional `label`; it no longer sends `edge_type`, which the server ignores (explicit links are
+  always `linked_by`). The server's `{from_id, to_id, edge_type}` answer is parsed: `GraphLinkResponse`
+  gains `FromID`, `ToID`, `EdgeType`, and `Edge` is built from them (`Weight` 1.0, the weight of an
+  explicit link; `CreatedAt` 0 = not sent). An `{"edge": ...}` answer is still accepted.
+- **Graph edges**: the server sends `{from_id, to_id, edge_type, weight, created_at}` and no edge
+  id. `GraphEdge` now reads `from_id` / `to_id` into `SourceID` / `TargetID` (both spellings are
+  accepted); `ID` is empty for server edges. This fixes the edges of `MemoryGraph`,
+  `AgentGraphExport`, `KnowledgeQuery` and `KnowledgeExport`, which came back with empty ids.
+- **`MemoryGraph`**: the server returns the edges per node (`nodes[].edges`) plus `node_count`;
+  `GraphNode.Edges` and `MemoryGraph.NodeCount` are added and `MemoryGraph.Edges` is collected from
+  the nodes. `GraphOptions.Types` is applied to the returned edges (the server does not filter the
+  traversal by type).
+- **`MemoryPath`** sends the target as `to` (it sent `target`, a `400` on every call) and reads the
+  `{from_id, to_id, path, hop_count}` answer into `SourceID`, `TargetID`, `Path`, `Hops` (new:
+  `HopCount`).
+- **`AgentGraphExport`**: the route always answers JSON `{agent_id, namespace, node_count,
+  edge_count, edges}`; `GraphExport` gains `Namespace` and `Edges`, `Format` is `"json"`, and the
+  ignored `format` query parameter is no longer sent (use `KnowledgeExport` for GraphML).
+- **`MemoryEntities`**: the server answers `{entities, count}` without the memory id;
+  `MemoryEntitiesResponse.MemoryID` is now the requested id and `Count` is added.
+
+### Changed (breaking for code that called `MemoryLink`)
+
+- `MemoryLink(ctx, sourceID, targetID string, edgeType EdgeType)` is now
+  `MemoryLink(ctx, agentID, sourceID, targetID, label string)`. The old form could not work: the
+  server requires the agent id, so every call failed with `422`. Callers that passed an `EdgeType`
+  no longer compile, which points them at the change. `GraphLinkRequest` gains `AgentID` and `Label`.
+
+### Tests
+
+- httptest coverage of the server's answer shapes for update, link, graph, path, export, knowledge
+  query and entities, plus `TestIntegration_GraphContractRoundTrip`, which runs the same calls
+  against the real server in CI.
+
 ## [0.12.0] - 2026-09-22
 
 ### Added

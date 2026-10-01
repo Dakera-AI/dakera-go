@@ -103,13 +103,14 @@ func TestIntegration_PlaygroundWorkflow(t *testing.T) {
 	// Treat any error here as "endpoint not available" and skip the assertion
 	// rather than failing CI — the KG link path is covered by client_kg_test.go.
 	// ------------------------------------------------------------------
-	linkResp, err := client.MemoryLink(ctx, mem1.Memory.ID, mem2.Memory.ID, dakera.EdgeTypeRelatedTo)
+	linkResp, err := client.MemoryLink(ctx, agentID, mem1.Memory.ID, mem2.Memory.ID, "")
 	if err != nil {
 		t.Logf("step 4: MemoryLink not available in this environment (%v) — skipping KG link assertion", err)
 		return
 	}
-	if linkResp.Edge.EdgeType != dakera.EdgeTypeRelatedTo {
+	// The server records an explicit link as linked_by.
+	if linkResp.Edge.EdgeType != dakera.EdgeTypeLinkedBy {
 		t.Errorf("step 4: expected edge_type=%s, got %s",
-			dakera.EdgeTypeRelatedTo, linkResp.Edge.EdgeType)
+			dakera.EdgeTypeLinkedBy, linkResp.Edge.EdgeType)
 	}
 }

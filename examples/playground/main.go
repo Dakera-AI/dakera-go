@@ -147,7 +147,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("\n--- 4. Knowledge Graph Link ---")
 
-	linkResp, err := client.MemoryLink(ctx, mem1.Memory.ID, mem2.Memory.ID, dakera.EdgeTypeRelatedTo)
+	linkResp, err := client.MemoryLink(ctx, agentID, mem1.Memory.ID, mem2.Memory.ID, "")
 	if err != nil {
 		log.Printf("KG link not available in sandbox: %v", err)
 		fmt.Println("  Sign up at https://dakera.ai for full knowledge graph access.")
