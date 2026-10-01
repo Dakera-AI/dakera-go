@@ -48,7 +48,7 @@ curl http://localhost:3000/health  # → {"status":"ok"}
 For persistent storage with Docker Compose:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/Dakera-AI/dakera-deploy/main/docker-compose.yml \
+curl -sSfL https://raw.githubusercontent.com/Dakera-AI/dakera-deploy/main/docker/docker-compose.yml \
   -o docker-compose.yml
 DAKERA_API_KEY=dk-mykey docker compose up -d
 ```
@@ -200,8 +200,8 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 SDK v0.12.0 targets **Dakera server v0.12.0** and is **compatible with both v0.11.108 and
 v0.12.0 servers**: every new request field is omitted from the wire unless you set it, and the
 new routes only exist on a v0.12 server (see the table below). Operator guide for the server
-side: [docs/v0.12/UPGRADE.md](https://github.com/Dakera-AI/dakera/blob/main/docs/v0.12/UPGRADE.md)
-and the [release notes](https://github.com/Dakera-AI/dakera/blob/main/docs/v0.12/RELEASE_NOTES.md).
+side: `docs/v0.12/UPGRADE.md` in the server release, and the release notes in the
+[Dakera changelog](https://dakera.ai/docs/changelog).
 
 | Feature | API | Needs |
 |---|---|---|
