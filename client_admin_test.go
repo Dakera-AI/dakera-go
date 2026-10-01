@@ -60,23 +60,38 @@ func TestHealthLive(t *testing.T) {
 func TestGetIndexStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/stats", r.URL.Path)
+		assert.Equal(t, "/admin/indexes/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"namespace":    "test-ns",
-			"vectorCount":  5000,
-			"indexedCount": 4900,
-			"dimensions":   384,
-			"indexType":    "hnsw",
-			"sizeBytes":    1048576,
+			"namespaces": map[string]interface{}{
+				"test-ns": map[string]interface{}{
+					"index_type":      "hnsw",
+					"is_built":        true,
+					"size_bytes":      1048576,
+					"indexed_vectors": 4900,
+					"last_rebuild":    1700000000,
+				},
+			},
+			"total_indexed_vectors": 4900,
+			"total_size_bytes":      1048576,
 		})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
 	result, err := client.GetIndexStats(context.Background(), "test-ns")
 	require.NoError(t, err)
-	assert.Equal(t, int64(5000), result.VectorCount)
-	assert.Equal(t, 384, result.Dimensions)
+	assert.Equal(t, "test-ns", result.Namespace)
+	assert.Equal(t, "hnsw", result.IndexType)
+	assert.True(t, result.IsBuilt)
+	assert.Equal(t, int64(1048576), result.SizeBytes)
+	assert.Equal(t, int64(4900), result.IndexedVectors)
+	assert.Equal(t, int64(4900), result.IndexedCount)
+	require.NotNil(t, result.LastRebuild)
+	assert.Equal(t, uint64(1700000000), *result.LastRebuild)
+
+	_, err = client.GetIndexStats(context.Background(), "missing")
+	require.Error(t, err)
+	assert.True(t, IsNotFoundError(err))
 }
 
 // ===========================================================================
@@ -86,31 +101,20 @@ func TestGetIndexStats(t *testing.T) {
 func TestCompact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/compact", r.URL.Path)
+		assert.Equal(t, "/ops/compact", r.URL.Path)
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "test-ns", body["namespace"])
+		assert.Equal(t, false, body["force"])
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok"})
+		json.NewEncoder(w).Encode(map[string]interface{}{"job_id": "job_1_0", "message": "compacted 2 segments"})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
 	result, err := client.Compact(context.Background(), "test-ns")
 	require.NoError(t, err)
-	assert.Equal(t, "ok", result.Status)
+	assert.Equal(t, "compacted 2 segments", result.Status)
 }
-
-func TestFlush(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/flush", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok"})
-	}))
-	defer server.Close()
-	client := NewClient(server.URL)
-	result, err := client.Flush(context.Background(), "test-ns")
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result.Status)
-}
-
 func TestOpsStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
@@ -305,19 +309,38 @@ func TestGetQuotas(t *testing.T) {
 }
 
 func TestUpdateQuotas(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/v1/admin/quotas", r.URL.Path)
+		gotPath = r.URL.EscapedPath()
+		gotBody = nil
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"max_vectors": 2000000})
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "namespace": "_default", "message": "ok"})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
+
+	// No namespace: the default quota.
 	result, err := client.UpdateQuotas(context.Background(), map[string]interface{}{"max_vectors": 2000000})
 	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
+	assert.Equal(t, true, result["success"])
+	assert.Equal(t, "/v1/admin/quotas/default", gotPath)
+	assert.Equal(t, map[string]interface{}{"config": map[string]interface{}{"max_vectors": float64(2000000)}}, gotBody)
 
+	// With a namespace: that namespace's quota; the namespace is not part of the config.
+	_, err = client.UpdateQuotas(context.Background(), map[string]interface{}{"namespace": "my/ns", "max_vectors": 10, "enforcement": "hard"})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/admin/quotas/my%2Fns", gotPath)
+	assert.Equal(t, map[string]interface{}{"config": map[string]interface{}{"max_vectors": float64(10), "enforcement": "hard"}}, gotBody)
+
+	// An explicit config is passed through.
+	_, err = client.UpdateQuotas(context.Background(), map[string]interface{}{"namespace": "ns", "config": map[string]interface{}{"max_dimensions": 8}})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/admin/quotas/ns", gotPath)
+	assert.Equal(t, map[string]interface{}{"config": map[string]interface{}{"max_dimensions": float64(8)}}, gotBody)
+}
 func TestSlowQueries(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
@@ -397,25 +420,6 @@ func TestDeleteBackup(t *testing.T) {
 	client := NewClient(server.URL)
 	err := client.DeleteBackup(context.Background(), "backup-001")
 	require.NoError(t, err)
-}
-
-func TestConfigureTTL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/admin/namespaces/test-ns/ttl", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"namespace":   "test-ns",
-			"ttl_seconds": 86400,
-			"strategy":    "sliding",
-		})
-	}))
-	defer server.Close()
-	client := NewClient(server.URL)
-	result, err := client.ConfigureTTL(context.Background(), "test-ns", 86400, "sliding")
-	require.NoError(t, err)
-	assert.Equal(t, "test-ns", result.Namespace)
-	assert.Equal(t, 86400, result.TtlSeconds)
 }
 
 // ===========================================================================

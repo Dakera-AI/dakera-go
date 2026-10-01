@@ -30,6 +30,7 @@ type recalledMemoryWire struct {
 	Tags       []string               `json:"tags,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt  int64                  `json:"created_at,omitempty"`
+	AttachmentRef string              `json:"attachment_ref,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler for RecalledMemory.
@@ -52,6 +53,7 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.Tags = wire.Memory.Tags
 		r.Metadata = wire.Memory.Metadata
 		r.CreatedAt = wire.Memory.CreatedAt
+		r.AttachmentRef = wire.Memory.AttachmentRef
 	} else {
 		// Flat format — fields are at the top level.
 		r.ID = wire.ID
@@ -61,6 +63,7 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.Tags = wire.Tags
 		r.Metadata = wire.Metadata
 		r.CreatedAt = wire.CreatedAt
+		r.AttachmentRef = wire.AttachmentRef
 	}
 
 	// smart_score is the server's ranking key; prefer it over weighted_score and raw score.

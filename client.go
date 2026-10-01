@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -33,7 +34,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.11.107"
+const Version = "0.12.0"
 
 const defaultTimeout = 30 * time.Second
 
@@ -49,6 +50,92 @@ type Client struct {
 	// OPS-1: last seen rate-limit headers
 	rlMu                sync.Mutex
 	lastRateLimitHeaders *RateLimitHeaders
+
+	// R9: per-instance capabilities cache (GET /v1/capabilities) + pre-flight switch
+	capMu                   sync.Mutex
+	capabilities            *ServerCapabilities
+	capabilitiesUnavailable bool
+	preflight               bool
+}
+
+// ===========================================================================
+// Server capabilities (R9 / DAK-10004)
+// ===========================================================================
+
+// Capabilities returns what the connected server can do — GET /v1/capabilities
+// (server v0.12+): the models it can load (and which one is active), index
+// kinds, distance metrics, the search mode it runs, whether the R2 records
+// surface is enabled and whether a re-embed is still pending. The document is
+// cached on this client; use RefreshCapabilities to fetch it again. Unknown
+// fields and unknown strings in the document are kept rather than rejected.
+// A server that predates the endpoint returns a *NotFoundError.
+func (c *Client) Capabilities(ctx context.Context) (*ServerCapabilities, error) {
+	c.capMu.Lock()
+	cached := c.capabilities
+	c.capMu.Unlock()
+	if cached != nil {
+		return cached, nil
+	}
+	return c.RefreshCapabilities(ctx)
+}
+
+// RefreshCapabilities fetches GET /v1/capabilities again and replaces the cache.
+func (c *Client) RefreshCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/capabilities", nil)
+	if err != nil {
+		return nil, err
+	}
+	caps, err := ParseCapabilities(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse capabilities: %w", err)
+	}
+	c.capMu.Lock()
+	c.capabilities = caps
+	c.capabilitiesUnavailable = false
+	c.capMu.Unlock()
+	return caps, nil
+}
+
+// RequireSupported returns an *UnsupportedCapabilityError unless the server
+// advertises value for kind (CapabilityModel, CapabilityIndexKind,
+// CapabilityDistanceMetric, CapabilitySearchMode, CapabilityQueryLanguage).
+// Fetches (and caches) capabilities on first use. Search mode is process-wide
+// on the server (DAKERA_SEARCH_MODE), so this is the pre-flight for tooling
+// that configures it rather than for a per-request field.
+func (c *Client) RequireSupported(ctx context.Context, kind CapabilityKind, value string) error {
+	caps, err := c.Capabilities(ctx)
+	if err != nil {
+		return err
+	}
+	return caps.Require(kind, value)
+}
+
+// preflightCheck validates value against cached capabilities before a request.
+// Uses the cache when populated; fetches only when ClientOptions.Preflight was
+// set. A 404 (pre-0.12 server) disables the check for the lifetime of this client.
+func (c *Client) preflightCheck(ctx context.Context, kind CapabilityKind, value string) error {
+	c.capMu.Lock()
+	caps := c.capabilities
+	unavailable := c.capabilitiesUnavailable
+	c.capMu.Unlock()
+	if caps == nil {
+		if !c.preflight || unavailable {
+			return nil
+		}
+		fetched, err := c.RefreshCapabilities(ctx)
+		if err != nil {
+			var notFound *NotFoundError
+			if errors.As(err, &notFound) {
+				c.capMu.Lock()
+				c.capabilitiesUnavailable = true
+				c.capMu.Unlock()
+				return nil
+			}
+			return err
+		}
+		caps = fetched
+	}
+	return caps.Require(kind, value)
 }
 
 // LastRateLimitHeaders returns the rate-limit headers from the most recent
@@ -117,6 +204,7 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 			Timeout:   timeout,
 			Transport: transport,
 		},
+		preflight: opts.Preflight,
 	}
 }
 
@@ -153,242 +241,6 @@ func parseRateLimitHeaders(h http.Header) *RateLimitHeaders {
 		QuotaUsed:  parseI("X-Quota-Used"),
 		QuotaLimit: parseI("X-Quota-Limit"),
 	}
-}
-
-// request makes an HTTP request with retry logic.
-func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
-	reqURL := c.baseURL + path
-	rc := c.retryConfig
-	var lastErr error
-
-	for attempt := 0; attempt < rc.MaxRetries; attempt++ {
-		var reqBody io.Reader
-		if body != nil {
-			jsonBody, err := json.Marshal(body)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal request body: %w", err)
-			}
-			reqBody = bytes.NewReader(jsonBody)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "dakera-go/"+Version)
-		if c.apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		}
-		for k, v := range c.headers {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
-			}
-			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
-			if attempt < rc.MaxRetries-1 {
-				time.Sleep(c.computeBackoff(attempt))
-				continue
-			}
-			return nil, lastErr
-		}
-		defer resp.Body.Close()
-
-		// OPS-1: capture rate-limit headers on every response
-		c.rlMu.Lock()
-		c.lastRateLimitHeaders = parseRateLimitHeaders(resp.Header)
-		c.rlMu.Unlock()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response body: %w", err)
-			continue
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return respBody, nil
-		}
-
-		// Parse error response
-		var errBody struct {
-			Error   string    `json:"error"`
-			Code    ErrorCode `json:"code"`
-			Details string    `json:"details"`
-		}
-		json.Unmarshal(respBody, &errBody)
-		errMsg := errBody.Error
-		if errMsg == "" {
-			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-		errorCode := errBody.Code
-		if errorCode == "" {
-			errorCode = ErrorCodeUnknown
-		}
-
-		switch resp.StatusCode {
-		case 400:
-			return nil, NewValidationError(errMsg, resp.StatusCode, errBody, errorCode)
-		case 401:
-			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
-		case 403:
-			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
-		case 404:
-			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
-		case 429:
-			retryAfterSecs := -1
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				retryAfterSecs, _ = strconv.Atoi(ra)
-			}
-			rlErr := NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfterSecs)
-			if attempt < rc.MaxRetries-1 {
-				var wait time.Duration
-				if retryAfterSecs >= 0 {
-					wait = time.Duration(retryAfterSecs) * time.Second
-				} else {
-					wait = c.computeBackoff(attempt)
-				}
-				time.Sleep(wait)
-				lastErr = rlErr
-				continue
-			}
-			return nil, rlErr
-		default:
-			if resp.StatusCode >= 500 {
-				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
-				if attempt < rc.MaxRetries-1 {
-					time.Sleep(c.computeBackoff(attempt))
-					continue
-				}
-				return nil, lastErr
-			}
-			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, Code: errorCode, ResponseBody: errBody}
-		}
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, &DakeraError{Message: "request failed after retries"}
-}
-
-// requestRaw sends an HTTP request with a raw byte body and a custom content type.
-// It reuses the same retry and error-handling logic as request but skips JSON marshaling.
-func (c *Client) requestRaw(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
-	reqURL := c.baseURL + path
-	rc := c.retryConfig
-	var lastErr error
-
-	for attempt := 0; attempt < rc.MaxRetries; attempt++ {
-		var reqBody io.Reader
-		if body != nil {
-			reqBody = bytes.NewReader(body)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("Content-Type", contentType)
-		if c.apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		}
-		for k, v := range c.headers {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
-			}
-			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
-			if attempt < rc.MaxRetries-1 {
-				time.Sleep(c.computeBackoff(attempt))
-				continue
-			}
-			return nil, lastErr
-		}
-		defer resp.Body.Close()
-
-		c.rlMu.Lock()
-		c.lastRateLimitHeaders = parseRateLimitHeaders(resp.Header)
-		c.rlMu.Unlock()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response body: %w", err)
-			continue
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return respBody, nil
-		}
-
-		var errBody struct {
-			Error   string    `json:"error"`
-			Code    ErrorCode `json:"code"`
-			Details string    `json:"details"`
-		}
-		json.Unmarshal(respBody, &errBody)
-		errMsg := errBody.Error
-		if errMsg == "" {
-			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-		errorCode := errBody.Code
-		if errorCode == "" {
-			errorCode = ErrorCodeUnknown
-		}
-
-		switch resp.StatusCode {
-		case 400:
-			return nil, NewValidationError(errMsg, resp.StatusCode, errBody, errorCode)
-		case 401:
-			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
-		case 403:
-			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
-		case 404:
-			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
-		case 429:
-			retryAfterSecs := -1
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				retryAfterSecs, _ = strconv.Atoi(ra)
-			}
-			rlErr := NewRateLimitError("Rate limit exceeded", resp.StatusCode, errBody, errorCode, retryAfterSecs)
-			if attempt < rc.MaxRetries-1 {
-				var wait time.Duration
-				if retryAfterSecs >= 0 {
-					wait = time.Duration(retryAfterSecs) * time.Second
-				} else {
-					wait = c.computeBackoff(attempt)
-				}
-				time.Sleep(wait)
-				lastErr = rlErr
-				continue
-			}
-			return nil, rlErr
-		default:
-			if resp.StatusCode >= 500 {
-				lastErr = NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
-				if attempt < rc.MaxRetries-1 {
-					time.Sleep(c.computeBackoff(attempt))
-					continue
-				}
-				return nil, lastErr
-			}
-			return nil, &DakeraError{Message: errMsg, StatusCode: resp.StatusCode, Code: errorCode, ResponseBody: errBody}
-		}
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, &DakeraError{Message: "request failed after retries"}
 }
 
 // ===========================================================================
@@ -520,34 +372,6 @@ func (c *Client) CountVectors(ctx context.Context, namespace string, filter map[
 	return &resp, nil
 }
 
-// Fetch retrieves vectors by ID from a namespace.
-func (c *Client) Fetch(ctx context.Context, namespace string, ids []string, opts *FetchOptions) ([]Vector, error) {
-	body := map[string]interface{}{
-		"ids": ids,
-	}
-
-	if opts != nil {
-		body["include_values"] = opts.IncludeValues
-		body["include_metadata"] = opts.IncludeMetadata
-	} else {
-		body["include_values"] = true
-		body["include_metadata"] = true
-	}
-
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fetch", namespace), body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Vectors []Vector `json:"vectors"`
-	}
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return resp.Vectors, nil
-}
-
 // BatchQuery executes multiple queries in a single request.
 func (c *Client) BatchQuery(ctx context.Context, namespace string, queries []BatchQuerySpec) ([]SearchResult, error) {
 	reqQueries := make([]map[string]interface{}, len(queries))
@@ -598,6 +422,9 @@ func (c *Client) UpsertText(ctx context.Context, namespace string, documents []T
 	}
 
 	if opts != nil && opts.Model != "" {
+		if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+			return nil, err
+		}
 		body["model"] = opts.Model
 	}
 
@@ -632,6 +459,9 @@ func (c *Client) QueryText(ctx context.Context, namespace string, text string, o
 			body["filter"] = opts.Filter
 		}
 		if opts.Model != "" {
+			if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+				return nil, err
+			}
 			body["model"] = opts.Model
 		}
 	} else {
@@ -668,6 +498,9 @@ func (c *Client) BatchQueryText(ctx context.Context, namespace string, queries [
 			body["filter"] = opts.Filter
 		}
 		if opts.Model != "" {
+			if err := c.preflightCheck(ctx, CapabilityModel, string(opts.Model)); err != nil {
+				return nil, err
+			}
 			body["model"] = opts.Model
 		}
 	} else {
@@ -825,6 +658,9 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 			body["dimension"] = opts.Dimensions
 		}
 		if opts.IndexType != "" {
+			if err := c.preflightCheck(ctx, CapabilityIndexKind, opts.IndexType); err != nil {
+				return nil, err
+			}
 			body["index_type"] = opts.IndexType
 		}
 		if opts.Metadata != nil {
@@ -850,6 +686,11 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string, opts *Cr
 // configuration if it already exists. Dimension changes are rejected by the
 // server to prevent silent data corruption. Requires Write scope.
 func (c *Client) ConfigureNamespace(ctx context.Context, namespace string, req ConfigureNamespaceRequest) (*ConfigureNamespaceResponse, error) {
+	if req.Distance != "" {
+		if err := c.preflightCheck(ctx, CapabilityDistanceMetric, string(req.Distance)); err != nil {
+			return nil, err
+		}
+	}
 	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s", namespace), req)
 	if err != nil {
 		return nil, err
@@ -872,86 +713,176 @@ func (c *Client) DeleteNamespace(ctx context.Context, namespace string) error {
 // Admin Operations
 // ===========================================================================
 
-// Health checks the server health.
+// Health checks the server health — GET /health.
+//
+// A 503 means the server is starting (v0.12 binds its port while models load)
+// or not serving: Health returns it at once as a *ServiceUnavailableError
+// (Starting, Reason and RetryAfter filled in) and does not retry it. Other 5xx
+// answers and connection failures are still retried with backoff. To wait for a
+// starting server use WaitUntilReady.
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
-	respBody, err := c.request(ctx, "GET", "/health", nil)
+	resp, err := c.sendOpts(ctx, "GET", "/health", "application/json", nil, true, true)
 	if err != nil {
+		var serverErr *ServerError
+		if errors.As(err, &serverErr) && serverErr.StatusCode == 503 {
+			unavailable := &ServiceUnavailableError{ServerError: *serverErr}
+			if body, ok := serverErr.ResponseBody.(ErrorBody); ok {
+				unavailable.Reason = body.Reason
+				unavailable.Starting = body.Starting || body.Status == "starting"
+			}
+			return nil, unavailable
+		}
 		return nil, err
 	}
 
-	var resp HealthResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var out HealthResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	return &out, nil
 }
 
-// HealthReady checks K8s readiness probe — storage and dependencies.
+// HealthReady checks the readiness probe, GET /health/ready — storage,
+// embedding engine and dependencies. It makes a single attempt (no retries).
+//
+// A 200 means the server is ready. Anything else is an error: in particular a
+// server that is still starting (v0.12 binds its port while models download)
+// answers 503 with Retry-After, which is returned as a *ServerError (its
+// RetryAfter and ResponseBody.Reason say why) — never as a healthy result. Use
+// IsReady for a boolean and WaitUntilReady to block until ready.
 func (c *Client) HealthReady(ctx context.Context) (*ReadinessResponse, error) {
-	respBody, err := c.request(ctx, "GET", "/health/ready", nil)
+	resp, err := c.send(ctx, "GET", "/health/ready", "application/json", nil, false)
 	if err != nil {
 		return nil, err
 	}
-	var resp ReadinessResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var out ReadinessResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	return &out, nil
 }
 
-// HealthLive checks K8s liveness probe — process is alive.
+// HealthLive checks the liveness probe, GET /health/live — the process is
+// alive (it answers while models are still loading). Single attempt.
 func (c *Client) HealthLive(ctx context.Context) (*LivenessResponse, error) {
-	respBody, err := c.request(ctx, "GET", "/health/live", nil)
+	resp, err := c.send(ctx, "GET", "/health/live", "application/json", nil, false)
 	if err != nil {
 		return nil, err
 	}
-	var resp LivenessResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var out LivenessResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	return &out, nil
 }
 
-// GetIndexStats returns index statistics for a namespace.
+// IsReady reports whether the server's /health/ready answers 200. A 503 (still
+// starting, or storage / embedding unavailable) is (false, nil); connection
+// failures and other errors are returned.
+func (c *Client) IsReady(ctx context.Context) (bool, error) {
+	resp, err := c.HealthReady(ctx)
+	if err != nil {
+		var serverErr *ServerError
+		if errors.As(err, &serverErr) && serverErr.StatusCode == 503 {
+			return false, nil
+		}
+		return false, err
+	}
+	return resp.Ready, nil
+}
+
+// ReadyWaitOptions configures WaitUntilReady.
+type ReadyWaitOptions struct {
+	// Timeout bounds the whole wait; zero waits until ctx is done.
+	Timeout time.Duration
+	// PollInterval is the delay between probes. Zero uses the server's
+	// Retry-After (at most 5s) and otherwise 1s.
+	PollInterval time.Duration
+}
+
+// WaitUntilReady polls GET /health/ready until the server answers 200 and
+// returns that answer. It keeps polling while the server is unreachable or
+// answers 503 (starting); any other error (an unexpected status) ends the wait.
+// On timeout it returns a *TimeoutError naming the last error.
+func (c *Client) WaitUntilReady(ctx context.Context, opts ReadyWaitOptions) (*ReadinessResponse, error) {
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	var last error
+	for {
+		resp, err := c.HealthReady(ctx)
+		if err == nil && resp.Ready {
+			return resp, nil
+		}
+		interval := opts.PollInterval
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, NewTimeoutError(fmt.Sprintf("server not ready: %v (last: %v)", ctx.Err(), last))
+			}
+			last = err
+			var serverErr *ServerError
+			var connErr *ConnectionError
+			switch {
+			case errors.As(err, &serverErr) && serverErr.StatusCode == 503:
+				if interval <= 0 && serverErr.RetryAfter > 0 {
+					interval = time.Duration(serverErr.RetryAfter) * time.Second
+					if interval > 5*time.Second {
+						interval = 5 * time.Second
+					}
+				}
+			case errors.As(err, &connErr):
+			default:
+				return nil, err
+			}
+		} else {
+			last = fmt.Errorf("server reported ready=false")
+		}
+		if interval <= 0 {
+			interval = time.Second
+		}
+		if serr := sleepCtx(ctx, interval); serr != nil {
+			return nil, NewTimeoutError(fmt.Sprintf("server not ready: %v (last: %v)", serr, last))
+		}
+	}
+}
+
+// GetIndexStats returns how searches on a namespace are served (index type,
+// whether it is built, size, indexed vectors). It reads GET /admin/indexes/stats
+// (Admin scope — the server has no per-namespace stats route) and picks the
+// namespace's entry; a namespace the server does not list is a *NotFoundError.
 func (c *Client) GetIndexStats(ctx context.Context, namespace string) (*IndexStats, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/stats", namespace), nil)
+	respBody, err := c.request(ctx, "GET", "/admin/indexes/stats", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp IndexStats
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var wrapper struct {
+		Namespaces map[string]IndexStats `json:"namespaces"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	stats, ok := wrapper.Namespaces[namespace]
+	if !ok {
+		return nil, NewNotFoundError(fmt.Sprintf("namespace '%s' has no index stats", namespace), 404, nil, ErrorCodeNamespaceNotFound)
+	}
+	stats.Namespace = namespace
+	return &stats, nil
 }
 
-// Compact triggers compaction for a namespace.
+// Compact triggers compaction for a namespace — POST /ops/compact with the
+// namespace (Admin scope; there is no per-namespace compact route). The
+// server runs it as a job and answers with its job id and a message, which
+// Status carries. A backend with no on-request compaction answers 501
+// (*NotImplementedError). Use OpsCompact for the job id and force option.
 func (c *Client) Compact(ctx context.Context, namespace string) (*StatusResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/compact", namespace), nil)
+	resp, err := c.OpsCompact(ctx, CompactionRequest{Namespace: namespace})
 	if err != nil {
 		return nil, err
 	}
-
-	var resp StatusResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
-}
-
-// Flush flushes pending writes for a namespace.
-func (c *Client) Flush(ctx context.Context, namespace string) (*StatusResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/flush", namespace), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp StatusResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
+	return &StatusResponse{Status: resp.Message}, nil
 }
 
 // ===========================================================================
@@ -1189,16 +1120,44 @@ func (c *Client) PatchConsolidationConfig(ctx context.Context, agentID string, p
 	return &resp, nil
 }
 
-// MemoryFeedback submits feedback on a memory recall.
+// MemoryFeedback submits feedback on a memory — POST /v1/memory/feedback with
+// {agent_id, memory_id, signal}. req.Feedback is mapped to a signal:
+// "relevant" / "positive" / "upvote" → upvote, "irrelevant" / "negative" /
+// "downvote" → downvote, "flag" → flag; any other value is sent as-is (the
+// server answers 400 for an unknown signal). RelevanceScore is not a server
+// field and is ignored. Prefer FeedbackMemory, which takes a typed signal.
 func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryFeedbackRequest) (*MemoryFeedbackResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/feedback", agentID), req)
+	signal := strings.ToLower(strings.TrimSpace(req.Feedback))
+	switch signal {
+	case "relevant":
+		signal = "upvote"
+	case "irrelevant":
+		signal = "downvote"
+	}
+	body := map[string]interface{}{
+		"agent_id":  agentID,
+		"memory_id": req.MemoryID,
+		"signal":    signal,
+	}
+	respBody, err := c.request(ctx, "POST", "/v1/memory/feedback", body)
 	if err != nil {
 		return nil, err
 	}
 
-	var result MemoryFeedbackResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wire struct {
+		Status            string   `json:"status"`
+		UpdatedImportance *float32 `json:"updated_importance"`
+		NewImportance     *float32 `json:"new_importance"`
+	}
+	if err := json.Unmarshal(respBody, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	result := MemoryFeedbackResponse{Status: wire.Status, UpdatedImportance: wire.UpdatedImportance}
+	if result.UpdatedImportance == nil {
+		result.UpdatedImportance = wire.NewImportance
+	}
+	if result.Status == "" {
+		result.Status = "updated"
 	}
 	return &result, nil
 }
@@ -2061,9 +2020,31 @@ func (c *Client) GetQuotas(ctx context.Context) (map[string]interface{}, error) 
 	return result, nil
 }
 
-// UpdateQuotas updates quota settings.
+// UpdateQuotas updates quota settings — PUT /admin/quotas/{namespace} when
+// quotas names a "namespace", else PUT /admin/quotas/default. The remaining
+// keys are the quota config (max_vectors, max_storage_bytes, max_dimensions,
+// max_metadata_bytes, enforcement); a "config" key is passed through as the
+// config. Admin scope. Prefer AdminSetQuota / AdminSetDefaultQuota, which are
+// typed.
 func (c *Client) UpdateQuotas(ctx context.Context, quotas map[string]interface{}) (map[string]interface{}, error) {
-	data, err := c.request(ctx, "PUT", "/v1/admin/quotas", quotas)
+	path := "/v1/admin/quotas/default"
+	config := map[string]interface{}{}
+	for k, v := range quotas {
+		if k == "namespace" {
+			if ns, ok := v.(string); ok && ns != "" {
+				path = fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(ns))
+				continue
+			}
+		}
+		config[k] = v
+	}
+	var body map[string]interface{}
+	if inner, ok := config["config"]; ok && len(config) == 1 {
+		body = map[string]interface{}{"config": inner}
+	} else {
+		body = map[string]interface{}{"config": config}
+	}
+	data, err := c.request(ctx, "PUT", path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2144,25 +2125,6 @@ func (c *Client) RestoreBackup(ctx context.Context, backupID string) (*StatusRes
 func (c *Client) DeleteBackup(ctx context.Context, backupID string) error {
 	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/backups/%s", url.PathEscape(backupID)), nil)
 	return err
-}
-
-// ConfigureTTL configures TTL for a namespace.
-func (c *Client) ConfigureTTL(ctx context.Context, namespace string, ttlSeconds int, strategy string) (*TtlConfig, error) {
-	body := map[string]interface{}{
-		"ttl_seconds": ttlSeconds,
-	}
-	if strategy != "" {
-		body["strategy"] = strategy
-	}
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/ttl", url.PathEscape(namespace)), body)
-	if err != nil {
-		return nil, err
-	}
-	var result TtlConfig
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ttl config: %w", err)
-	}
-	return &result, nil
 }
 
 // ===========================================================================
@@ -2490,6 +2452,52 @@ func (c *Client) GetNamespaceEntityConfig(ctx context.Context, namespace string)
 	return &resp, nil
 }
 
+// namespaceEntityConfigBody is the PUT body: both fields always present, so an
+// empty entity_types is sent as [] and clears the list.
+func namespaceEntityConfigBody(config NamespaceNerConfig) map[string]interface{} {
+	types := config.EntityTypes
+	if types == nil {
+		types = []string{}
+	}
+	return map[string]interface{}{
+		"extract_entities": config.ExtractEntities,
+		"entity_types":     types,
+	}
+}
+
+// PutNamespaceEntityConfig replaces a namespace's entity-extraction config —
+// PUT /v1/namespaces/{namespace}/config, Write scope, server v0.12+ (a
+// pre-0.12 server answers 405). extract_entities and entity_types are both
+// always sent, so an empty config.EntityTypes clears the list. This is the
+// supported way to clear entity_types; PATCH merges.
+func (c *Client) PutNamespaceEntityConfig(ctx context.Context, namespace string, config NamespaceNerConfig) (*NamespaceEntityConfig, error) {
+	data, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace)), namespaceEntityConfigBody(config))
+	if err != nil {
+		return nil, err
+	}
+	var resp NamespaceEntityConfig
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// PatchNamespaceEntityConfig merges a partial change into a namespace's
+// entity-extraction config — PATCH /v1/namespaces/{namespace}/config, Write
+// scope. Fields left nil are unchanged on server v0.12+ (a v0.11 server
+// replaces the whole config). Unknown fields are refused with a 400.
+func (c *Client) PatchNamespaceEntityConfig(ctx context.Context, namespace string, patch NamespaceEntityConfigPatch) (*NamespaceEntityConfig, error) {
+	data, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace)), patch)
+	if err != nil {
+		return nil, err
+	}
+	var resp NamespaceEntityConfig
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
 // GetNamespaceExtractor gets the extractor provider configuration for a namespace.
 func (c *Client) GetNamespaceExtractor(ctx context.Context, namespace string) (*ExtractorConfigResponse, error) {
 	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/extractor", namespace), nil)
@@ -2503,10 +2511,30 @@ func (c *Client) GetNamespaceExtractor(ctx context.Context, namespace string) (*
 	return &resp, nil
 }
 
-// ConfigureNamespaceNer configures entity extraction for a namespace (CE-4).
-// PATCH /v1/namespaces/{namespace}/config — requires Write scope.
+// ConfigureNamespaceNer configures entity extraction for a namespace (CE-4) —
+// requires Write scope. config is a full configuration: an empty EntityTypes
+// clears the configured list.
+//
+// With entity types it sends PATCH /v1/namespaces/{namespace}/config (which
+// every server version reads the same way). With none it sends PUT, the full
+// replacement: a v0.12 server merges PATCH bodies, so a PATCH that omits
+// entity_types would leave the old list in place (and an omitempty field cannot
+// say "clear"). A pre-0.12 server answers PUT with 405, in which case the call
+// falls back to a PATCH with an explicit empty entity_types.
 func (c *Client) ConfigureNamespaceNer(ctx context.Context, namespace string, config NamespaceNerConfig) (map[string]interface{}, error) {
-	data, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace)), config)
+	path := fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace))
+	var data []byte
+	var err error
+	if len(config.EntityTypes) > 0 {
+		data, err = c.request(ctx, "PATCH", path, config)
+	} else {
+		body := namespaceEntityConfigBody(config)
+		data, err = c.request(ctx, "PUT", path, body)
+		var apiErr *DakeraError
+		if err != nil && errors.As(err, &apiErr) && apiErr.StatusCode == 405 {
+			data, err = c.request(ctx, "PATCH", path, body)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2520,12 +2548,22 @@ func (c *Client) ConfigureNamespaceNer(ctx context.Context, namespace string, co
 // ExtractEntities extracts named entities from arbitrary text using GLiNER (CE-4).
 // POST /v1/memories/extract — requires Read scope.
 // entityTypes may be nil to use the server default types.
+// Use ExtractMemoryEntities to also set the request language (server v0.12+).
 func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) (*EntityExtractionResponse, error) {
+	return c.ExtractMemoryEntities(ctx, ExtractMemoryEntitiesRequest{Content: text, EntityTypes: entityTypes})
+}
+
+// ExtractMemoryEntities is ExtractEntities with the full request body,
+// including the per-request Lang (server v0.12+).
+func (c *Client) ExtractMemoryEntities(ctx context.Context, req ExtractMemoryEntitiesRequest) (*EntityExtractionResponse, error) {
 	body := map[string]interface{}{
-		"content": text,
+		"content": req.Content,
 	}
-	if entityTypes != nil {
-		body["entity_types"] = entityTypes
+	if req.EntityTypes != nil {
+		body["entity_types"] = req.EntityTypes
+	}
+	if req.Lang != "" {
+		body["lang"] = req.Lang
 	}
 	data, err := c.request(ctx, "POST", "/v1/memories/extract", body)
 	if err != nil {
@@ -2695,36 +2733,52 @@ func (c *Client) ListAuditEvents(ctx context.Context, query AuditQuery) (*AuditL
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal audit list response: %w", err)
 	}
+	if result.Total == 0 {
+		result.Total = result.Count
+	}
 	return &result, nil
 }
 
 // ExportAudit bulk-exports audit log entries (OBS-1).
-// POST /v1/audit/export
+// GET /v1/audit/export (Admin scope). format is "json" (default) or "csv".
 // agentID, eventType, fromTs, and toTs are optional (zero/empty = omitted).
+// Data holds the response body as text (the JSON document {"events","count"},
+// or the CSV); Count is the number of events.
 func (c *Client) ExportAudit(ctx context.Context, format string, agentID string, eventType string, fromTs int64, toTs int64) (*AuditExportResponse, error) {
-	body := map[string]interface{}{
-		"format": format,
+	if format == "" {
+		format = "json"
 	}
+	params := url.Values{"format": {format}}
 	if agentID != "" {
-		body["agent_id"] = agentID
+		params.Set("agent_id", agentID)
 	}
 	if eventType != "" {
-		body["event_type"] = eventType
+		params.Set("event_type", eventType)
 	}
 	if fromTs > 0 {
-		body["from"] = fromTs
+		params.Set("from", strconv.FormatInt(fromTs, 10))
 	}
 	if toTs > 0 {
-		body["to"] = toTs
+		params.Set("to", strconv.FormatInt(toTs, 10))
 	}
-	resp, err := c.request(ctx, "POST", "/v1/audit/export", body)
+	resp, err := c.send(ctx, "GET", "/v1/audit/export?"+params.Encode(), "application/json", nil, true)
 	if err != nil {
 		return nil, err
 	}
-	var result AuditExportResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
+	result := AuditExportResponse{Data: string(resp.Body), Format: format}
+	if format == "csv" {
+		if lines := strings.Count(strings.TrimRight(result.Data, "\n"), "\n"); result.Data != "" {
+			result.Count = lines
+		}
+		return &result, nil
+	}
+	var doc struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Body, &doc); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal audit export response: %w", err)
 	}
+	result.Count = doc.Count
 	return &result, nil
 }
 
@@ -2852,29 +2906,6 @@ func (c *Client) ExtractText(ctx context.Context, text string, namespace string,
 		return nil, fmt.Errorf("failed to unmarshal extraction result: %w", err)
 	}
 	return &result, nil
-}
-
-// ListExtractProviders lists available extraction providers (EXT-1).
-// GET /v1/extract/providers
-func (c *Client) ListExtractProviders(ctx context.Context) ([]ExtractionProviderInfo, error) {
-	resp, err := c.request(ctx, "GET", "/v1/extract/providers", nil)
-	if err != nil {
-		return nil, err
-	}
-	// Server may return a top-level array or {"providers": [...]}
-	resp = []byte(strings.TrimSpace(string(resp)))
-	if len(resp) > 0 && resp[0] == '[' {
-		var result []ExtractionProviderInfo
-		if err := json.Unmarshal(resp, &result); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
-		}
-		return result, nil
-	}
-	var wrapper extractProvidersResponse
-	if err := json.Unmarshal(resp, &wrapper); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
-	}
-	return wrapper.Providers, nil
 }
 
 // ConfigureNamespaceExtractor sets the default extraction provider for a namespace (EXT-1).

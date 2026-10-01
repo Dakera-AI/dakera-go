@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-22
+
+### Added
+
+- **Forward-compat contract (R9, DAK-10004)** — the server's registries (models, index kinds,
+  search modes, distance metrics, record representation kinds, block dtypes) grow over time and
+  `GET /v1/capabilities` documents the rule: every field is additive; unknown fields and unknown
+  strings inside lists MUST be ignored; `capabilities_version` bumps only on a breaking reshape.
+  This release makes the SDK honour that rule end to end and moves it to the 0.12 line.
+- **Lenient wire enums** — `EmbeddingModel` and `DistanceMetric` were already string types (a
+  newer server string decodes without error); they gain `IsKnown()` and `Known*` lists. New
+  string types `IndexKind`, `SearchMode`, `RepresentationKind`, `BlockDType` with the same shape.
+  `EmbeddingModelBgeM3`, `IndexKindIvfPq` and `SearchModeRaBitQ` are declared for the strings
+  server v0.12 adds.
+- **`Client.Capabilities(ctx)` / `RefreshCapabilities(ctx)`** — typed `ServerCapabilities` for
+  `GET /v1/capabilities`: models (name, aliases, dimension, context window, active flag, MRL
+  dims), index kinds (all / vector / live), distance metrics, the search mode the server runs and
+  every value it accepts (`SearchModesAccepted` — the prose field parsed, aliases expanded, a JSON
+  list accepted too), `Records` (`SupportsRecords()`, kinds, dtypes, limits), `QueryLanguages`,
+  `ReembedPending`. Cached per client; the verbatim document is kept in `Raw`. Helpers:
+  `FindModel` (name or alias), `ActiveModel`, `ModelNames`, `SupportedValues`, `Supports`,
+  `Require`.
+- **Pre-flight validation** — `UpsertText` / `QueryText` / `BatchQueryText` (model),
+  `CreateNamespace` (index type) and `ConfigureNamespace` (distance metric) check the requested
+  value against cached capabilities *before* sending and return `*UnsupportedCapabilityError`
+  (embeds `ValidationError`; `Kind`, `Requested`, `Supported`, `ServerVersion`; message names what
+  the server accepts). Runs whenever `Capabilities` has been called; `ClientOptions{Preflight:
+  true}` fetches lazily on first use and degrades silently on a pre-0.12 server (404).
+  `Client.RequireSupported(ctx, kind, value)` exposes the same check for `CapabilitySearchMode`
+  and `CapabilityQueryLanguage`.
+
+- **Server v0.12.0 support** — compatible with v0.11.108 and v0.12.0 servers (new fields are
+  omitted unless set; v0.12-only routes answer `404` / `501` on older servers). See the server's
+  `docs/v0.12/UPGRADE.md`.
+- **Readiness** — `HealthReady` / `HealthLive` make a single attempt and report a `503` (a server
+  that is still loading models) as a `*ServerError`, never as healthy. New `IsReady(ctx)` and
+  `WaitUntilReady(ctx, ReadyWaitOptions)`. `ReadinessResponse` documents the starting state.
+- **`Retry-After`** is honoured on `429` and `503` (capped at `RetryConfig.MaxDelay`); the retry
+  sleep honours context cancellation; `ServerError.RetryAfter` exposes the header.
+- **Error mapping** — every v0.12 error body is JSON: `ErrorBody`, `DakeraError.Details` and
+  `.Resource`, new error codes (`FEATURE_DISABLED`, `PAYLOAD_TOO_LARGE`, `NOT_IMPLEMENTED`,
+  `CONFLICT`, `JOB_NOT_FOUND`, ...). New types `PayloadTooLargeError` (`413`; `IsQuota()`
+  separates a full namespace from an oversize request), `FeatureDisabledError` and
+  `NotImplementedError` (`501`, never retried), `ConflictError` (`409`), with `Is*` helpers.
+- **Attachments** — `UploadAttachment`, `ListAttachments`, `DownloadAttachment`,
+  `DeleteAttachment`, `TranscribeAttachment`, `GetTranscriptionJob`, `WaitForTranscription`,
+  `IndexAttachmentImage`, `GetImageIndexJob`, `WaitForImageIndex`, `AgentMemoryNamespace`;
+  `AttachmentRef` on `StoreMemoryRequest`, `BatchStoreMemoryItem`, `Memory` and `RecalledMemory`;
+  `JobInfo.Error` (`JobError`).
+- **Records** — `UpsertRecords` and `GetRecord` with named representations (`RecordInput`,
+  `RepresentationInput`, `RecordView`, `RepresentationInfo`).
+- **Per-request `Lang`** on `StoreMemoryRequest`, `BatchStoreMemoryRequest`, `UpdateMemoryRequest`,
+  `RecallRequest`, `SearchMemoriesRequest` and the new `ExtractMemoryEntities`.
+- **Capabilities** — `Scoring`, `Attachments`, `Vision`, `UnreadableRecords`;
+  `SupportsAttachments()` / `SupportsVision()`; `EmbeddingModelColbertSmall`.
+- **Namespace entity config** — `PutNamespaceEntityConfig` (PUT) and
+  `PatchNamespaceEntityConfig` (merge, `NamespaceEntityConfigPatch`).
+
+### Changed
+
+- `Version` constant 0.11.107 → 0.12.0 (SDK line now tracks server v0.12).
+- Requests made with `requestRaw` (backup upload) now carry the `User-Agent` header too.
+
+### Fixed
+
+- **Clearing a namespace's `entity_types` (TRACKER K34)** — `ConfigureNamespaceNer` omitted an
+  empty `entity_types`, which a v0.12 PATCH treats as "unchanged". An empty list now goes out with
+  `PUT /v1/namespaces/{ns}/config` (falling back to PATCH with an explicit `[]` on a v0.11 server,
+  which answers PUT with `405`).
+- **`UpsertResponse.UpsertedCount` / `DeleteResponse.DeletedCount` were always `0` against a real
+  server**: they read `upsertedCount` / `deletedCount`, the server sends `upserted_count` /
+  `deleted_count`. Both spellings now decode.
+- `501` answers are no longer retried as generic server errors.
+- **Response field names the server never sent** — the server is snake_case throughout; these
+  structs read camelCase and so decoded zero values. Both spellings now decode:
+  `IndexDocumentsResponse.IndexedCount` (`indexed_count`), `NamespaceInfo.IndexType`
+  (`index_type`; new `EstimatedStorageBytes`), `HybridSearchResult.VectorScore` / `TextScore`
+  (`vector_score`, `text_score`; `vector` fills `Values`), `QueryResult.Values` (`vector`),
+  `SearchResult` (new `SearchTimeMs`, `NextCursor`, `HasMore`) and `IndexStats` (`index_type`,
+  `is_built`, `size_bytes`, `indexed_vectors`, `last_rebuild`).
+- **`GetIndexStats` called a route that does not exist** (`GET /v1/namespaces/{ns}/stats`, a
+  404 on every server version). It now reads `GET /admin/indexes/stats` (Admin scope) and returns
+  the namespace's entry.
+- **Endpoint sweep against the v0.12.0 router** (`crates/api/src/lib.rs`; `/v1/admin/*` is an
+  alias of `/admin/*`). Of the ~170 method+path pairs the SDK calls, these were absent from the
+  server (v0.12.0 and v0.11.108) and always answered 404/405; everything else matched:
+  - `UpdateQuotas` called `PUT /v1/admin/quotas` → now `PUT /admin/quotas/{namespace}` (when the
+    map has a `namespace` key) or `PUT /admin/quotas/default`, body `{"config": {...}}`.
+  - `Compact` called `POST /v1/namespaces/{ns}/compact` → now `POST /ops/compact`
+    (a backend without on-request compaction answers 501, `*NotImplementedError`).
+  - `MemoryFeedback` called `POST /v1/agents/{id}/memories/feedback` → now
+    `POST /v1/memory/feedback` `{agent_id, memory_id, signal}`.
+  - `ExportAudit` sent `POST /v1/audit/export` (the route is `GET`, query parameters); `Data` now
+    holds the JSON or CSV body.
+  - Removed, with no server route to call: `Fetch` (`/v1/namespaces/{ns}/fetch`), `Flush`
+    (`.../flush`), `ConfigureTTL` (`/v1/admin/namespaces/{ns}/ttl`) and `ListExtractProviders`
+    (`/v1/extract/providers`). They never worked on any server release.
+  - `AuditEvent.ID` could not decode the server's integer ids (a JSON number into a string field
+    failed the whole response); it now decodes both and gains `MemoryID`, `SessionID`,
+    `Importance`; `AuditListResponse.Count`.
+- **`Health()` no longer retries a 503**: a starting server answers `/health` with 503 and
+  `Retry-After`; `Health` returns it at once as `*ServiceUnavailableError` (`Starting`, `Reason`,
+  `RetryAfter`). Other 5xx answers are still retried. Use `WaitUntilReady` to wait.
+- README: the retry-config example used fields that do not exist.
+
 ## [0.11.106] - 2026-08-29
 
 ### Changed
