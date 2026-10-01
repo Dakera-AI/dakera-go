@@ -13,7 +13,7 @@
   <a href="https://pkg.go.dev/github.com/Dakera-AI/dakera-go"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/Dakera-AI/dakera-go.svg" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/Dakera-AI/dakera-go" /></a>
   <a href="https://dakera.ai/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-dakera.ai%2Fdocs-3b82f6?style=flat-square" /></a>
-  <a href="https://dakera.ai/benchmark"><img alt="LoCoMo 89.5%" src="https://img.shields.io/badge/LoCoMo-89.5%25-22c55e?style=flat-square" /></a>
+  <a href="https://dakera.ai/benchmark"><img alt="LoCoMo 88.2%" src="https://img.shields.io/badge/LoCoMo-88.2%25-22c55e?style=flat-square" /></a>
   <a href="https://dakera.ai/playground"><img alt="Playground" src="https://img.shields.io/badge/playground-try_it-ff6b35?style=flat-square" /></a>
 </p>
 
@@ -23,7 +23,7 @@
 
 | | Dakera | Others |
 |---|---|---|
-| **LoCoMo** | **89.5%** on 1,540 questions (Dakera v0.12.0, recall-only, no LLM judge; a question counts when its gold evidence is retrieved by the production top-10 recall or the benchmark's additional deep-probe passes). On the stricter single-ranking metric comparable to the LoCoMo paper: R@1 48.2%, R@5 63.4%, R@10 67.7%, R@20 84.7% — [definition and raw data](https://dakera.ai/benchmark) | not directly comparable |
+| **LoCoMo Recall@20** | **88.2%** (1,536 Q, LLM-judged retrieval recall) | not directly comparable |
 | **Deployment** | Single binary, Docker one-liner | External vector DB + embedding service required |
 | **Embeddings** | Built-in — no OpenAI key needed | Requires external embedding API |
 | **Search modes** | Vector · BM25 · Hybrid · Knowledge Graph | Usually one or two |
