@@ -80,6 +80,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server**: they read `upsertedCount` / `deletedCount`, the server sends `upserted_count` /
   `deleted_count`. Both spellings now decode.
 - `501` answers are no longer retried as generic server errors.
+- **Response field names the server never sent** — the server is snake_case throughout; these
+  structs read camelCase and so decoded zero values. Both spellings now decode:
+  `IndexDocumentsResponse.IndexedCount` (`indexed_count`), `NamespaceInfo.IndexType`
+  (`index_type`; new `EstimatedStorageBytes`), `HybridSearchResult.VectorScore` / `TextScore`
+  (`vector_score`, `text_score`; `vector` fills `Values`), `QueryResult.Values` (`vector`),
+  `SearchResult` (new `SearchTimeMs`, `NextCursor`, `HasMore`) and `IndexStats` (`index_type`,
+  `is_built`, `size_bytes`, `indexed_vectors`, `last_rebuild`).
+- **`GetIndexStats` called a route that does not exist** (`GET /v1/namespaces/{ns}/stats`, a
+  404 on every server version). It now reads `GET /admin/indexes/stats` (Admin scope) and returns
+  the namespace's entry.
+- **`Health()` no longer retries a 503**: a starting server answers `/health` with 503 and
+  `Retry-After`; `Health` returns it at once as `*ServiceUnavailableError` (`Starting`, `Reason`,
+  `RetryAfter`). Other 5xx answers are still retried. Use `WaitUntilReady` to wait.
 - README: the retry-config example used fields that do not exist.
 
 ## [0.11.106] - 2026-08-29

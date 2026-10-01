@@ -28,10 +28,34 @@ type QueryResult struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// UnmarshalJSON fills Values from the server's "vector" field (what the
+// server sends when include_values is set) as well as the legacy "values".
+func (q *QueryResult) UnmarshalJSON(data []byte) error {
+	type plain QueryResult
+	aux := struct {
+		*plain
+		Vector []float32 `json:"vector"`
+	}{plain: (*plain)(q)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.Vector) > 0 {
+		q.Values = aux.Vector
+	}
+	return nil
+}
+
 // SearchResult represents the result of a vector query.
 type SearchResult struct {
-	Results       []QueryResult `json:"results"`
-	TotalSearched int           `json:"totalSearched,omitempty"`
+	Results []QueryResult `json:"results"`
+	// TotalSearched is a legacy field the server does not send.
+	TotalSearched int `json:"totalSearched,omitempty"`
+	// SearchTimeMs is the server-side search time in milliseconds.
+	SearchTimeMs uint64 `json:"search_time_ms,omitempty"`
+	// NextCursor is the cursor for the next page, when there is one.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// HasMore reports whether more results are available.
+	HasMore *bool `json:"has_more,omitempty"`
 }
 
 // NamespaceInfo represents information about a namespace.
@@ -44,9 +68,33 @@ type NamespaceInfo struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt   *time.Time             `json:"createdAt,omitempty"`
 	UpdatedAt   *time.Time             `json:"updatedAt,omitempty"`
+	// EstimatedStorageBytes is the estimated storage size (vector data + overhead).
+	EstimatedStorageBytes uint64 `json:"estimated_storage_bytes,omitempty"`
 }
 
-// IndexStats represents statistics about an index.
+// UnmarshalJSON reads the server's snake_case "index_type" as well as the
+// legacy camelCase "indexType".
+func (n *NamespaceInfo) UnmarshalJSON(data []byte) error {
+	type plain NamespaceInfo
+	aux := struct {
+		*plain
+		IndexTypeSnake string `json:"index_type"`
+	}{plain: (*plain)(n)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.IndexTypeSnake != "" {
+		n.IndexType = aux.IndexTypeSnake
+	}
+	return nil
+}
+
+// IndexStats represents how searches on a namespace are served.
+//
+// The server's per-namespace index statistics are {index_type, is_built,
+// size_bytes, indexed_vectors, last_rebuild}; both those snake_case names and
+// the legacy camelCase ones (indexType, sizeBytes, indexedCount, ...) decode.
+// IndexedCount mirrors IndexedVectors.
 type IndexStats struct {
 	Namespace    string  `json:"namespace"`
 	VectorCount  int64   `json:"vectorCount"`
@@ -55,6 +103,42 @@ type IndexStats struct {
 	IndexType    string  `json:"indexType"`
 	SizeBytes    int64   `json:"sizeBytes,omitempty"`
 	Utilization  float64 `json:"utilization,omitempty"`
+	// IsBuilt reports that the search structure is ready (always true for "flat").
+	IsBuilt bool `json:"is_built"`
+	// IndexedVectors is the number of vectors the search structure covers.
+	IndexedVectors int64 `json:"indexed_vectors"`
+	// LastRebuild is the Unix time (seconds) the cached ANN index was built.
+	LastRebuild *uint64 `json:"last_rebuild,omitempty"`
+}
+
+// UnmarshalJSON accepts the server's snake_case fields and the legacy camelCase ones.
+func (s *IndexStats) UnmarshalJSON(data []byte) error {
+	type plain IndexStats
+	aux := struct {
+		*plain
+		IndexTypeSnake  string `json:"index_type"`
+		SizeBytesSnake  *int64 `json:"size_bytes"`
+		VectorCountSnake *int64 `json:"vector_count"`
+	}{plain: (*plain)(s)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.IndexTypeSnake != "" {
+		s.IndexType = aux.IndexTypeSnake
+	}
+	if aux.SizeBytesSnake != nil {
+		s.SizeBytes = *aux.SizeBytesSnake
+	}
+	if aux.VectorCountSnake!= nil {
+		s.VectorCount = *aux.VectorCountSnake
+	}
+	if s.IndexedVectors == 0 && s.IndexedCount != 0 {
+		s.IndexedVectors = s.IndexedCount
+	}
+	if s.IndexedCount == 0 && s.IndexedVectors != 0 {
+		s.IndexedCount = s.IndexedVectors
+	}
+	return nil
 }
 
 // Document represents a document for full-text indexing.
@@ -88,6 +172,31 @@ type HybridSearchResult struct {
 	Values      []float32              `json:"values,omitempty"`
 	Content     string                 `json:"content,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// UnmarshalJSON reads the server's snake_case "vector_score", "text_score" and
+// "vector" fields as well as the legacy camelCase / "values" spellings.
+func (h *HybridSearchResult) UnmarshalJSON(data []byte) error {
+	type plain HybridSearchResult
+	aux := struct {
+		*plain
+		VectorScoreSnake *float32  `json:"vector_score"`
+		TextScoreSnake   *float32  `json:"text_score"`
+		Vector           []float32 `json:"vector"`
+	}{plain: (*plain)(h)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.VectorScoreSnake != nil {
+		h.VectorScore = *aux.VectorScoreSnake
+	}
+	if aux.TextScoreSnake != nil {
+		h.TextScore = *aux.TextScoreSnake
+	}
+	if len(aux.Vector) > 0 {
+		h.Values = aux.Vector
+	}
+	return nil
 }
 
 // HealthResponse represents the server health check response.
@@ -154,8 +263,30 @@ func (r *DeleteResponse) UnmarshalJSON(data []byte) error {
 }
 
 // IndexDocumentsResponse represents the response from indexing documents.
+//
+// The server answers {"indexed_count": N}; the legacy "indexedCount" also decodes.
 type IndexDocumentsResponse struct {
 	IndexedCount int `json:"indexedCount"`
+}
+
+// UnmarshalJSON accepts the server's snake_case field and the legacy camelCase one.
+func (r *IndexDocumentsResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Snake *int `json:"indexed_count"`
+		Camel *int `json:"indexedCount"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	switch {
+	case wire.Snake != nil:
+		r.IndexedCount = *wire.Snake
+	case wire.Camel != nil:
+		r.IndexedCount = *wire.Camel
+	default:
+		r.IndexedCount = 0
+	}
+	return nil
 }
 
 // StatusResponse represents a generic status response.

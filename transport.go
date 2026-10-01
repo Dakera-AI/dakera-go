@@ -27,6 +27,10 @@ type ErrorBody struct {
 	Resource string `json:"resource"`
 	// Reason is set by a starting server's /health and /health/ready 503 bodies.
 	Reason string `json:"reason"`
+	// Starting and Status are set by a starting server's /health 503 body
+	// ({"status":"starting",...}) and /health/ready 503 body ({"starting":true,...}).
+	Starting bool   `json:"starting"`
+	Status   string `json:"status"`
 }
 
 // apiResponse is a successful (2xx) answer.
@@ -160,6 +164,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // failures, 429, 503 (honouring Retry-After) and other 5xx answers up to
 // RetryConfig.MaxRetries attempts; without it exactly one attempt is made.
 func (c *Client) send(ctx context.Context, method, path, contentType string, payload []byte, retry bool) (*apiResponse, error) {
+	return c.sendOpts(ctx, method, path, contentType, payload, retry, false)
+}
+
+// sendOpts is send with finalOn503: a 503 is returned at once instead of being
+// retried (a health probe's 503 is its answer, not a transient failure).
+func (c *Client) sendOpts(ctx context.Context, method, path, contentType string, payload []byte, retry, finalOn503 bool) (*apiResponse, error) {
 	reqURL := c.baseURL + path
 	attempts := c.retryConfig.MaxRetries
 	if !retry || attempts < 1 {
@@ -221,6 +231,9 @@ func (c *Client) send(ctx context.Context, method, path, contentType string, pay
 
 		failure := newAPIError(resp.StatusCode, resp.Header, respBody)
 		retryable, wait := c.retryPlan(resp.StatusCode, resp.Header, attempt)
+		if finalOn503 && resp.StatusCode == 503 {
+			retryable = false
+		}
 		if !retryable || attempt >= attempts-1 {
 			return nil, failure
 		}

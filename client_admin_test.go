@@ -60,23 +60,38 @@ func TestHealthLive(t *testing.T) {
 func TestGetIndexStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/stats", r.URL.Path)
+		assert.Equal(t, "/admin/indexes/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"namespace":    "test-ns",
-			"vectorCount":  5000,
-			"indexedCount": 4900,
-			"dimensions":   384,
-			"indexType":    "hnsw",
-			"sizeBytes":    1048576,
+			"namespaces": map[string]interface{}{
+				"test-ns": map[string]interface{}{
+					"index_type":      "hnsw",
+					"is_built":        true,
+					"size_bytes":      1048576,
+					"indexed_vectors": 4900,
+					"last_rebuild":    1700000000,
+				},
+			},
+			"total_indexed_vectors": 4900,
+			"total_size_bytes":      1048576,
 		})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
 	result, err := client.GetIndexStats(context.Background(), "test-ns")
 	require.NoError(t, err)
-	assert.Equal(t, int64(5000), result.VectorCount)
-	assert.Equal(t, 384, result.Dimensions)
+	assert.Equal(t, "test-ns", result.Namespace)
+	assert.Equal(t, "hnsw", result.IndexType)
+	assert.True(t, result.IsBuilt)
+	assert.Equal(t, int64(1048576), result.SizeBytes)
+	assert.Equal(t, int64(4900), result.IndexedVectors)
+	assert.Equal(t, int64(4900), result.IndexedCount)
+	require.NotNil(t, result.LastRebuild)
+	assert.Equal(t, uint64(1700000000), *result.LastRebuild)
+
+	_, err = client.GetIndexStats(context.Background(), "missing")
+	require.Error(t, err)
+	assert.True(t, IsNotFoundError(err))
 }
 
 // ===========================================================================

@@ -291,6 +291,38 @@ func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("TimeoutError: %s", e.Message)
 }
 
+// ServiceUnavailableError is what Client.Health returns for a 503: the server
+// answered but is not serving yet. Starting is true while it loads models (v0.12
+// binds its port first); Reason says what it is waiting for. It embeds
+// ServerError, so errors.As to *ServerError also matches, and RetryAfter carries
+// the Retry-After header. Health makes no retry loop for it: poll with
+// Client.WaitUntilReady.
+type ServiceUnavailableError struct {
+	ServerError
+	// Starting reports that the server is still starting up.
+	Starting bool
+	// Reason is the server's explanation, when it gave one.
+	Reason string
+}
+
+func (e *ServiceUnavailableError) Error() string {
+	if e.Starting {
+		return fmt.Sprintf("ServiceUnavailableError: server is starting: %s (retry after %d seconds)", e.Message, e.RetryAfter)
+	}
+	return fmt.Sprintf("ServiceUnavailableError: %s", e.Message)
+}
+
+// Unwrap lets errors.As find the embedded *ServerError.
+func (e *ServiceUnavailableError) Unwrap() error {
+	return &e.ServerError
+}
+
+// IsServiceUnavailableError checks if an error is (or wraps) a ServiceUnavailableError.
+func IsServiceUnavailableError(err error) bool {
+	var target *ServiceUnavailableError
+	return errors.As(err, &target)
+}
+
 // ConflictError is raised on a 409: the request conflicts with the server's
 // current state (for example deleting an attachment a memory still references).
 type ConflictError struct {

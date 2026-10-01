@@ -7,6 +7,7 @@ package dakera
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -935,4 +936,137 @@ func TestV012_UpsertAndDeleteCountsDecodeSnakeCase(t *testing.T) {
 
 func TestV012_AgentMemoryNamespace(t *testing.T) {
 	assert.Equal(t, "_dakera_agent_my-agent", AgentMemoryNamespace("my-agent"))
+}
+
+// ---------------------------------------------------------------------------
+// Health(): a 503 is "starting", not a transient failure
+// ---------------------------------------------------------------------------
+
+func TestV012_HealthStartingIs503ServiceUnavailableWithoutRetry(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		assert.Equal(t, "/health", r.URL.Path)
+		w.Header().Set("Retry-After", "5")
+		v12JSON(w, 503, map[string]interface{}{"service": "dakera", "status": "starting", "version": "0.12.0", "reason": "loading models", "downloads": []string{}})
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	resp, err := v12Client(server.URL).Health(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Less(t, time.Since(start), 2*time.Second) // no 5s Retry-After sleep
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
+
+	assert.True(t, IsServiceUnavailableError(err))
+	var unavailable *ServiceUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.True(t, unavailable.Starting)
+	assert.Equal(t, "loading models", unavailable.Reason)
+	assert.Equal(t, 503, unavailable.StatusCode)
+	assert.Equal(t, 5, unavailable.RetryAfter)
+	assert.Contains(t, err.Error(), "starting")
+	// still matches the generic server error
+	var serverErr *ServerError
+	assert.True(t, errors.As(err, &serverErr))
+}
+
+func TestV012_HealthOther5xxIsStillRetried(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 3 {
+			v12JSON(w, 500, map[string]interface{}{"error": "boom"})
+			return
+		}
+		v12JSON(w, 200, map[string]interface{}{"status": "healthy", "version": "0.12.0"})
+	}))
+	defer server.Close()
+
+	resp, err := v12Client(server.URL).Health(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "healthy", resp.Status)
+	assert.Equal(t, int32(3), atomic.LoadInt32(&calls))
+}
+
+// ---------------------------------------------------------------------------
+// Response field names: the server is snake_case; legacy camelCase still decodes
+// ---------------------------------------------------------------------------
+
+func TestV012_QueryResponseDecodesServerFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v12JSON(w, 200, map[string]interface{}{
+			"results":        []map[string]interface{}{{"id": "v1", "score": 0.9, "vector": []float32{0.5, 0.25}, "metadata": map[string]interface{}{"k": "v"}}},
+			"next_cursor":    "abc",
+			"has_more":       true,
+			"search_time_ms": 4,
+		})
+	}))
+	defer server.Close()
+
+	resp, err := v12Client(server.URL).Query(context.Background(), "ns", []float32{1}, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, []float32{0.5, 0.25}, resp.Results[0].Values)
+	assert.Equal(t, "v", resp.Results[0].Metadata["k"])
+	assert.Equal(t, uint64(4), resp.SearchTimeMs)
+	assert.Equal(t, "abc", resp.NextCursor)
+	require.NotNil(t, resp.HasMore)
+	assert.True(t, *resp.HasMore)
+
+	var legacy QueryResult
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"v1","score":0.5,"values":[1,2]}`), &legacy))
+	assert.Equal(t, []float32{1, 2}, legacy.Values)
+}
+
+func TestV012_NamespaceInfoDecodesIndexType(t *testing.T) {
+	var info NamespaceInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"namespace":"ns","vector_count":7,"dimension":4,"distance":"cosine","index_type":"flat","estimated_storage_bytes":2048}`), &info))
+	assert.Equal(t, "ns", info.Name)
+	assert.Equal(t, int64(7), info.VectorCount)
+	assert.Equal(t, "flat", info.IndexType)
+	assert.Equal(t, uint64(2048), info.EstimatedStorageBytes)
+
+	var legacy NamespaceInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"namespace":"ns","vector_count":7,"indexType":"hnsw"}`), &legacy))
+	assert.Equal(t, "hnsw", legacy.IndexType)
+}
+
+func TestV012_IndexStatsDecodesBothSpellings(t *testing.T) {
+	var snake IndexStats
+	require.NoError(t, json.Unmarshal([]byte(`{"index_type":"ivf","is_built":false,"size_bytes":100,"indexed_vectors":0}`), &snake))
+	assert.Equal(t, "ivf", snake.IndexType)
+	assert.False(t, snake.IsBuilt)
+	assert.Equal(t, int64(100), snake.SizeBytes)
+	assert.Nil(t, snake.LastRebuild)
+
+	var camel IndexStats
+	require.NoError(t, json.Unmarshal([]byte(`{"namespace":"n","vectorCount":9,"indexedCount":8,"dimensions":3,"indexType":"hnsw","sizeBytes":64}`), &camel))
+	assert.Equal(t, "hnsw", camel.IndexType)
+	assert.Equal(t, int64(64), camel.SizeBytes)
+	assert.Equal(t, int64(9), camel.VectorCount)
+	assert.Equal(t, int64(8), camel.IndexedCount)
+	assert.Equal(t, int64(8), camel.IndexedVectors)
+}
+
+func TestV012_HybridSearchResultDecodesBothSpellings(t *testing.T) {
+	var snake HybridSearchResult
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"a","score":0.9,"vector_score":0.8,"text_score":0.7,"vector":[1,2],"metadata":{"k":1}}`), &snake))
+	assert.Equal(t, float32(0.8), snake.VectorScore)
+	assert.Equal(t, float32(0.7), snake.TextScore)
+	assert.Equal(t, []float32{1, 2}, snake.Values)
+
+	var camel HybridSearchResult
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"a","score":0.9,"vectorScore":0.6,"textScore":0.5}`), &camel))
+	assert.Equal(t, float32(0.6), camel.VectorScore)
+	assert.Equal(t, float32(0.5), camel.TextScore)
+}
+
+func TestV012_IndexDocumentsResponseDecodesBothSpellings(t *testing.T) {
+	var snake IndexDocumentsResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"indexed_count":3}`), &snake))
+	assert.Equal(t, 3, snake.IndexedCount)
+	var camel IndexDocumentsResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"indexedCount":4}`), &camel))
+	assert.Equal(t, 4, camel.IndexedCount)
 }

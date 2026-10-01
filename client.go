@@ -741,18 +741,33 @@ func (c *Client) DeleteNamespace(ctx context.Context, namespace string) error {
 // Admin Operations
 // ===========================================================================
 
-// Health checks the server health.
+// Health checks the server health — GET /health.
+//
+// A 503 means the server is starting (v0.12 binds its port while models load)
+// or not serving: Health returns it at once as a *ServiceUnavailableError
+// (Starting, Reason and RetryAfter filled in) and does not retry it. Other 5xx
+// answers and connection failures are still retried with backoff. To wait for a
+// starting server use WaitUntilReady.
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
-	respBody, err := c.request(ctx, "GET", "/health", nil)
+	resp, err := c.sendOpts(ctx, "GET", "/health", "application/json", nil, true, true)
 	if err != nil {
+		var serverErr *ServerError
+		if errors.As(err, &serverErr) && serverErr.StatusCode == 503 {
+			unavailable := &ServiceUnavailableError{ServerError: *serverErr}
+			if body, ok := serverErr.ResponseBody.(ErrorBody); ok {
+				unavailable.Reason = body.Reason
+				unavailable.Starting = body.Starting || body.Status == "starting"
+			}
+			return nil, unavailable
+		}
 		return nil, err
 	}
 
-	var resp HealthResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var out HealthResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	return &out, nil
 }
 
 // HealthReady checks the readiness probe, GET /health/ready — storage,
@@ -861,18 +876,28 @@ func (c *Client) WaitUntilReady(ctx context.Context, opts ReadyWaitOptions) (*Re
 	}
 }
 
-// GetIndexStats returns index statistics for a namespace.
+// GetIndexStats returns how searches on a namespace are served (index type,
+// whether it is built, size, indexed vectors). It reads GET /admin/indexes/stats
+// (Admin scope — the server has no per-namespace stats route) and picks the
+// namespace's entry; a namespace the server does not list is a *NotFoundError.
 func (c *Client) GetIndexStats(ctx context.Context, namespace string) (*IndexStats, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/stats", namespace), nil)
+	respBody, err := c.request(ctx, "GET", "/admin/indexes/stats", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp IndexStats
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var wrapper struct {
+		Namespaces map[string]IndexStats `json:"namespaces"`
+	}
+	if err := json.Unmarshal(respBody, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &resp, nil
+	stats, ok := wrapper.Namespaces[namespace]
+	if !ok {
+		return nil, NewNotFoundError(fmt.Sprintf("namespace '%s' has no index stats", namespace), 404, nil, ErrorCodeNamespaceNotFound)
+	}
+	stats.Namespace = namespace
+	return &stats, nil
 }
 
 // Compact triggers compaction for a namespace.
