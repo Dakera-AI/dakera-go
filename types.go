@@ -1,7 +1,10 @@
 // Package dakera provides a Go client for Dakera AI memory platform.
 package dakera
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Vector represents a stored vector with its metadata.
 type Vector struct {
@@ -96,13 +99,58 @@ type HealthResponse struct {
 }
 
 // UpsertResponse represents the response from an upsert operation.
+//
+// The server answers {"upserted_count": N}. Earlier SDK versions read
+// "upsertedCount" and so reported 0 against a real server; both spellings decode.
 type UpsertResponse struct {
 	UpsertedCount int `json:"upsertedCount"`
 }
 
+// UnmarshalJSON accepts the server's snake_case field and the legacy camelCase one.
+func (r *UpsertResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Snake *int `json:"upserted_count"`
+		Camel *int `json:"upsertedCount"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	switch {
+	case wire.Snake != nil:
+		r.UpsertedCount = *wire.Snake
+	case wire.Camel != nil:
+		r.UpsertedCount = *wire.Camel
+	default:
+		r.UpsertedCount = 0
+	}
+	return nil
+}
+
 // DeleteResponse represents the response from a delete operation.
+//
+// The server answers {"deleted_count": N}; the legacy "deletedCount" also decodes.
 type DeleteResponse struct {
 	DeletedCount int `json:"deletedCount"`
+}
+
+// UnmarshalJSON accepts the server's snake_case field and the legacy camelCase one.
+func (r *DeleteResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Snake *int `json:"deleted_count"`
+		Camel *int `json:"deletedCount"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	switch {
+	case wire.Snake != nil:
+		r.DeletedCount = *wire.Snake
+	case wire.Camel != nil:
+		r.DeletedCount = *wire.Camel
+	default:
+		r.DeletedCount = 0
+	}
+	return nil
 }
 
 // IndexDocumentsResponse represents the response from indexing documents.
@@ -432,6 +480,8 @@ const (
 	EmbeddingModelGteModernBertBase EmbeddingModel = "gte-modernbert-base"
 	// EmbeddingModelBgeM3 is the BGE-M3 multilingual model - 1024 dimensions, 8192-token window (server v0.12+).
 	EmbeddingModelBgeM3 EmbeddingModel = "bge-m3"
+	// EmbeddingModelColbertSmall is the ColBERT-small late-interaction model - 96-d token vectors (server v0.12+, opt-in with DAKERA_MODEL and DAKERA_SCORING_STRATEGY=late-interaction).
+	EmbeddingModelColbertSmall EmbeddingModel = "colbert-small"
 )
 
 // KnownEmbeddingModels lists the models this SDK version declares. The list the
@@ -446,6 +496,7 @@ var KnownEmbeddingModels = []EmbeddingModel{
 	EmbeddingModelModernBertEmbedBase,
 	EmbeddingModelGteModernBertBase,
 	EmbeddingModelBgeM3,
+	EmbeddingModelColbertSmall,
 }
 
 // IsKnown reports whether this SDK version declares the model (R9 forward-compat).
@@ -546,6 +597,22 @@ type StoreMemoryRequest struct {
 	// memory becomes temporally valid. Defaults to ingest time when omitted.
 	// Used by temporal recall queries (server v0.11.98+, DAK-7424).
 	ValidFrom *int64 `json:"valid_from,omitempty"`
+	// ID is an optional custom memory id (generated when empty).
+	ID string `json:"id,omitempty"`
+	// Lang is the language of Content (server v0.12+): an ISO 639-1 code with a
+	// built-in pattern set (en, de, fr, es, it, pt, nl), its English or native
+	// name, optionally with a region ("pt-BR"). It selects how dates and
+	// rule-based entities are parsed at write time and is recorded on the memory
+	// (_dakera_lang). Empty uses the server-wide default (DAKERA_QUERY_LANG); an
+	// unsupported value is a 400. List the accepted codes with
+	// ServerCapabilities.QueryLanguages. Omitted from the wire when empty, so
+	// v0.11 servers never see it.
+	Lang string `json:"lang,omitempty"`
+	// AttachmentRef references an attachment ("sha256:<hex>") already uploaded
+	// to this agent's memory namespace (see AgentMemoryNamespace and
+	// UploadAttachment). Server v0.12+ with DAKERA_ATTACHMENTS; an unknown
+	// reference is a 404.
+	AttachmentRef string `json:"attachment_ref,omitempty"`
 }
 
 // StoreMemoryResponse represents the response from storing a memory.
@@ -570,6 +637,8 @@ type Memory struct {
 	CreatedAt      int64                  `json:"created_at,omitempty"`
 	LastAccessedAt int64                  `json:"last_accessed_at,omitempty"`
 	AccessCount    *int                   `json:"access_count,omitempty"`
+	// AttachmentRef is the attachment ("sha256:<hex>") the memory points at (server v0.12+).
+	AttachmentRef string `json:"attachment_ref,omitempty"`
 }
 
 // RecalledMemory represents a recalled memory with similarity score.
@@ -593,6 +662,8 @@ type RecalledMemory struct {
 	Tags          []string               `json:"tags,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt     int64                  `json:"created_at,omitempty"`
+	// AttachmentRef is the attachment ("sha256:<hex>") the memory points at (server v0.12+).
+	AttachmentRef string `json:"attachment_ref,omitempty"`
 	// KG-3: hop depth at which this memory was found (only set on associated memories)
 	Depth *int `json:"depth,omitempty"`
 }
@@ -663,6 +734,11 @@ type RecallRequest struct {
 	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
 	// Set to pointer-to-false to disable on latency-sensitive paths.
 	Neighborhood *bool `json:"neighborhood,omitempty"`
+	// Lang is the language of Query (server v0.12+); it selects the temporal
+	// expressions and routing patterns that classify the query. It does not
+	// translate or filter anything. Empty uses the server default; an
+	// unsupported value is a 400.
+	Lang string `json:"lang,omitempty"`
 }
 
 // RecallResponse is the response from the recall endpoint.
@@ -678,6 +754,9 @@ type UpdateMemoryRequest struct {
 	Content    *string                `json:"content,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	MemoryType *string                `json:"memory_type,omitempty"`
+	// Lang is the language of Content (server v0.12+). When it differs from the
+	// language recorded on the memory the text-derived data is re-derived.
+	Lang string `json:"lang,omitempty"`
 }
 
 // SearchMemoriesRequest represents a request to search memories.
@@ -692,6 +771,8 @@ type SearchMemoriesRequest struct {
 	// CE-13: cross-encoder reranking. nil uses server default (false for search).
 	// Set to pointer-to-true to enable reranking on search queries.
 	Rerank *bool `json:"rerank,omitempty"`
+	// Lang is the language of Query (server v0.12+), as on RecallRequest.
+	Lang string `json:"lang,omitempty"`
 }
 
 // UpdateImportanceRequest represents a request to update memory importance.
@@ -1583,6 +1664,9 @@ type BatchStoreMemoryItem struct {
 	ExpiresAt *int64 `json:"expires_at,omitempty"`
 	// ID is an optional custom ID. Auto-generated if not provided.
 	ID string `json:"id,omitempty"`
+	// AttachmentRef references an attachment ("sha256:<hex>") uploaded to this
+	// agent's memory namespace (server v0.12+, DAKERA_ATTACHMENTS).
+	AttachmentRef string `json:"attachment_ref,omitempty"`
 }
 
 // BatchStoreMemoryRequest is the request body for POST /v1/memories/store/batch (DAK-5508).
@@ -1595,6 +1679,9 @@ type BatchStoreMemoryRequest struct {
 	AgentID string `json:"agent_id"`
 	// Memories are the memories to store (1–1000 items).
 	Memories []BatchStoreMemoryItem `json:"memories"`
+	// Lang is the language of the batch (server v0.12+); request-level, it
+	// applies to every item. See StoreMemoryRequest.Lang.
+	Lang string `json:"lang,omitempty"`
 }
 
 // BatchStoredMemory is a single stored memory returned in a BatchStoreMemoryResponse.
@@ -1735,9 +1822,35 @@ type GraphOptions struct {
 // ===========================================================================
 
 // NamespaceNerConfig holds entity extraction configuration for a namespace (CE-4).
+//
+// It is a full configuration: ExtractEntities is required and an empty or nil
+// EntityTypes means "no GLiNER types". Client.ConfigureNamespaceNer and
+// Client.PutNamespaceEntityConfig therefore send it with PUT
+// /v1/namespaces/{ns}/config when EntityTypes is empty, because PATCH merges on
+// a v0.12 server and an omitted entity_types leaves the configured list alone.
 type NamespaceNerConfig struct {
 	ExtractEntities bool     `json:"extract_entities"`
 	EntityTypes     []string `json:"entity_types,omitempty"`
+}
+
+// NamespaceEntityConfigPatch is a partial entity-extraction update for
+// Client.PatchNamespaceEntityConfig (PATCH /v1/namespaces/{ns}/config, merge
+// semantics on server v0.12+). A nil field is left unchanged; a non-nil
+// EntityTypes pointing at an empty slice clears the list.
+type NamespaceEntityConfigPatch struct {
+	ExtractEntities *bool     `json:"extract_entities,omitempty"`
+	EntityTypes     *[]string `json:"entity_types,omitempty"`
+}
+
+// ExtractMemoryEntitiesRequest is the body of POST /v1/memories/extract.
+type ExtractMemoryEntitiesRequest struct {
+	// Content is the text to extract entities from.
+	Content string `json:"content"`
+	// EntityTypes are the GLiNER labels; nil runs the rule-based pre-pass only
+	// (or the server default types, depending on the server version).
+	EntityTypes []string `json:"entity_types,omitempty"`
+	// Lang is the language of Content for the rule-based rules (server v0.12+).
+	Lang string `json:"lang,omitempty"`
 }
 
 // ExtractedEntity is a single entity extracted by GLiNER or the rule-based pipeline.
@@ -2428,6 +2541,11 @@ type FulltextReindexResponse struct {
 // ===========================================================================
 
 // ReadinessResponse is returned by GET /health/ready.
+//
+// A server that is still loading models answers 503 with ready=false (and
+// starting=true, a reason and the model downloads in progress); the client
+// reports that as an error — see Client.HealthReady, Client.IsReady and
+// Client.WaitUntilReady.
 type ReadinessResponse struct {
 	Ready   bool                               `json:"ready"`
 	Version string                             `json:"version"`
@@ -2772,6 +2890,17 @@ type JobInfo struct {
 	Progress    uint8             `json:"progress"`
 	Message     string            `json:"message,omitempty"`
 	Metadata    map[string]string `json:"metadata"`
+	// Error says why a Failed job failed (server v0.12+): the HTTP status and
+	// error code the same work would have answered synchronously.
+	Error *JobError `json:"error,omitempty"`
+}
+
+// JobError is the status and code of a failed background job.
+type JobError struct {
+	// Status is the HTTP status the synchronous request would have answered.
+	Status int `json:"status"`
+	// Code is its error code (INVALID_REQUEST, SERVICE_UNAVAILABLE, INTERNAL_ERROR, ...).
+	Code ErrorCode `json:"code"`
 }
 
 // CompactionRequest is the request body for POST /ops/compact.

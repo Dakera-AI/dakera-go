@@ -177,6 +177,73 @@ type RecordCapabilities struct {
 	MaxBytes            int                  `json:"max_bytes"`
 }
 
+// LateInteractionCapability is what the late-interaction lane does when the
+// scoring strategy selects it (capabilities.scoring.late_interaction).
+type LateInteractionCapability struct {
+	Enabled bool `json:"enabled"`
+	// ModelSupported reports whether the active model has a late-interaction recipe.
+	ModelSupported bool `json:"model_supported"`
+	// Lane is "text" or "visual".
+	Lane      string `json:"lane"`
+	TokenSlot string `json:"token_slot"`
+	FdeSlot   string `json:"fde_slot"`
+	FdeKSim   int    `json:"fde_k_sim"`
+	FdeDProj  int    `json:"fde_d_proj"`
+	FdeReps   int    `json:"fde_reps"`
+	FdeDim    int    `json:"fde_dim"`
+	// Candidates is the first-stage shortlist size.
+	Candidates int `json:"candidates"`
+}
+
+// ScoringCapability is the scoring axis (capabilities.scoring): process-wide,
+// set with DAKERA_SCORING_STRATEGY.
+type ScoringCapability struct {
+	// Strategy is "single-vector" unless the server runs late interaction.
+	Strategy string `json:"strategy"`
+	// StrategiesAccepted is prose, like SearchModesAccepted.
+	StrategiesAccepted AcceptedValues            `json:"strategies_accepted"`
+	LateInteraction    LateInteractionCapability `json:"late_interaction"`
+}
+
+// TranscriptionCapability is the speech-to-text surface (capabilities.attachments.transcription).
+type TranscriptionCapability struct {
+	// Model is the wire name of the model a transcription runs.
+	Model  string   `json:"model"`
+	Models []string `json:"models"`
+	// MediaTypes the transcriber decodes (WAV today).
+	MediaTypes []string `json:"media_types"`
+	// Languages the configured model transcribes (ISO 639-1).
+	Languages    []string `json:"languages"`
+	SampleRateHz int      `json:"sample_rate_hz"`
+}
+
+// AttachmentCapabilities is the attachment lane (capabilities.attachments).
+type AttachmentCapabilities struct {
+	// Enabled reports whether the attachment routes answer (DAKERA_ATTACHMENTS);
+	// when false they return 501 FEATURE_DISABLED.
+	Enabled bool `json:"enabled"`
+	// MaxBytes is the largest upload; over it the server answers 413.
+	MaxBytes      int                     `json:"max_bytes"`
+	Transcription TranscriptionCapability `json:"transcription"`
+}
+
+// VisionCapabilities is the visual late-interaction lane (capabilities.vision).
+type VisionCapabilities struct {
+	// Enabled reports whether image indexing answers (DAKERA_VISION).
+	Enabled    bool     `json:"enabled"`
+	Model      string   `json:"model"`
+	Models     []string `json:"models"`
+	MediaTypes []string `json:"media_types"`
+	// Dimension is the width of one patch vector.
+	Dimension    int    `json:"dimension"`
+	PatchSlot    string `json:"patch_slot"`
+	PatchFdeSlot string `json:"patch_fde_slot"`
+	TileSize     int    `json:"tile_size"`
+	LongestEdge  int    `json:"longest_edge"`
+	ImageSeqLen  int    `json:"image_seq_len"`
+	MaxTiles     int    `json:"max_tiles"`
+}
+
 // AcceptedValues is a list of accepted wire strings that the server may emit
 // either as prose ("hybrid, binary, float, scalar (alias sq), rabitq") or as a
 // JSON list. Aliases in the prose form are expanded ("scalar (alias sq)" yields
@@ -244,7 +311,16 @@ type ServerCapabilities struct {
 	FulltextLanguage    string             `json:"fulltext_language"`
 	OnDiskFormatVersion int                `json:"on_disk_format_version"`
 	Records             RecordCapabilities `json:"records"`
-	QueryLanguages      []string           `json:"query_languages"`
+	// Scoring is the scoring strategy and late-interaction lane (server v0.12+).
+	Scoring ScoringCapability `json:"scoring"`
+	// Attachments is the attachment / transcription surface (server v0.12+).
+	Attachments AttachmentCapabilities `json:"attachments"`
+	// Vision is the visual late-interaction surface (server v0.12+).
+	Vision VisionCapabilities `json:"vision"`
+	// QueryLanguages lists the ISO 639-1 codes the per-request lang field accepts.
+	QueryLanguages []string `json:"query_languages"`
+	// UnreadableRecords counts records this node skipped because a newer Dakera wrote them.
+	UnreadableRecords uint64 `json:"unreadable_records"`
 	// ReembedPending reports that a model change was acknowledged but the store
 	// is not fully re-embedded yet (recall mixes two embedding spaces).
 	ReembedPending bool `json:"reembed_pending"`
@@ -293,6 +369,16 @@ func (c *ServerCapabilities) ModelNames() []string {
 		names = append(names, string(m.Name))
 	}
 	return names
+}
+
+// SupportsAttachments reports whether the attachment routes are switched on (attachments.enabled).
+func (c *ServerCapabilities) SupportsAttachments() bool {
+	return c.Attachments.Enabled
+}
+
+// SupportsVision reports whether image indexing is switched on (vision.enabled).
+func (c *ServerCapabilities) SupportsVision() bool {
+	return c.Vision.Enabled
 }
 
 // SupportsRecords reports whether the record routes are switched on (records.enabled).

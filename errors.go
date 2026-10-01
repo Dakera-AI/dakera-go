@@ -1,6 +1,7 @@
 package dakera
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -24,6 +25,40 @@ const (
 	ErrorCodeInsufficientScope      ErrorCode = "INSUFFICIENT_SCOPE"
 	ErrorCodeNamespaceAccessDenied  ErrorCode = "NAMESPACE_ACCESS_DENIED"
 	ErrorCodeUnknown                ErrorCode = "UNKNOWN"
+
+	// Codes added by server v0.12.0 (every error body is JSON there).
+
+	// ErrorCodeConflict is a 409: the request conflicts with the server's state
+	// (for example deleting an attachment a memory still references).
+	ErrorCodeConflict ErrorCode = "CONFLICT"
+	// ErrorCodePayloadTooLarge is a 413 where the REQUEST is over a configured
+	// limit (attachment size, record size). A namespace that is full answers
+	// 413 with ErrorCodeQuotaExceeded instead.
+	ErrorCodePayloadTooLarge ErrorCode = "PAYLOAD_TOO_LARGE"
+	// ErrorCodeNotImplemented is a 501: the configured backend cannot do this.
+	ErrorCodeNotImplemented ErrorCode = "NOT_IMPLEMENTED"
+	// ErrorCodeFeatureDisabled is a 501: the route exists but its feature flag
+	// is off (Details names the environment variable that turns it on).
+	ErrorCodeFeatureDisabled ErrorCode = "FEATURE_DISABLED"
+	// ErrorCodeRateLimitExceeded is a 429.
+	ErrorCodeRateLimitExceeded ErrorCode = "RATE_LIMIT_EXCEEDED"
+	// ErrorCodeQueryTimeout is a 504: a query ran past query_timeout_ms.
+	ErrorCodeQueryTimeout ErrorCode = "QUERY_TIMEOUT"
+	// ErrorCodeRequestTimeout is a 408: the request did not complete within DAKERA_REQUEST_TIMEOUT.
+	ErrorCodeRequestTimeout ErrorCode = "REQUEST_TIMEOUT"
+	// ErrorCodeRouteNotFound is a 404 for a path no route matches.
+	ErrorCodeRouteNotFound ErrorCode = "ROUTE_NOT_FOUND"
+	// ErrorCodeMethodNotAllowed is a 405.
+	ErrorCodeMethodNotAllowed ErrorCode = "METHOD_NOT_ALLOWED"
+	// ErrorCodeUnsupportedMediaType is a 415.
+	ErrorCodeUnsupportedMediaType ErrorCode = "UNSUPPORTED_MEDIA_TYPE"
+	// ErrorCodeApiKeyNotFound is a 404 for an unknown API key id.
+	ErrorCodeApiKeyNotFound ErrorCode = "API_KEY_NOT_FOUND"
+	// ErrorCodeJobNotFound is a 404 for an unknown job id (jobs live in memory:
+	// after a server restart the id is unknown; look up the memory the job stored).
+	ErrorCodeJobNotFound ErrorCode = "JOB_NOT_FOUND"
+	// ErrorCodeCrossOriginRequestRefused is a 403 for a state-changing request from another origin.
+	ErrorCodeCrossOriginRequestRefused ErrorCode = "CROSS_ORIGIN_REQUEST_REFUSED"
 )
 
 // DakeraError is the base error type for all Dakera errors.
@@ -32,6 +67,11 @@ type DakeraError struct {
 	StatusCode   int
 	Code         ErrorCode
 	ResponseBody interface{}
+	// Details is the server's "details" field, when it sent one.
+	Details string
+	// Resource is what a 404 did not find ("namespace", "memory", "job",
+	// "attachment", ...). Server v0.12+; empty otherwise.
+	Resource string
 }
 
 func (e *DakeraError) Error() string {
@@ -174,6 +214,10 @@ func (e *RateLimitError) Error() string {
 // ServerError is raised when the server returns a 5xx error.
 type ServerError struct {
 	DakeraError
+	// RetryAfter is the Retry-After header in seconds, or -1 when absent. Every
+	// 503 of a v0.12 server carries one; the client already honours it when it
+	// retries.
+	RetryAfter int
 }
 
 func NewServerError(message string, statusCode int, body interface{}, code ErrorCode) *ServerError {
@@ -184,6 +228,7 @@ func NewServerError(message string, statusCode int, body interface{}, code Error
 			Code:         code,
 			ResponseBody: body,
 		},
+		RetryAfter: -1,
 	}
 }
 
@@ -244,6 +289,97 @@ func NewTimeoutError(message string) *TimeoutError {
 
 func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("TimeoutError: %s", e.Message)
+}
+
+// ConflictError is raised on a 409: the request conflicts with the server's
+// current state (for example deleting an attachment a memory still references).
+type ConflictError struct {
+	DakeraError
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("ConflictError: %s", e.Message)
+}
+
+// PayloadTooLargeError is raised on a 413. Two different things answer 413:
+// a namespace over its hard quota (Code QUOTA_EXCEEDED, see IsQuota) and a
+// request over a configured size limit (Code PAYLOAD_TOO_LARGE: an attachment
+// over DAKERA_ATTACHMENT_MAX_BYTES, a record over the record limits). Neither
+// is retried.
+type PayloadTooLargeError struct {
+	DakeraError
+}
+
+// IsQuota reports whether the 413 is a namespace quota (as opposed to an
+// oversize request).
+func (e *PayloadTooLargeError) IsQuota() bool {
+	return e.Code == ErrorCodeQuotaExceeded
+}
+
+func (e *PayloadTooLargeError) Error() string {
+	if e.IsQuota() {
+		return fmt.Sprintf("QuotaExceededError: %s", e.Message)
+	}
+	return fmt.Sprintf("PayloadTooLargeError: %s", e.Message)
+}
+
+// FeatureDisabledError is raised on a 501 FEATURE_DISABLED: the route exists
+// but the server was started without the feature (attachments, records,
+// vision). Details names the environment variable that turns it on. Check
+// Capabilities() first to avoid the round trip.
+type FeatureDisabledError struct {
+	DakeraError
+}
+
+func (e *FeatureDisabledError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("FeatureDisabledError: %s (%s)", e.Message, e.Details)
+	}
+	return fmt.Sprintf("FeatureDisabledError: %s", e.Message)
+}
+
+// NotImplementedError is raised on any other 501: the configured backend
+// cannot perform the operation. Details says what configuration would.
+type NotImplementedError struct {
+	DakeraError
+}
+
+func (e *NotImplementedError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("NotImplementedError: %s (%s)", e.Message, e.Details)
+	}
+	return fmt.Sprintf("NotImplementedError: %s", e.Message)
+}
+
+// IsConflictError checks if an error is (or wraps) a ConflictError.
+func IsConflictError(err error) bool {
+	var target *ConflictError
+	return errors.As(err, &target)
+}
+
+// IsPayloadTooLargeError checks if an error is (or wraps) a 413 of either
+// kind (quota or oversize request).
+func IsPayloadTooLargeError(err error) bool {
+	var target *PayloadTooLargeError
+	return errors.As(err, &target)
+}
+
+// IsQuotaExceededError checks if an error is a 413 caused by a namespace quota.
+func IsQuotaExceededError(err error) bool {
+	var target *PayloadTooLargeError
+	return errors.As(err, &target) && target.IsQuota()
+}
+
+// IsFeatureDisabledError checks if an error is a 501 FEATURE_DISABLED.
+func IsFeatureDisabledError(err error) bool {
+	var target *FeatureDisabledError
+	return errors.As(err, &target)
+}
+
+// IsNotImplementedError checks if an error is a 501 that is not FEATURE_DISABLED.
+func IsNotImplementedError(err error) bool {
+	var target *NotImplementedError
+	return errors.As(err, &target)
 }
 
 // IsNotFoundError checks if an error is a NotFoundError.

@@ -38,9 +38,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Client.RequireSupported(ctx, kind, value)` exposes the same check for `CapabilitySearchMode`
   and `CapabilityQueryLanguage`.
 
+- **Server v0.12.0 support** — compatible with v0.11.108 and v0.12.0 servers (new fields are
+  omitted unless set; v0.12-only routes answer `404` / `501` on older servers). See the server's
+  `docs/v0.12/UPGRADE.md`.
+- **Readiness** — `HealthReady` / `HealthLive` make a single attempt and report a `503` (a server
+  that is still loading models) as a `*ServerError`, never as healthy. New `IsReady(ctx)` and
+  `WaitUntilReady(ctx, ReadyWaitOptions)`. `ReadinessResponse` documents the starting state.
+- **`Retry-After`** is honoured on `429` and `503` (capped at `RetryConfig.MaxDelay`); the retry
+  sleep honours context cancellation; `ServerError.RetryAfter` exposes the header.
+- **Error mapping** — every v0.12 error body is JSON: `ErrorBody`, `DakeraError.Details` and
+  `.Resource`, new error codes (`FEATURE_DISABLED`, `PAYLOAD_TOO_LARGE`, `NOT_IMPLEMENTED`,
+  `CONFLICT`, `JOB_NOT_FOUND`, ...). New types `PayloadTooLargeError` (`413`; `IsQuota()`
+  separates a full namespace from an oversize request), `FeatureDisabledError` and
+  `NotImplementedError` (`501`, never retried), `ConflictError` (`409`), with `Is*` helpers.
+- **Attachments** — `UploadAttachment`, `ListAttachments`, `DownloadAttachment`,
+  `DeleteAttachment`, `TranscribeAttachment`, `GetTranscriptionJob`, `WaitForTranscription`,
+  `IndexAttachmentImage`, `GetImageIndexJob`, `WaitForImageIndex`, `AgentMemoryNamespace`;
+  `AttachmentRef` on `StoreMemoryRequest`, `BatchStoreMemoryItem`, `Memory` and `RecalledMemory`;
+  `JobInfo.Error` (`JobError`).
+- **Records** — `UpsertRecords` and `GetRecord` with named representations (`RecordInput`,
+  `RepresentationInput`, `RecordView`, `RepresentationInfo`).
+- **Per-request `Lang`** on `StoreMemoryRequest`, `BatchStoreMemoryRequest`, `UpdateMemoryRequest`,
+  `RecallRequest`, `SearchMemoriesRequest` and the new `ExtractMemoryEntities`.
+- **Capabilities** — `Scoring`, `Attachments`, `Vision`, `UnreadableRecords`;
+  `SupportsAttachments()` / `SupportsVision()`; `EmbeddingModelColbertSmall`.
+- **Namespace entity config** — `PutNamespaceEntityConfig` (PUT) and
+  `PatchNamespaceEntityConfig` (merge, `NamespaceEntityConfigPatch`).
+
 ### Changed
 
 - `Version` constant 0.11.107 → 0.12.0 (SDK line now tracks server v0.12).
+- Requests made with `requestRaw` (backup upload) now carry the `User-Agent` header too.
+
+### Fixed
+
+- **Clearing a namespace's `entity_types` (TRACKER K34)** — `ConfigureNamespaceNer` omitted an
+  empty `entity_types`, which a v0.12 PATCH treats as "unchanged". An empty list now goes out with
+  `PUT /v1/namespaces/{ns}/config` (falling back to PATCH with an explicit `[]` on a v0.11 server,
+  which answers PUT with `405`).
+- **`UpsertResponse.UpsertedCount` / `DeleteResponse.DeletedCount` were always `0` against a real
+  server**: they read `upsertedCount` / `deletedCount`, the server sends `upserted_count` /
+  `deleted_count`. Both spellings now decode.
+- `501` answers are no longer retried as generic server errors.
+- README: the retry-config example used fields that do not exist.
 
 ## [0.11.106] - 2026-08-29
 

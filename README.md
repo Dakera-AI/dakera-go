@@ -189,9 +189,63 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 client := dakera.NewClientWithOptions(dakera.ClientOptions{
     BaseURL:     "http://localhost:3000",
     APIKey:      "your-key",
-    RetryConfig: &dakera.RetryConfig{MaxRetries: 5, BaseDelayMs: 200},
+    RetryBackoff: &dakera.RetryConfig{MaxRetries: 5, BaseDelay: 200 * time.Millisecond, MaxDelay: 30 * time.Second, Jitter: true},
 })
 ```
+
+---
+
+## What's new in v0.12.0
+
+SDK v0.12.0 targets **Dakera server v0.12.0** and is **compatible with both v0.11.108 and
+v0.12.0 servers**: every new request field is omitted from the wire unless you set it, and the
+new routes only exist on a v0.12 server (see the table below). Operator guide for the server
+side: [docs/v0.12/UPGRADE.md](https://github.com/Dakera-AI/dakera/blob/main/docs/v0.12/UPGRADE.md)
+and the [release notes](https://github.com/Dakera-AI/dakera/blob/main/docs/v0.12/RELEASE_NOTES.md).
+
+| Feature | API | Needs |
+|---|---|---|
+| What the server supports | `client.Capabilities(ctx)` — models, index kinds, `rabitq`, records, attachments, vision, scoring, `QueryLanguages` | v0.12 (404 on v0.11) |
+| Readiness | `HealthReady`, `IsReady`, `WaitUntilReady` (a `503` is "not ready", never healthy) | any |
+| `Retry-After` | honoured on `429` and `503` (capped at `RetryConfig.MaxDelay`); `ServerError.RetryAfter` | any |
+| Errors | `PayloadTooLargeError` (`IsQuota()` tells a full namespace from an oversize request), `FeatureDisabledError` / `NotImplementedError` (`501`), `ConflictError` (`409`); `DakeraError.Details` / `.Resource` | any |
+| Attachments | `UploadAttachment`, `ListAttachments`, `DownloadAttachment`, `DeleteAttachment`, `StoreMemoryRequest.AttachmentRef` | `DAKERA_ATTACHMENTS` |
+| Transcription / image index jobs | `TranscribeAttachment`, `IndexAttachmentImage`, `Get*Job`, `WaitFor*` | `DAKERA_ATTACHMENTS` (+ `DAKERA_VISION`) |
+| Records | `UpsertRecords`, `GetRecord` — one vector plus named representations (`dense`, `token_multivector`, `patch_multivector`; `f32`/`f16`/`i8`) | `DAKERA_RECORDS` |
+| Per-request language | `Lang` on store, batch store, update, recall, search and `ExtractMemoryEntities` | v0.12 |
+| New values | models `bge-m3`, `colbert-small`; index kind `ivfpq`; search mode `rabitq` (server-wide, `DAKERA_SEARCH_MODE`) | v0.12 |
+| Clearing entity types | `PutNamespaceEntityConfig` (PUT) and `PatchNamespaceEntityConfig` (merge); `ConfigureNamespaceNer` clears with PUT | v0.12 for PUT |
+
+```go
+// Wait for a starting server, then check what it can do.
+if _, err := client.WaitUntilReady(ctx, dakera.ReadyWaitOptions{Timeout: 2 * time.Minute}); err != nil {
+    log.Fatal(err)
+}
+caps, _ := client.Capabilities(ctx)
+if caps.SupportsAttachments() {
+    up, _ := client.UploadAttachment(ctx, dakera.AgentMemoryNamespace("my-agent"), wavBytes, "audio/wav")
+    job, _ := client.TranscribeAttachment(ctx, dakera.AgentMemoryNamespace("my-agent"), up.AttachmentRef,
+        dakera.TranscribeRequest{AgentID: "my-agent", Lang: "en"})
+    _, err = client.WaitForTranscription(ctx, dakera.AgentMemoryNamespace("my-agent"), up.AttachmentRef, job.JobID,
+        dakera.JobWaitOptions{Timeout: 5 * time.Minute})
+}
+```
+
+Things to know when upgrading a server:
+
+- **Health checks**: v0.12 binds its port while models load. `/health` answers `503` with
+  `Retry-After` until then; use `/health/ready` (`HealthReady` / `WaitUntilReady`).
+- **Clearing `entity_types`**: on a v0.12 server `PATCH /v1/namespaces/{ns}/config` merges and an
+  empty list is omitted from JSON, so a PATCH cannot clear it. Use `PutNamespaceEntityConfig`
+  (or `ConfigureNamespaceNer` with no entity types, which uses PUT and falls back to PATCH on a
+  v0.11 server).
+- **Errors are JSON everywhere**; every `503` carries `Retry-After`; over-size bodies are `413`;
+  configuration errors are `501`.
+- `UpsertResponse` / `DeleteResponse` now decode the server's real `upserted_count` /
+  `deleted_count` fields (earlier versions read camelCase names the server never sent and so
+  reported `0`).
+- The Go SDK does not use gRPC; gRPC clients written against v0.12 must send the API key in call
+  metadata (`x-api-key` or `authorization: Bearer`).
 
 ---
 
