@@ -2297,23 +2297,54 @@ type MemoryExportResponse struct {
 // ===========================================================================
 
 // AuditEvent is a single business-event entry from the audit log (OBS-1).
+//
+// The server's rows are {id (integer), event_type, agent_id, memory_id,
+// session_id, importance, timestamp (Unix milliseconds)}. ID carries the
+// integer as text; a string id decodes too.
 type AuditEvent struct {
 	ID        string                 `json:"id"`
 	EventType string                 `json:"event_type"`
 	AgentID   string                 `json:"agent_id,omitempty"`
+	MemoryID  string                 `json:"memory_id,omitempty"`
+	SessionID string                 `json:"session_id,omitempty"`
+	Importance *float32              `json:"importance,omitempty"`
 	Namespace string                 `json:"namespace,omitempty"`
 	Timestamp int64                  `json:"timestamp"`
 	Details   map[string]interface{} `json:"details,omitempty"`
 }
 
+// UnmarshalJSON accepts the server's integer id as well as a string id.
+func (e *AuditEvent) UnmarshalJSON(data []byte) error {
+	type plain AuditEvent
+	aux := struct {
+		*plain
+		ID json.RawMessage `json:"id"`
+	}{plain: (*plain)(e)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	e.ID = ""
+	if len(aux.ID) > 0 && string(aux.ID) != "null" {
+		var asString string
+		if err := json.Unmarshal(aux.ID, &asString); err == nil {
+			e.ID = asString
+		} else {
+			e.ID = string(aux.ID)
+		}
+	}
+	return nil
+}
+
 // AuditListResponse is returned by GET /v1/audit (OBS-1).
 type AuditListResponse struct {
 	Events []AuditEvent `json:"events"`
+	// Count is the number of events returned (the server's field); Total mirrors it.
+	Count  int          `json:"count"`
 	Total  int          `json:"total"`
 	Cursor string       `json:"cursor,omitempty"`
 }
 
-// AuditExportResponse is returned by POST /v1/audit/export (OBS-1).
+// AuditExportResponse is returned by ExportAudit (GET /v1/audit/export, OBS-1).
 type AuditExportResponse struct {
 	Data   string `json:"data"`
 	Format string `json:"format"`

@@ -1070,3 +1070,103 @@ func TestV012_IndexDocumentsResponseDecodesBothSpellings(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"indexedCount":4}`), &camel))
 	assert.Equal(t, 4, camel.IndexedCount)
 }
+
+// ---------------------------------------------------------------------------
+// Route sweep fixes (calls to routes the server does not serve)
+// ---------------------------------------------------------------------------
+
+func TestV012_ExportAuditCSV(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "csv", r.URL.Query().Get("format"))
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		_, _ = w.Write([]byte("id,event_type,agent_id,memory_id,session_id,importance,timestamp\n1,memory_stored,a,m1,,0.5,1700000000000\n2,memory_recalled,a,m1,,,1700000000001\n"))
+	}))
+	defer server.Close()
+
+	result, err := v12Client(server.URL).ExportAudit(context.Background(), "csv", "", "", 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "csv", result.Format)
+	assert.Equal(t, 2, result.Count)
+	assert.True(t, strings.HasPrefix(result.Data, "id,event_type"))
+}
+
+func TestV012_AuditEventDecodesIntegerID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/audit", r.URL.Path)
+		v12JSON(w, 200, map[string]interface{}{
+			"events": []map[string]interface{}{
+				{"id": 42, "event_type": "memory_stored", "agent_id": "a1", "memory_id": "m1", "session_id": "s1", "importance": 0.5, "timestamp": 1700000000000},
+				{"id": "legacy-id", "event_type": "memory_recalled", "agent_id": "a1", "timestamp": 1},
+			},
+			"count": 2,
+		})
+	}))
+	defer server.Close()
+
+	resp, err := v12Client(server.URL).ListAuditEvents(context.Background(), AuditQuery{})
+	require.NoError(t, err)
+	require.Len(t, resp.Events, 2)
+	assert.Equal(t, "42", resp.Events[0].ID)
+	assert.Equal(t, "m1", resp.Events[0].MemoryID)
+	assert.Equal(t, "s1", resp.Events[0].SessionID)
+	require.NotNil(t, resp.Events[0].Importance)
+	assert.Equal(t, int64(1700000000000), resp.Events[0].Timestamp)
+	assert.Equal(t, "legacy-id", resp.Events[1].ID)
+	assert.Equal(t, 2, resp.Count)
+	assert.Equal(t, 2, resp.Total)
+}
+
+func TestV012_CompactNotImplementedBackendIs501(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v12JSON(w, 501, map[string]interface{}{"error": "The configured storage backend has no on-request compaction", "code": "NOT_IMPLEMENTED", "details": "use DAKERA_STORAGE=segmented"})
+	}))
+	defer server.Close()
+
+	_, err := v12Client(server.URL).Compact(context.Background(), "ns")
+	require.Error(t, err)
+	assert.True(t, IsNotImplementedError(err))
+}
+
+func TestV012_MemoryFeedbackMapsSignals(t *testing.T) {
+	var signals []interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		signals = append(signals, body["signal"])
+		v12JSON(w, 200, map[string]interface{}{"memory_id": "m", "new_importance": 0.1, "signal": body["signal"]})
+	}))
+	defer server.Close()
+	client := v12Client(server.URL)
+
+	for _, fb := range []string{"relevant", "irrelevant", "flag", "Downvote"} {
+		_, err := client.MemoryFeedback(context.Background(), "a", MemoryFeedbackRequest{MemoryID: "m", Feedback: fb})
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []interface{}{"upvote", "downvote", "flag", "downvote"}, signals)
+}
+
+// Every route the SDK calls must exist on the v0.12.0 server (router in
+// crates/api/src/lib.rs; /v1/admin/* is an alias of /admin/*). These paths were
+// called by earlier versions and are absent from every server release.
+func TestV012_NoCallsToRoutesTheServerDoesNotServe(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		v12JSON(w, 200, map[string]interface{}{"job_id": "j", "message": "m", "success": true, "memory_id": "m", "new_importance": 0.5, "events": []interface{}{}, "count": 0})
+	}))
+	defer server.Close()
+	client := v12Client(server.URL)
+	ctx := context.Background()
+
+	_, _ = client.Compact(ctx, "ns")
+	_, _ = client.UpdateQuotas(ctx, map[string]interface{}{"max_vectors": 1})
+	_, _ = client.MemoryFeedback(ctx, "a", MemoryFeedbackRequest{MemoryID: "m", Feedback: "flag"})
+	_, _ = client.ExportAudit(ctx, "json", "", "", 0, 0)
+
+	assert.Equal(t, []string{
+		"POST /ops/compact",
+		"PUT /v1/admin/quotas/default",
+		"POST /v1/memory/feedback",
+		"GET /v1/audit/export",
+	}, paths)
+}

@@ -290,27 +290,30 @@ func TestPatchConsolidationConfig(t *testing.T) {
 }
 
 func TestMemoryFeedback(t *testing.T) {
+	var body map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/agents/agent-1/memories/feedback", r.URL.Path)
+		assert.Equal(t, "/v1/memory/feedback", r.URL.Path)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":             "updated",
-			"updated_importance": 0.9,
+			"memory_id":      "mem-001",
+			"new_importance": 0.9,
+			"signal":         "upvote",
 		})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
-	score := float32(0.9)
 	result, err := client.MemoryFeedback(context.Background(), "agent-1", MemoryFeedbackRequest{
-		MemoryID:       "mem-001",
-		Feedback:       "relevant",
-		RelevanceScore: &score,
+		MemoryID: "mem-001",
+		Feedback: "relevant",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "updated", result.Status)
+	require.NotNil(t, result.UpdatedImportance)
+	assert.Equal(t, float32(0.9), *result.UpdatedImportance)
+	assert.Equal(t, map[string]interface{}{"agent_id": "agent-1", "memory_id": "mem-001", "signal": "upvote"}, body)
 }
-
 // ===========================================================================
 // Session Operations
 // ===========================================================================
@@ -622,22 +625,25 @@ func TestListAuditEvents(t *testing.T) {
 
 func TestExportAudit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/v1/audit/export", r.URL.Path)
+		assert.Equal(t, "agent-1", r.URL.Query().Get("agent_id"))
+		assert.Equal(t, "json", r.URL.Query().Get("format"))
+		assert.Equal(t, "5", r.URL.Query().Get("from"))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"data":   "{\"events\":[]}",
-			"format": "json",
-			"count":  0,
+			"events": []map[string]interface{}{{"id": 7, "event_type": "memory_stored", "agent_id": "agent-1", "timestamp": 1700000000000}},
+			"count":  1,
 		})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
-	result, err := client.ExportAudit(context.Background(), "json", "agent-1", "", 0, 0)
+	result, err := client.ExportAudit(context.Background(), "json", "agent-1", "", 5, 0)
 	require.NoError(t, err)
 	assert.Equal(t, "json", result.Format)
+	assert.Equal(t, 1, result.Count)
+	assert.Contains(t, result.Data, "memory_stored")
 }
-
 // ===========================================================================
 // Extract & Namespace Config
 // ===========================================================================
@@ -659,23 +665,6 @@ func TestExtractText(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gliner", result.Provider)
 	assert.Len(t, result.Entities, 1)
-}
-
-func TestListExtractProviders(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/v1/extract/providers", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]map[string]interface{}{
-			{"name": "gliner", "available": true, "models": []string{"base"}},
-		})
-	}))
-	defer server.Close()
-	client := NewClient(server.URL)
-	result, err := client.ListExtractProviders(context.Background())
-	require.NoError(t, err)
-	assert.Len(t, result, 1)
-	assert.Equal(t, "gliner", result[0].Name)
 }
 
 func TestConfigureNamespaceExtractor(t *testing.T) {

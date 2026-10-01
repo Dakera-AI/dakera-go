@@ -372,34 +372,6 @@ func (c *Client) CountVectors(ctx context.Context, namespace string, filter map[
 	return &resp, nil
 }
 
-// Fetch retrieves vectors by ID from a namespace.
-func (c *Client) Fetch(ctx context.Context, namespace string, ids []string, opts *FetchOptions) ([]Vector, error) {
-	body := map[string]interface{}{
-		"ids": ids,
-	}
-
-	if opts != nil {
-		body["include_values"] = opts.IncludeValues
-		body["include_metadata"] = opts.IncludeMetadata
-	} else {
-		body["include_values"] = true
-		body["include_metadata"] = true
-	}
-
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fetch", namespace), body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Vectors []Vector `json:"vectors"`
-	}
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return resp.Vectors, nil
-}
-
 // BatchQuery executes multiple queries in a single request.
 func (c *Client) BatchQuery(ctx context.Context, namespace string, queries []BatchQuerySpec) ([]SearchResult, error) {
 	reqQueries := make([]map[string]interface{}, len(queries))
@@ -900,32 +872,17 @@ func (c *Client) GetIndexStats(ctx context.Context, namespace string) (*IndexSta
 	return &stats, nil
 }
 
-// Compact triggers compaction for a namespace.
+// Compact triggers compaction for a namespace — POST /ops/compact with the
+// namespace (Admin scope; there is no per-namespace compact route). The
+// server runs it as a job and answers with its job id and a message, which
+// Status carries. A backend with no on-request compaction answers 501
+// (*NotImplementedError). Use OpsCompact for the job id and force option.
 func (c *Client) Compact(ctx context.Context, namespace string) (*StatusResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/compact", namespace), nil)
+	resp, err := c.OpsCompact(ctx, CompactionRequest{Namespace: namespace})
 	if err != nil {
 		return nil, err
 	}
-
-	var resp StatusResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
-}
-
-// Flush flushes pending writes for a namespace.
-func (c *Client) Flush(ctx context.Context, namespace string) (*StatusResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/flush", namespace), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp StatusResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
+	return &StatusResponse{Status: resp.Message}, nil
 }
 
 // ===========================================================================
@@ -1163,16 +1120,44 @@ func (c *Client) PatchConsolidationConfig(ctx context.Context, agentID string, p
 	return &resp, nil
 }
 
-// MemoryFeedback submits feedback on a memory recall.
+// MemoryFeedback submits feedback on a memory — POST /v1/memory/feedback with
+// {agent_id, memory_id, signal}. req.Feedback is mapped to a signal:
+// "relevant" / "positive" / "upvote" → upvote, "irrelevant" / "negative" /
+// "downvote" → downvote, "flag" → flag; any other value is sent as-is (the
+// server answers 400 for an unknown signal). RelevanceScore is not a server
+// field and is ignored. Prefer FeedbackMemory, which takes a typed signal.
 func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryFeedbackRequest) (*MemoryFeedbackResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/memories/feedback", agentID), req)
+	signal := strings.ToLower(strings.TrimSpace(req.Feedback))
+	switch signal {
+	case "relevant":
+		signal = "upvote"
+	case "irrelevant":
+		signal = "downvote"
+	}
+	body := map[string]interface{}{
+		"agent_id":  agentID,
+		"memory_id": req.MemoryID,
+		"signal":    signal,
+	}
+	respBody, err := c.request(ctx, "POST", "/v1/memory/feedback", body)
 	if err != nil {
 		return nil, err
 	}
 
-	var result MemoryFeedbackResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var wire struct {
+		Status            string   `json:"status"`
+		UpdatedImportance *float32 `json:"updated_importance"`
+		NewImportance     *float32 `json:"new_importance"`
+	}
+	if err := json.Unmarshal(respBody, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	result := MemoryFeedbackResponse{Status: wire.Status, UpdatedImportance: wire.UpdatedImportance}
+	if result.UpdatedImportance == nil {
+		result.UpdatedImportance = wire.NewImportance
+	}
+	if result.Status == "" {
+		result.Status = "updated"
 	}
 	return &result, nil
 }
@@ -2035,9 +2020,31 @@ func (c *Client) GetQuotas(ctx context.Context) (map[string]interface{}, error) 
 	return result, nil
 }
 
-// UpdateQuotas updates quota settings.
+// UpdateQuotas updates quota settings — PUT /admin/quotas/{namespace} when
+// quotas names a "namespace", else PUT /admin/quotas/default. The remaining
+// keys are the quota config (max_vectors, max_storage_bytes, max_dimensions,
+// max_metadata_bytes, enforcement); a "config" key is passed through as the
+// config. Admin scope. Prefer AdminSetQuota / AdminSetDefaultQuota, which are
+// typed.
 func (c *Client) UpdateQuotas(ctx context.Context, quotas map[string]interface{}) (map[string]interface{}, error) {
-	data, err := c.request(ctx, "PUT", "/v1/admin/quotas", quotas)
+	path := "/v1/admin/quotas/default"
+	config := map[string]interface{}{}
+	for k, v := range quotas {
+		if k == "namespace" {
+			if ns, ok := v.(string); ok && ns != "" {
+				path = fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(ns))
+				continue
+			}
+		}
+		config[k] = v
+	}
+	var body map[string]interface{}
+	if inner, ok := config["config"]; ok && len(config) == 1 {
+		body = map[string]interface{}{"config": inner}
+	} else {
+		body = map[string]interface{}{"config": config}
+	}
+	data, err := c.request(ctx, "PUT", path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2118,25 +2125,6 @@ func (c *Client) RestoreBackup(ctx context.Context, backupID string) (*StatusRes
 func (c *Client) DeleteBackup(ctx context.Context, backupID string) error {
 	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/backups/%s", url.PathEscape(backupID)), nil)
 	return err
-}
-
-// ConfigureTTL configures TTL for a namespace.
-func (c *Client) ConfigureTTL(ctx context.Context, namespace string, ttlSeconds int, strategy string) (*TtlConfig, error) {
-	body := map[string]interface{}{
-		"ttl_seconds": ttlSeconds,
-	}
-	if strategy != "" {
-		body["strategy"] = strategy
-	}
-	data, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/namespaces/%s/ttl", url.PathEscape(namespace)), body)
-	if err != nil {
-		return nil, err
-	}
-	var result TtlConfig
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ttl config: %w", err)
-	}
-	return &result, nil
 }
 
 // ===========================================================================
@@ -2745,36 +2733,52 @@ func (c *Client) ListAuditEvents(ctx context.Context, query AuditQuery) (*AuditL
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal audit list response: %w", err)
 	}
+	if result.Total == 0 {
+		result.Total = result.Count
+	}
 	return &result, nil
 }
 
 // ExportAudit bulk-exports audit log entries (OBS-1).
-// POST /v1/audit/export
+// GET /v1/audit/export (Admin scope). format is "json" (default) or "csv".
 // agentID, eventType, fromTs, and toTs are optional (zero/empty = omitted).
+// Data holds the response body as text (the JSON document {"events","count"},
+// or the CSV); Count is the number of events.
 func (c *Client) ExportAudit(ctx context.Context, format string, agentID string, eventType string, fromTs int64, toTs int64) (*AuditExportResponse, error) {
-	body := map[string]interface{}{
-		"format": format,
+	if format == "" {
+		format = "json"
 	}
+	params := url.Values{"format": {format}}
 	if agentID != "" {
-		body["agent_id"] = agentID
+		params.Set("agent_id", agentID)
 	}
 	if eventType != "" {
-		body["event_type"] = eventType
+		params.Set("event_type", eventType)
 	}
 	if fromTs > 0 {
-		body["from"] = fromTs
+		params.Set("from", strconv.FormatInt(fromTs, 10))
 	}
 	if toTs > 0 {
-		body["to"] = toTs
+		params.Set("to", strconv.FormatInt(toTs, 10))
 	}
-	resp, err := c.request(ctx, "POST", "/v1/audit/export", body)
+	resp, err := c.send(ctx, "GET", "/v1/audit/export?"+params.Encode(), "application/json", nil, true)
 	if err != nil {
 		return nil, err
 	}
-	var result AuditExportResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
+	result := AuditExportResponse{Data: string(resp.Body), Format: format}
+	if format == "csv" {
+		if lines := strings.Count(strings.TrimRight(result.Data, "\n"), "\n"); result.Data != "" {
+			result.Count = lines
+		}
+		return &result, nil
+	}
+	var doc struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Body, &doc); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal audit export response: %w", err)
 	}
+	result.Count = doc.Count
 	return &result, nil
 }
 
@@ -2902,29 +2906,6 @@ func (c *Client) ExtractText(ctx context.Context, text string, namespace string,
 		return nil, fmt.Errorf("failed to unmarshal extraction result: %w", err)
 	}
 	return &result, nil
-}
-
-// ListExtractProviders lists available extraction providers (EXT-1).
-// GET /v1/extract/providers
-func (c *Client) ListExtractProviders(ctx context.Context) ([]ExtractionProviderInfo, error) {
-	resp, err := c.request(ctx, "GET", "/v1/extract/providers", nil)
-	if err != nil {
-		return nil, err
-	}
-	// Server may return a top-level array or {"providers": [...]}
-	resp = []byte(strings.TrimSpace(string(resp)))
-	if len(resp) > 0 && resp[0] == '[' {
-		var result []ExtractionProviderInfo
-		if err := json.Unmarshal(resp, &result); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
-		}
-		return result, nil
-	}
-	var wrapper extractProvidersResponse
-	if err := json.Unmarshal(resp, &wrapper); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal extract providers response: %w", err)
-	}
-	return wrapper.Providers, nil
 }
 
 // ConfigureNamespaceExtractor sets the default extraction provider for a namespace (EXT-1).

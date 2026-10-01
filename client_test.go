@@ -159,29 +159,6 @@ func TestDeleteByFilter(t *testing.T) {
 	assert.Equal(t, 5, resp.DeletedCount)
 }
 
-func TestFetch(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/v1/namespaces/test-ns/fetch", r.URL.Path)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"vectors": []map[string]interface{}{
-				{"id": "vec1", "values": []float32{0.1, 0.2, 0.3}},
-				{"id": "vec2", "values": []float32{0.4, 0.5, 0.6}},
-			},
-		})
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	vectors, err := client.Fetch(context.Background(), "test-ns", []string{"vec1", "vec2"}, nil)
-
-	require.NoError(t, err)
-	assert.Len(t, vectors, 2)
-	assert.Equal(t, "vec1", vectors[0].ID)
-}
-
 func TestBatchQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

@@ -90,6 +90,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GetIndexStats` called a route that does not exist** (`GET /v1/namespaces/{ns}/stats`, a
   404 on every server version). It now reads `GET /admin/indexes/stats` (Admin scope) and returns
   the namespace's entry.
+- **Endpoint sweep against the v0.12.0 router** (`crates/api/src/lib.rs`; `/v1/admin/*` is an
+  alias of `/admin/*`). Of the ~170 method+path pairs the SDK calls, these were absent from the
+  server (v0.12.0 and v0.11.108) and always answered 404/405; everything else matched:
+  - `UpdateQuotas` called `PUT /v1/admin/quotas` → now `PUT /admin/quotas/{namespace}` (when the
+    map has a `namespace` key) or `PUT /admin/quotas/default`, body `{"config": {...}}`.
+  - `Compact` called `POST /v1/namespaces/{ns}/compact` → now `POST /ops/compact`
+    (a backend without on-request compaction answers 501, `*NotImplementedError`).
+  - `MemoryFeedback` called `POST /v1/agents/{id}/memories/feedback` → now
+    `POST /v1/memory/feedback` `{agent_id, memory_id, signal}`.
+  - `ExportAudit` sent `POST /v1/audit/export` (the route is `GET`, query parameters); `Data` now
+    holds the JSON or CSV body.
+  - Removed, with no server route to call: `Fetch` (`/v1/namespaces/{ns}/fetch`), `Flush`
+    (`.../flush`), `ConfigureTTL` (`/v1/admin/namespaces/{ns}/ttl`) and `ListExtractProviders`
+    (`/v1/extract/providers`). They never worked on any server release.
+  - `AuditEvent.ID` could not decode the server's integer ids (a JSON number into a string field
+    failed the whole response); it now decodes both and gains `MemoryID`, `SessionID`,
+    `Importance`; `AuditListResponse.Count`.
 - **`Health()` no longer retries a 503**: a starting server answers `/health` with 503 and
   `Retry-After`; `Health` returns it at once as `*ServiceUnavailableError` (`Starting`, `Reason`,
   `RetryAfter`). Other 5xx answers are still retried. Use `WaitUntilReady` to wait.
