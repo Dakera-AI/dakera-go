@@ -134,6 +134,8 @@ func TestUpdateMemory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
 		assert.Equal(t, "/v1/memory/update/mem-001", r.URL.Path)
+		// The server reads agent_id from the query string.
+		assert.Equal(t, "agent-1", r.URL.Query().Get("agent_id"))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"memory": map[string]interface{}{
@@ -151,6 +153,30 @@ func TestUpdateMemory(t *testing.T) {
 	result, err := client.UpdateMemory(context.Background(), "agent-1", "mem-001", UpdateMemoryRequest{Content: &content})
 	require.NoError(t, err)
 	assert.Equal(t, "mem-001", result.Memory.ID)
+}
+
+func TestUpdateMemory_FlatServerAnswer(t *testing.T) {
+	// PUT /v1/memory/update/{id} answers with the memory object itself.
+	var capturedQuery string
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"mem-001","memory_type":"episodic","content":"changed",` +
+			`"agent_id":"agent 1","importance":0.5,"tags":[],"metadata":{},"created_at":1790873760}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	content := "changed"
+	result, err := client.UpdateMemory(context.Background(), "agent 1", "mem-001", UpdateMemoryRequest{Content: &content})
+	require.NoError(t, err)
+	require.NotNil(t, result.Memory)
+	assert.Equal(t, "mem-001", result.Memory.ID)
+	assert.Equal(t, "changed", result.Memory.Content)
+	assert.Equal(t, "agent 1", result.Memory.AgentID)
+	assert.Equal(t, "agent_id=agent+1", capturedQuery)
+	assert.Equal(t, "changed", capturedBody["content"])
 }
 
 func TestForget(t *testing.T) {
