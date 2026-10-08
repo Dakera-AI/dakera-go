@@ -22,6 +22,10 @@ type recalledMemoryWire struct {
 	SmartScore    *float32 `json:"smart_score,omitempty"`
 	Depth         *int     `json:"depth,omitempty"`
 
+	// Content preview fields (listings with content_preview_chars, server v0.12.2+)
+	ContentLen       *int  `json:"content_len,omitempty"`
+	ContentTruncated *bool `json:"content_truncated,omitempty"`
+
 	// Flat fields — populated when the "memory" wrapper is absent
 	ID            string                 `json:"id"`
 	Content       string                 `json:"content"`
@@ -78,5 +82,7 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.Score = wire.Score
 	}
 	r.Depth = wire.Depth
+	r.ContentLen = wire.ContentLen
+	r.ContentTruncated = wire.ContentTruncated
 	return nil
 }

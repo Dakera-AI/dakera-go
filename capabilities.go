@@ -244,6 +244,64 @@ type VisionCapabilities struct {
 	MaxTiles     int    `json:"max_tiles"`
 }
 
+// AuthCapabilities is the key and grant surface (capabilities.auth, server
+// v0.12.2+ / capabilities_version 2).
+type AuthCapabilities struct {
+	// PrefixPatterns reports that key grants accept "p*" prefix patterns.
+	PrefixPatterns bool `json:"prefix_patterns"`
+	// SessionsByAgent reports that sessions are authorized by their agent's
+	// namespace alone (no _dakera_sessions grant).
+	SessionsByAgent bool `json:"sessions_by_agent"`
+	// KeyUpdate reports that PATCH /admin/keys/{id} and PATCH
+	// /v1/namespaces/{ns}/keys/{id} exist (UpdateKey, UpdateNamespaceKey).
+	KeyUpdate bool `json:"key_update"`
+	// RotationGraceMaxSecs is the largest RotateKeyOptions.GraceSecs.
+	RotationGraceMaxSecs int64 `json:"rotation_grace_max_secs"`
+	// MaxGrants is the most entries a key's namespaces may hold.
+	MaxGrants int `json:"max_grants"`
+	// MaxGrantLen is the longest entry, in bytes.
+	MaxGrantLen int `json:"max_grant_len"`
+}
+
+// NamingCapabilities are the server's naming rules (capabilities.naming,
+// server v0.12.2+).
+type NamingCapabilities struct {
+	// AgentIDPattern is the regular expression an agent id must match.
+	AgentIDPattern string `json:"agent_id_pattern"`
+	// AgentIDMaxBytes is the longest agent id (241 bytes in v0.12.2).
+	AgentIDMaxBytes int `json:"agent_id_max_bytes"`
+	// AgentNamespacePrefix is the prefix of an agent's memory namespace.
+	AgentNamespacePrefix string `json:"agent_namespace_prefix"`
+	// AgentNamespaceMaxBytes is the longest agent namespace.
+	AgentNamespaceMaxBytes int `json:"agent_namespace_max_bytes"`
+	// NamespacePattern is the regular expression other namespaces must match.
+	NamespacePattern string `json:"namespace_pattern"`
+	// NamespaceMaxBytes is the longest other namespace.
+	NamespaceMaxBytes int `json:"namespace_max_bytes"`
+	// ReservedPrefixes are prefixes a client namespace cannot start with.
+	ReservedPrefixes []string `json:"reserved_prefixes"`
+	// InternalNamespaces are the server-internal namespaces.
+	InternalNamespaces []string `json:"internal_namespaces"`
+	// InternalPrefixes are prefixes of server-internal namespace families.
+	InternalPrefixes []string `json:"internal_prefixes"`
+}
+
+// SessionCapabilities is the session lifecycle (capabilities.sessions, server
+// v0.12.2+).
+type SessionCapabilities struct {
+	// IdleTimeoutSecs is the live server-wide idle timeout: an open session
+	// that did not set its own is ended after this many seconds without
+	// activity (0 = never). 14400 (4 hours) by default.
+	IdleTimeoutSecs int64 `json:"idle_timeout_secs"`
+	// MaxIdleTimeoutSecs is the largest StartSessionRequest.IdleTimeoutSecs.
+	MaxIdleTimeoutSecs int64 `json:"max_idle_timeout_secs"`
+	// Touch reports that POST /v1/sessions/{id}/touch exists (TouchSession).
+	Touch bool `json:"touch"`
+	// EndedReason reports that sessions carry EndedReason, IdleSince,
+	// LastActivityAt and IdleTimeoutSecs, and store responses SessionState.
+	EndedReason bool `json:"ended_reason"`
+}
+
 // AcceptedValues is a list of accepted wire strings that the server may emit
 // either as prose ("hybrid, binary, float, scalar (alias sq), rabitq") or as a
 // JSON list. Aliases in the prose form are expanded ("scalar (alias sq)" yields
@@ -324,6 +382,12 @@ type ServerCapabilities struct {
 	// ReembedPending reports that a model change was acknowledged but the store
 	// is not fully re-embedded yet (recall mixes two embedding spaces).
 	ReembedPending bool `json:"reembed_pending"`
+	// Auth is the key and grant surface (server v0.12.2+); nil on older servers.
+	Auth *AuthCapabilities `json:"auth,omitempty"`
+	// Naming are the naming rules (server v0.12.2+); nil on older servers.
+	Naming *NamingCapabilities `json:"naming,omitempty"`
+	// Sessions is the session lifecycle (server v0.12.2+); nil on older servers.
+	Sessions *SessionCapabilities `json:"sessions,omitempty"`
 	// Raw is the verbatim document — carries fields this SDK does not model yet.
 	Raw map[string]interface{} `json:"-"`
 }
@@ -384,6 +448,24 @@ func (c *ServerCapabilities) SupportsVision() bool {
 // SupportsRecords reports whether the record routes are switched on (records.enabled).
 func (c *ServerCapabilities) SupportsRecords() bool {
 	return c.Records.Enabled
+}
+
+// SupportsKeyUpdate reports whether the server has the key PATCH routes
+// (UpdateKey, UpdateNamespaceKey) — auth.key_update, server v0.12.2+.
+func (c *ServerCapabilities) SupportsKeyUpdate() bool {
+	return c.Auth != nil && c.Auth.KeyUpdate
+}
+
+// SupportsPrefixGrants reports whether key grants accept "p*" prefix
+// patterns — auth.prefix_patterns, server v0.12.2+.
+func (c *ServerCapabilities) SupportsPrefixGrants() bool {
+	return c.Auth != nil && c.Auth.PrefixPatterns
+}
+
+// SupportsSessionTouch reports whether the server has TouchSession and ends
+// idle sessions — sessions.touch, server v0.12.2+.
+func (c *ServerCapabilities) SupportsSessionTouch() bool {
+	return c.Sessions != nil && c.Sessions.Touch
 }
 
 // CapabilityKind names a registry a pre-flight check validates against.

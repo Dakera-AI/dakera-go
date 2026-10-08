@@ -37,6 +37,9 @@ type MemoryEvent struct {
 	Importance *float32 `json:"importance,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	SessionID  *string  `json:"session_id,omitempty"`
+	// Reason is why a session_ended event's session ended: SessionEndedByClient
+	// or SessionEndedIdle (server v0.12.2+). nil on every other event type.
+	Reason *string `json:"reason,omitempty"`
 }
 
 // MemoryEventResult wraps a MemoryEvent or an error from the memory event SSE stream.
