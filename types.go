@@ -2,6 +2,7 @@
 package dakera
 
 import (
+	"bytes"
 	"encoding/json"
 	"time"
 )
@@ -70,6 +71,40 @@ type NamespaceInfo struct {
 	UpdatedAt   *time.Time             `json:"updatedAt,omitempty"`
 	// EstimatedStorageBytes is the estimated storage size (vector data + overhead).
 	EstimatedStorageBytes uint64 `json:"estimated_storage_bytes,omitempty"`
+	// Kind is what the namespace is: NamespaceKindAgent or NamespaceKindData
+	// (server v0.12.2+; empty on older servers).
+	Kind string `json:"kind,omitempty"`
+}
+
+// Namespace kinds reported by GetNamespace, ListNamespacesWithKinds and the
+// admin namespace listing (server v0.12.2+). Unknown future values are kept
+// as they are.
+const (
+	// NamespaceKindAgent is an agent memory namespace (_dakera_agent_<id>).
+	NamespaceKindAgent = "agent"
+	// NamespaceKindData is a client namespace.
+	NamespaceKindData = "data"
+	// NamespaceKindSystem is a server-internal namespace (admin listing only).
+	NamespaceKindSystem = "system"
+)
+
+// NamespaceList is the response from GET /v1/namespaces with each
+// namespace's kind (server v0.12.2+).
+type NamespaceList struct {
+	// Namespaces are the namespace names.
+	Namespaces []string `json:"namespaces"`
+	// Kinds maps each listed namespace to its kind (NamespaceKindAgent /
+	// NamespaceKindData). Empty on older servers.
+	Kinds map[string]string `json:"kinds,omitempty"`
+}
+
+// UnavailableNamespace is a namespace a node-wide endpoint left out of its
+// answer (server v0.12.2+): an error, or no answer within the per-namespace
+// deadline. Its records are not in the totals of the response. Reason never
+// carries paths, URLs or credentials.
+type UnavailableNamespace struct {
+	Namespace string `json:"namespace"`
+	Reason    string `json:"reason"`
 }
 
 // UnmarshalJSON reads the server's snake_case "index_type" as well as the
@@ -116,8 +151,8 @@ func (s *IndexStats) UnmarshalJSON(data []byte) error {
 	type plain IndexStats
 	aux := struct {
 		*plain
-		IndexTypeSnake  string `json:"index_type"`
-		SizeBytesSnake  *int64 `json:"size_bytes"`
+		IndexTypeSnake   string `json:"index_type"`
+		SizeBytesSnake   *int64 `json:"size_bytes"`
 		VectorCountSnake *int64 `json:"vector_count"`
 	}{plain: (*plain)(s)}
 	if err := json.Unmarshal(data, &aux); err != nil {
@@ -129,7 +164,7 @@ func (s *IndexStats) UnmarshalJSON(data []byte) error {
 	if aux.SizeBytesSnake != nil {
 		s.SizeBytes = *aux.SizeBytesSnake
 	}
-	if aux.VectorCountSnake!= nil {
+	if aux.VectorCountSnake != nil {
 		s.VectorCount = *aux.VectorCountSnake
 	}
 	if s.IndexedVectors == 0 && s.IndexedCount != 0 {
@@ -201,8 +236,8 @@ func (h *HybridSearchResult) UnmarshalJSON(data []byte) error {
 
 // HealthResponse represents the server health check response.
 type HealthResponse struct {
-	Status   string `json:"status"`
-	Version  string `json:"version,omitempty"`
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
 	// BuildSha is the git commit SHA baked into the binary at build time. Present since server v0.11.84.
 	BuildSha string `json:"build_sha,omitempty"`
 }
@@ -477,12 +512,12 @@ const (
 	// Existence check
 	OpExists = "$exists"
 	// String operators
-	OpContains    = "$contains"
-	OpIContains   = "$icontains"
-	OpStartsWith  = "$startsWith"
-	OpEndsWith    = "$endsWith"
-	OpGlob        = "$glob"
-	OpRegex       = "$regex"
+	OpContains   = "$contains"
+	OpIContains  = "$icontains"
+	OpStartsWith = "$startsWith"
+	OpEndsWith   = "$endsWith"
+	OpGlob       = "$glob"
+	OpRegex      = "$regex"
 	// Array operators (CE-79)
 	OpArrayContains    = "$arrayContains"
 	OpArrayContainsAll = "$arrayContainsAll"
@@ -721,8 +756,8 @@ type StoreMemoryRequest struct {
 	// ExpiresAt is an optional explicit expiry Unix timestamp (seconds). Takes
 	// precedence over TTLSeconds when both are set. The memory is hard-deleted
 	// by the decay engine on expiry (DECAY-3).
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
-	SessionID string  `json:"session_id,omitempty"`
+	ExpiresAt *int64    `json:"expires_at,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
 	Embedding []float32 `json:"embedding,omitempty"`
 	// ValidFrom is an optional Unix timestamp (seconds) indicating when this
 	// memory becomes temporally valid. Defaults to ingest time when omitted.
@@ -754,7 +789,23 @@ type StoreMemoryRequest struct {
 type StoreMemoryResponse struct {
 	Memory          *Memory `json:"memory"`
 	EmbeddingTimeMs *int64  `json:"embedding_time_ms,omitempty"`
+	// SessionState is the state of the session the memory was stored with
+	// (server v0.12.2+): SessionStateActive or SessionStateEnded. Storing into
+	// an ended session still succeeds; this field is how a client notices
+	// that the server ended its session (for example after the idle
+	// timeout). Empty when the memory has no session, on older servers, and
+	// on the near-duplicate short-circuit.
+	SessionState string `json:"session_state,omitempty"`
 }
+
+// Session states reported by StoreMemoryResponse.SessionState and
+// SessionTouchResponse.SessionState (server v0.12.2+).
+const (
+	// SessionStateActive is an open session.
+	SessionStateActive = "active"
+	// SessionStateEnded is a session that was ended, by a client or by the server.
+	SessionStateEnded = "ended"
+)
 
 // Memory represents a stored memory.
 type Memory struct {
@@ -782,14 +833,14 @@ type Memory struct {
 // Score is set to SmartScore when present, then WeightedScore, then raw Score —
 // matching the server's ranking key so results appear in true rank order.
 type RecalledMemory struct {
-	ID         string                 `json:"id"`
-	Content    string                 `json:"content"`
-	MemoryType string                 `json:"memory_type"`
-	Importance float32                `json:"importance"`
+	ID         string  `json:"id"`
+	Content    string  `json:"content"`
+	MemoryType string  `json:"memory_type"`
+	Importance float32 `json:"importance"`
 	// Ranking score — equals SmartScore when present, then WeightedScore, then raw score.
-	Score         float32  `json:"score"`
-	SmartScore    *float32 `json:"smart_score,omitempty"`
-	WeightedScore *float32 `json:"weighted_score,omitempty"`
+	Score         float32                `json:"score"`
+	SmartScore    *float32               `json:"smart_score,omitempty"`
+	WeightedScore *float32               `json:"weighted_score,omitempty"`
 	Tags          []string               `json:"tags,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt     int64                  `json:"created_at,omitempty"`
@@ -797,6 +848,15 @@ type RecalledMemory struct {
 	AttachmentRef string `json:"attachment_ref,omitempty"`
 	// KG-3: hop depth at which this memory was found (only set on associated memories)
 	Depth *int `json:"depth,omitempty"`
+	// ContentLen is the length of the full content in characters (Unicode
+	// scalar values). Set only on listings that asked for a content preview
+	// (ContentPreviewChars on AgentMemoriesOptions / SessionMemoriesOptions,
+	// server v0.12.2+).
+	ContentLen *int `json:"content_len,omitempty"`
+	// ContentTruncated reports whether Content is a cut preview. Set only with
+	// a content preview; when true, read the whole memory with GetMemory
+	// before showing or editing it.
+	ContentTruncated *bool `json:"content_truncated,omitempty"`
 }
 
 // RoutingMode controls which retrieval index the server uses for recall and
@@ -932,21 +992,21 @@ type ConsolidationLogEntry struct {
 
 // ConsolidateRequest represents a request to consolidate memories.
 type ConsolidateRequest struct {
-	AgentID    string               `json:"agent_id,omitempty"`
-	MemoryType string               `json:"memory_type,omitempty"`
-	Threshold  *float32             `json:"threshold,omitempty"`
-	DryRun     bool                 `json:"dry_run,omitempty"`
+	AgentID    string   `json:"agent_id,omitempty"`
+	MemoryType string   `json:"memory_type,omitempty"`
+	Threshold  *float32 `json:"threshold,omitempty"`
+	DryRun     bool     `json:"dry_run,omitempty"`
 	// Config selects the DBSCAN clustering algorithm and tunes its parameters (CE-6).
-	Config     *ConsolidationConfig `json:"config,omitempty"`
+	Config *ConsolidationConfig `json:"config,omitempty"`
 }
 
 // ConsolidateResponse represents the response from consolidation.
 type ConsolidateResponse struct {
-	MemoriesRemoved    int                     `json:"memories_removed"`
-	SourceMemoryIDs    []string                `json:"source_memory_ids"`
-	ConsolidatedMemory *Memory                 `json:"consolidated_memory,omitempty"`
+	MemoriesRemoved    int      `json:"memories_removed"`
+	SourceMemoryIDs    []string `json:"source_memory_ids"`
+	ConsolidatedMemory *Memory  `json:"consolidated_memory,omitempty"`
 	// Log is the step-by-step consolidation log (CE-6, may be nil).
-	Log                []ConsolidationLogEntry `json:"log,omitempty"`
+	Log []ConsolidationLogEntry `json:"log,omitempty"`
 }
 
 // MemoryFeedbackRequest represents a request for memory feedback.
@@ -970,9 +1030,31 @@ type MemoryFeedbackResponse struct {
 type StartSessionRequest struct {
 	AgentID  string                 `json:"agent_id"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	// ID is an optional caller-chosen session id (generated when empty).
+	ID string `json:"id,omitempty"`
+	// IdleTimeoutSecs is this session's own idle timeout in seconds (server
+	// v0.12.2+). A pointer so that 0 can be sent: 0 means the server never
+	// ends this session for inactivity. At most 2592000 (30 days); more is a
+	// 400. nil leaves the server's timeout in charge
+	// (ServerCapabilities.Sessions.IdleTimeoutSecs, 4 hours by default).
+	// Older servers ignore the field.
+	IdleTimeoutSecs *int `json:"idle_timeout_secs,omitempty"`
 }
 
+// Values of Session.EndedReason (server v0.12.2+).
+const (
+	// SessionEndedByClient is a session ended with EndSession.
+	SessionEndedByClient = "client"
+	// SessionEndedIdle is a session the server ended after its idle timeout.
+	SessionEndedIdle = "idle"
+)
+
 // Session represents a session.
+//
+// Server v0.12.2 ends a session automatically once it has been idle for its
+// timeout (IdleTimeoutSecs, else the server's, 4 hours by default). Activity
+// is a memory stored, batch-stored, imported or updated with the session, a
+// session-scoped recall or search, or TouchSession.
 type Session struct {
 	ID          string                 `json:"id"`
 	AgentID     string                 `json:"agent_id"`
@@ -981,6 +1063,67 @@ type Session struct {
 	Summary     string                 `json:"summary,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	MemoryCount int                    `json:"memory_count"`
+	// LastActivityAt is the last activity the server knows of (Unix seconds;
+	// server v0.12.2+). A session recorded before v0.12.2 reads its
+	// StartedAt. nil on older servers.
+	LastActivityAt *int64 `json:"last_activity_at,omitempty"`
+	// EndedReason is who ended the session: SessionEndedByClient or
+	// SessionEndedIdle (server v0.12.2+). Empty while the session is open,
+	// and on older servers.
+	EndedReason string `json:"ended_reason,omitempty"`
+	// IdleSince is, for a session ended with SessionEndedIdle, the last
+	// activity it was idle since (Unix seconds).
+	IdleSince *int64 `json:"idle_since,omitempty"`
+	// IdleTimeoutSecs is the session's own idle timeout when it set one at
+	// start (0 = never ended for inactivity). nil: the server's timeout
+	// applies.
+	IdleTimeoutSecs *int64 `json:"idle_timeout_secs,omitempty"`
+}
+
+// IsEnded reports whether the session has ended (EndedAt set, or an
+// EndedReason reported).
+func (s *Session) IsEnded() bool {
+	return (s.EndedAt != nil && *s.EndedAt > 0) || s.EndedReason != ""
+}
+
+// SessionTouchResponse is the response from POST /v1/sessions/{id}/touch
+// (server v0.12.2+).
+type SessionTouchResponse struct {
+	// Session is the session, LastActivityAt raised to now when it is open.
+	Session Session `json:"session"`
+	// SessionState is SessionStateActive, or SessionStateEnded: a touch never
+	// re-opens an ended session.
+	SessionState string `json:"session_state"`
+	// IdleDeadlineAt is when the server ends the session if nothing else
+	// happens (Unix seconds). nil when the session never times out or has
+	// ended.
+	IdleDeadlineAt *int64 `json:"idle_deadline_at,omitempty"`
+}
+
+// SessionMemoriesOptions are the optional parameters of
+// SessionMemoriesWithOptions (GET /v1/sessions/{id}/memories).
+type SessionMemoriesOptions struct {
+	// Limit is the page size (server default 50).
+	Limit *int
+	// Offset is the number of memories to skip.
+	Offset *int
+	// CountOnly asks for the total only, without memory objects.
+	CountOnly bool
+	// ContentPreviewChars cuts each memory's Content to this many characters
+	// (1..10000; the server answers 400 outside) and fills ContentLen and
+	// ContentTruncated (server v0.12.2+). nil returns the full content.
+	ContentPreviewChars *int
+}
+
+// SessionMemoriesResponse is the response from GET /v1/sessions/{id}/memories.
+type SessionMemoriesResponse struct {
+	// Session is the session the memories belong to.
+	Session *Session `json:"session,omitempty"`
+	// Memories is the page of memories.
+	Memories []RecalledMemory `json:"memories"`
+	// Total is the number of memories in the session before pagination, when
+	// the server reports it.
+	Total *int `json:"total,omitempty"`
 }
 
 // SessionStartResponse is the response from POST /v1/sessions/start.
@@ -1012,6 +1155,29 @@ type AgentSummary struct {
 	MemoryCount    int64  `json:"memory_count"`
 	SessionCount   int64  `json:"session_count"`
 	ActiveSessions int64  `json:"active_sessions"`
+	// VectorCount is the number of records in the agent's memory namespace
+	// (memories, their sentence sub-memories and bookkeeping records). Since
+	// server v0.12.2 it no longer counts the namespace seed, so an agent with
+	// no memories reports 0.
+	VectorCount int64 `json:"vector_count,omitempty"`
+	// Unavailable is why the agent's namespace could not be counted (server
+	// v0.12.2+); VectorCount is then 0. Empty when it was counted.
+	Unavailable string `json:"unavailable,omitempty"`
+}
+
+// CreateAgentResponse is the response from POST /v1/agents (server v0.12.2+).
+type CreateAgentResponse struct {
+	// AgentID is the agent id.
+	AgentID string `json:"agent_id"`
+	// Namespace is the agent's memory namespace (_dakera_agent_<agent_id>).
+	Namespace string `json:"namespace"`
+	// Created is true when the call created the agent (HTTP 201), false when
+	// it already existed and was left untouched (HTTP 200).
+	Created bool `json:"created"`
+	// Dimension is the namespace's vector dimension; nil when it cannot be read.
+	Dimension *int `json:"dimension,omitempty"`
+	// Model is the embedding model the namespace is embedded with.
+	Model string `json:"model,omitempty"`
 }
 
 // AgentStats represents detailed stats for an agent.
@@ -1022,14 +1188,46 @@ type AgentStats struct {
 	TotalSessions  int64            `json:"total_sessions"`
 	ActiveSessions int64            `json:"active_sessions"`
 	AvgImportance  *float32         `json:"avg_importance,omitempty"`
-	OldestMemoryAt string           `json:"oldest_memory_at,omitempty"`
-	NewestMemoryAt string           `json:"newest_memory_at,omitempty"`
+	// OldestMemoryAt / NewestMemoryAt are creation times; the server sends
+	// Unix seconds, kept here as decimal strings.
+	OldestMemoryAt string `json:"oldest_memory_at,omitempty"`
+	NewestMemoryAt string `json:"newest_memory_at,omitempty"`
+	// SubMemories counts the CE-31 sentence sub-memories derived from the
+	// agent's memories (not in TotalMemories).
+	SubMemories int64 `json:"sub_memories,omitempty"`
+}
+
+// UnmarshalJSON accepts the timestamps as numbers (the server) or strings.
+func (a *AgentStats) UnmarshalJSON(data []byte) error {
+	type plain AgentStats
+	aux := struct {
+		*plain
+		OldestMemoryAt json.RawMessage `json:"oldest_memory_at"`
+		NewestMemoryAt json.RawMessage `json:"newest_memory_at"`
+	}{plain: (*plain)(a)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	a.OldestMemoryAt = rawTimestamp(aux.OldestMemoryAt)
+	a.NewestMemoryAt = rawTimestamp(aux.NewestMemoryAt)
+	return nil
 }
 
 // AgentMemoriesOptions represents options for listing agent memories.
 type AgentMemoriesOptions struct {
 	MemoryType string `json:"memory_type,omitempty"`
 	Limit      *int   `json:"limit,omitempty"`
+	// Offset is the number of memories to skip.
+	Offset *int `json:"offset,omitempty"`
+	// IncludeDerived also lists the derived records (CE-31 sentence
+	// sub-memories). Since server v0.12.2 the listing leaves them out by
+	// default and Offset/Limit count memories only; true restores the
+	// previous listing. Sent only when true.
+	IncludeDerived bool `json:"include_derived,omitempty"`
+	// ContentPreviewChars cuts each memory's Content to this many characters
+	// (1..10000; the server answers 400 outside) and fills ContentLen and
+	// ContentTruncated (server v0.12.2+). nil returns the full content.
+	ContentPreviewChars *int `json:"content_preview_chars,omitempty"`
 }
 
 // AgentSessionsOptions represents options for listing agent sessions.
@@ -1057,6 +1255,22 @@ type KnowledgeNode struct {
 	MemoryType string                 `json:"memory_type,omitempty"`
 	Importance *float32               `json:"importance,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	// Tags are the memory's tags (full graph).
+	Tags []string `json:"tags,omitempty"`
+	// CreatedAt is the creation time the full graph reports (a string of
+	// Unix seconds), when known.
+	CreatedAt *string `json:"created_at,omitempty"`
+	// ClusterID is the cluster the node belongs to (full graph).
+	ClusterID *int `json:"cluster_id,omitempty"`
+	// Centrality is the node's centrality in the graph (full graph).
+	Centrality *float32 `json:"centrality,omitempty"`
+	// ContentLen is the length of the FULL content in characters (Unicode
+	// scalar values; full graph, server v0.12.2+). nil on older servers.
+	ContentLen *int `json:"content_len,omitempty"`
+	// ContentTruncated reports whether Content was cut to the requested
+	// ContentPreviewChars (server v0.12.2+). When true, read the whole memory
+	// with GetMemory before showing or editing it.
+	ContentTruncated *bool `json:"content_truncated,omitempty"`
 }
 
 // KnowledgeEdge represents an edge in the knowledge graph.
@@ -1065,13 +1279,87 @@ type KnowledgeEdge struct {
 	Target       string  `json:"target"`
 	Similarity   float32 `json:"similarity"`
 	Relationship string  `json:"relationship,omitempty"`
+	// SharedTags are the tags both memories carry (full graph).
+	SharedTags []string `json:"shared_tags,omitempty"`
+}
+
+// KnowledgeGraphCluster is one cluster of the full knowledge graph.
+type KnowledgeGraphCluster struct {
+	ID            int      `json:"id"`
+	NodeCount     int      `json:"node_count"`
+	TopTags       []string `json:"top_tags,omitempty"`
+	AvgImportance float32  `json:"avg_importance"`
+}
+
+// KnowledgeGraphStats are the statistics of the full knowledge graph.
+type KnowledgeGraphStats struct {
+	// TotalMemories counts the agent's memories (since server v0.12.2: user
+	// memories only, the count ListAgents reports as MemoryCount).
+	TotalMemories    int     `json:"total_memories"`
+	IncludedMemories int     `json:"included_memories"`
+	TotalEdges       int     `json:"total_edges"`
+	ClusterCount     int     `json:"cluster_count"`
+	Density          float32 `json:"density"`
+	HubMemoryID      *string `json:"hub_memory_id,omitempty"`
 }
 
 // KnowledgeGraphResponse represents the response from knowledge graph operations.
+//
+// For FullKnowledgeGraph the server sends clusters as objects
+// ({id, node_count, top_tags, avg_importance}); they are decoded into
+// ClusterInfo, and Clusters is filled with the node ids of each cluster
+// (from the nodes' ClusterID). A list of id lists is still accepted.
 type KnowledgeGraphResponse struct {
 	Nodes    []KnowledgeNode `json:"nodes"`
 	Edges    []KnowledgeEdge `json:"edges"`
 	Clusters [][]string      `json:"clusters,omitempty"`
+	// ClusterInfo are the clusters as the full graph reports them.
+	ClusterInfo []KnowledgeGraphCluster `json:"-"`
+	// Stats are the full graph's statistics; nil when not sent.
+	Stats *KnowledgeGraphStats `json:"stats,omitempty"`
+}
+
+// UnmarshalJSON decodes both cluster shapes (see KnowledgeGraphResponse).
+func (r *KnowledgeGraphResponse) UnmarshalJSON(data []byte) error {
+	type plain KnowledgeGraphResponse
+	aux := struct {
+		*plain
+		Clusters json.RawMessage `json:"clusters"`
+	}{plain: (*plain)(r)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.Clusters = nil
+	r.ClusterInfo = nil
+	raw := bytes.TrimSpace(aux.Clusters)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	var ids [][]string
+	if err := json.Unmarshal(raw, &ids); err == nil {
+		r.Clusters = ids
+		return nil
+	}
+	var infos []KnowledgeGraphCluster
+	if err := json.Unmarshal(raw, &infos); err != nil {
+		return err
+	}
+	r.ClusterInfo = infos
+	r.Clusters = make([][]string, len(infos))
+	index := make(map[int]int, len(infos))
+	for i, c := range infos {
+		index[c.ID] = i
+		r.Clusters[i] = []string{}
+	}
+	for _, n := range r.Nodes {
+		if n.ClusterID == nil {
+			continue
+		}
+		if i, ok := index[*n.ClusterID]; ok {
+			r.Clusters[i] = append(r.Clusters[i], n.ID)
+		}
+	}
+	return nil
 }
 
 // FullKnowledgeGraphRequest represents a request to build a full knowledge graph.
@@ -1081,6 +1369,10 @@ type FullKnowledgeGraphRequest struct {
 	MinSimilarity    *float32 `json:"min_similarity,omitempty"`
 	ClusterThreshold *float32 `json:"cluster_threshold,omitempty"`
 	MaxEdgesPerNode  *int     `json:"max_edges_per_node,omitempty"`
+	// ContentPreviewChars cuts each node's Content to this many characters
+	// (1..10000; the server answers 400 outside) — server v0.12.2+. nil
+	// serves the full content. Nodes carry ContentLen / ContentTruncated.
+	ContentPreviewChars *int `json:"content_preview_chars,omitempty"`
 }
 
 // SummarizeRequest represents a request to summarize memories.
@@ -1106,11 +1398,72 @@ type DeduplicateRequest struct {
 	DryRun     bool     `json:"dry_run,omitempty"`
 }
 
+// DuplicateGroup is one group of near-duplicate memories found by Deduplicate.
+type DuplicateGroup struct {
+	CanonicalID   string   `json:"canonical_id"`
+	DuplicateIDs  []string `json:"duplicate_ids"`
+	AvgSimilarity float32  `json:"avg_similarity"`
+}
+
 // DeduplicateResponse represents the response from deduplication.
+//
+// The server sends groups as objects ({canonical_id, duplicate_ids,
+// avg_similarity}); they are decoded into DuplicateGroups, and Groups holds
+// each group's ids, canonical first. A list of id lists is still accepted.
 type DeduplicateResponse struct {
-	DuplicatesFound int        `json:"duplicates_found"`
-	RemovedCount    int        `json:"removed_count"`
-	Groups          [][]string `json:"groups"`
+	DuplicatesFound int `json:"duplicates_found"`
+	// RemovedCount is the number of duplicates merged (the server's
+	// duplicates_merged when removed_count is not sent).
+	RemovedCount int        `json:"removed_count"`
+	Groups       [][]string `json:"groups"`
+	// DuplicateGroups are the groups as the server reports them.
+	DuplicateGroups []DuplicateGroup `json:"-"`
+	// DuplicatesMerged is the number of duplicates merged.
+	DuplicatesMerged int `json:"duplicates_merged,omitempty"`
+	// DuplicatesSkippedChanged counts candidates not merged because the
+	// canonical memory or the duplicate changed (edited, expired, forgotten)
+	// between the scan and the write (server v0.12.2+; 0 on a dry run and on
+	// older servers).
+	DuplicatesSkippedChanged int `json:"duplicates_skipped_changed,omitempty"`
+}
+
+// UnmarshalJSON decodes both group shapes (see DeduplicateResponse).
+func (r *DeduplicateResponse) UnmarshalJSON(data []byte) error {
+	type plain DeduplicateResponse
+	aux := struct {
+		*plain
+		Groups       json.RawMessage `json:"groups"`
+		RemovedCount *int            `json:"removed_count"`
+	}{plain: (*plain)(r)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.RemovedCount != nil {
+		r.RemovedCount = *aux.RemovedCount
+	} else {
+		r.RemovedCount = r.DuplicatesMerged
+	}
+	r.Groups = nil
+	r.DuplicateGroups = nil
+	raw := bytes.TrimSpace(aux.Groups)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	var ids [][]string
+	if err := json.Unmarshal(raw, &ids); err == nil {
+		r.Groups = ids
+		return nil
+	}
+	var groups []DuplicateGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return err
+	}
+	r.DuplicateGroups = groups
+	r.Groups = make([][]string, len(groups))
+	for i, g := range groups {
+		r.Groups[i] = append([]string{g.CanonicalID}, g.DuplicateIDs...)
+	}
+	return nil
 }
 
 // ===========================================================================
@@ -1130,6 +1483,8 @@ type AnalyticsOverview struct {
 	TotalVectors     uint64  `json:"total_vectors"`
 	TotalNamespaces  uint64  `json:"total_namespaces"`
 	UptimeSeconds    uint64  `json:"uptime_seconds"`
+	// Unavailable lists namespaces left out of the totals (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // LatencyAnalytics represents latency analytics response.
@@ -1164,6 +1519,8 @@ type StorageAnalytics struct {
 	IndexBytes  uint64                      `json:"index_bytes"`
 	DataBytes   uint64                      `json:"data_bytes"`
 	ByNamespace map[string]NamespaceStorage `json:"by_namespace,omitempty"`
+	// Unavailable lists namespaces left out of the totals (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // NamespaceStorage represents storage info for a specific namespace.
@@ -1302,39 +1659,39 @@ type QueryExplainRequest struct {
 
 // QueryExplainResponse represents the response from query explain.
 type QueryExplainResponse struct {
-	Plan         map[string]interface{}   `json:"plan"`
-	Steps        []map[string]interface{} `json:"steps,omitempty"`
-	TotalTimeMs  *float64                 `json:"total_time_ms,omitempty"`
-	Results      []QueryResult            `json:"results,omitempty"`
-	IndexType    string                   `json:"index_type,omitempty"`
-	VectorsScanned *int64                 `json:"vectors_scanned,omitempty"`
+	Plan           map[string]interface{}   `json:"plan"`
+	Steps          []map[string]interface{} `json:"steps,omitempty"`
+	TotalTimeMs    *float64                 `json:"total_time_ms,omitempty"`
+	Results        []QueryResult            `json:"results,omitempty"`
+	IndexType      string                   `json:"index_type,omitempty"`
+	VectorsScanned *int64                   `json:"vectors_scanned,omitempty"`
 }
 
 // ColumnUpsertRequest represents a column-format upsert request for efficient bulk operations.
 type ColumnUpsertRequest struct {
-	IDs        []string                          `json:"ids"`
-	Vectors    [][]float32                       `json:"vectors"`
-	Attributes map[string][]interface{}           `json:"attributes,omitempty"`
-	TTLSeconds *int                              `json:"ttl_seconds,omitempty"`
-	Dimension  *int                              `json:"dimension,omitempty"`
+	IDs        []string                 `json:"ids"`
+	Vectors    [][]float32              `json:"vectors"`
+	Attributes map[string][]interface{} `json:"attributes,omitempty"`
+	TTLSeconds *int                     `json:"ttl_seconds,omitempty"`
+	Dimension  *int                     `json:"dimension,omitempty"`
 }
 
 // WarmCacheRequest represents a request to warm the cache.
 type WarmCacheRequest struct {
-	VectorIDs       []string `json:"vector_ids,omitempty"`
-	Priority        string   `json:"priority,omitempty"`
-	TargetTier      string   `json:"target_tier,omitempty"`
-	Background      bool     `json:"background,omitempty"`
-	TTLHintSeconds  *int     `json:"ttl_hint_seconds,omitempty"`
-	AccessPattern   string   `json:"access_pattern,omitempty"`
-	MaxVectors      *int     `json:"max_vectors,omitempty"`
+	VectorIDs      []string `json:"vector_ids,omitempty"`
+	Priority       string   `json:"priority,omitempty"`
+	TargetTier     string   `json:"target_tier,omitempty"`
+	Background     bool     `json:"background,omitempty"`
+	TTLHintSeconds *int     `json:"ttl_hint_seconds,omitempty"`
+	AccessPattern  string   `json:"access_pattern,omitempty"`
+	MaxVectors     *int     `json:"max_vectors,omitempty"`
 }
 
 // WarmCacheResponse represents the response from cache warming.
 type WarmCacheResponse struct {
-	Status       string `json:"status"`
-	EntriesWarmed int   `json:"entries_warmed"`
-	TimeTakenMs  *int64 `json:"time_taken_ms,omitempty"`
+	Status        string `json:"status"`
+	EntriesWarmed int    `json:"entries_warmed"`
+	TimeTakenMs   *int64 `json:"time_taken_ms,omitempty"`
 }
 
 // ===========================================================================
@@ -1349,16 +1706,21 @@ type OpsStats struct {
 	UptimeSeconds  int64  `json:"uptime_seconds"`
 	Timestamp      int64  `json:"timestamp"`
 	State          string `json:"state"`
+	// Unavailable lists namespaces left out of TotalVectors (server v0.12.2+;
+	// NamespaceCount still counts them). Empty when every namespace answered.
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // ClusterStatus represents the cluster status response.
 type ClusterStatus struct {
-	Status       string `json:"status"`
-	Nodes        int    `json:"nodes"`
-	Healthy      bool   `json:"healthy"`
-	Version      string `json:"version,omitempty"`
+	Status  string `json:"status"`
+	Nodes   int    `json:"nodes"`
+	Healthy bool   `json:"healthy"`
+	Version string `json:"version,omitempty"`
 	// RedisHealthy indicates Redis connectivity (OPS-3).
-	RedisHealthy *bool  `json:"redis_healthy,omitempty"`
+	RedisHealthy *bool `json:"redis_healthy,omitempty"`
+	// Unavailable lists namespaces left out of the answer (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // ClusterNode represents a cluster node.
@@ -1408,10 +1770,10 @@ type SlowQueryOptions struct {
 
 // AutoPilotConfig represents the AutoPilot configuration.
 type AutoPilotConfig struct {
-	Enabled                      bool    `json:"enabled"`
-	DedupThreshold               float32 `json:"dedup_threshold"`
-	DedupIntervalHours           uint64  `json:"dedup_interval_hours"`
-	ConsolidationIntervalHours   uint64  `json:"consolidation_interval_hours"`
+	Enabled                    bool    `json:"enabled"`
+	DedupThreshold             float32 `json:"dedup_threshold"`
+	DedupIntervalHours         uint64  `json:"dedup_interval_hours"`
+	ConsolidationIntervalHours uint64  `json:"consolidation_interval_hours"`
 }
 
 // DedupResultSnapshot is the result from a deduplication cycle.
@@ -1431,13 +1793,13 @@ type ConsolidationResultSnapshot struct {
 
 // AutoPilotStatusResponse is returned by GET /v1/admin/autopilot/status (PILOT-1).
 type AutoPilotStatusResponse struct {
-	Config                AutoPilotConfig              `json:"config"`
-	LastDedupAt           *uint64                      `json:"last_dedup_at,omitempty"`
-	LastConsolidationAt   *uint64                      `json:"last_consolidation_at,omitempty"`
-	LastDedup             *DedupResultSnapshot          `json:"last_dedup,omitempty"`
-	LastConsolidation     *ConsolidationResultSnapshot  `json:"last_consolidation,omitempty"`
-	TotalDedupRemoved     uint64                       `json:"total_dedup_removed"`
-	TotalConsolidated     uint64                       `json:"total_consolidated"`
+	Config              AutoPilotConfig              `json:"config"`
+	LastDedupAt         *uint64                      `json:"last_dedup_at,omitempty"`
+	LastConsolidationAt *uint64                      `json:"last_consolidation_at,omitempty"`
+	LastDedup           *DedupResultSnapshot         `json:"last_dedup,omitempty"`
+	LastConsolidation   *ConsolidationResultSnapshot `json:"last_consolidation,omitempty"`
+	TotalDedupRemoved   uint64                       `json:"total_dedup_removed"`
+	TotalConsolidated   uint64                       `json:"total_consolidated"`
 }
 
 // AutoPilotConfigRequest is the request for PUT /v1/admin/autopilot/config (PILOT-2).
@@ -1539,7 +1901,14 @@ type DecayStatsResponse struct {
 // API Key Types
 // ===========================================================================
 
-// ApiKey represents an API key.
+// ApiKey represents an API key, as returned by CreateKey, ListKeys, GetKey
+// and RotateKey.
+//
+// It decodes the server's key shapes: ID is read from "key_id" (or "id"),
+// Key from "key" (or "new_key" after a rotation), and the numeric
+// created_at / expires_at timestamps (Unix seconds) are kept as decimal
+// strings. For the typed server shape use KeyInfo (UpdateKey,
+// UpdateNamespaceKey).
 type ApiKey struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -1548,13 +1917,102 @@ type ApiKey struct {
 	CreatedAt   string   `json:"created_at"`
 	ExpiresAt   string   `json:"expires_at,omitempty"`
 	Active      bool     `json:"active"`
+	// Scope is the key's scope (read, write, admin, super_admin).
+	Scope string `json:"scope,omitempty"`
+	// Namespaces are the key's grants: nil = every namespace, empty = none.
+	Namespaces []string `json:"namespaces,omitempty"`
+	// GrantsVersion is the grant syntax the server reads Namespaces with
+	// (server v0.12.2+): 1 = exact names and "p*" prefix patterns, 0 = a key
+	// created before v0.12.2 (a "foo*" entry is a literal that grants
+	// nothing). nil on older servers.
+	GrantsVersion *int `json:"grants_version,omitempty"`
+	// InertNamespaces are the entries of Namespaces that grant nothing
+	// (server v0.12.2+).
+	InertNamespaces []string `json:"inert_namespaces,omitempty"`
+	// Warning is the server's reminder to save a newly minted key.
+	Warning string `json:"warning,omitempty"`
 }
 
-// CreateKeyRequest represents a request to create an API key.
+// UnmarshalJSON accepts the server's key shapes (see ApiKey).
+func (k *ApiKey) UnmarshalJSON(data []byte) error {
+	var w struct {
+		ID              string          `json:"id"`
+		KeyID           string          `json:"key_id"`
+		Name            string          `json:"name"`
+		Key             string          `json:"key"`
+		NewKey          string          `json:"new_key"`
+		Permissions     []string        `json:"permissions"`
+		CreatedAt       json.RawMessage `json:"created_at"`
+		ExpiresAt       json.RawMessage `json:"expires_at"`
+		Active          bool            `json:"active"`
+		Scope           string          `json:"scope"`
+		Namespaces      []string        `json:"namespaces"`
+		GrantsVersion   *int            `json:"grants_version"`
+		InertNamespaces []string        `json:"inert_namespaces"`
+		Warning         string          `json:"warning"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*k = ApiKey{
+		ID:              firstNonEmpty(w.ID, w.KeyID),
+		Name:            w.Name,
+		Key:             firstNonEmpty(w.Key, w.NewKey),
+		Permissions:     w.Permissions,
+		CreatedAt:       rawTimestamp(w.CreatedAt),
+		ExpiresAt:       rawTimestamp(w.ExpiresAt),
+		Active:          w.Active,
+		Scope:           w.Scope,
+		Namespaces:      w.Namespaces,
+		GrantsVersion:   w.GrantsVersion,
+		InertNamespaces: w.InertNamespaces,
+		Warning:         w.Warning,
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// rawTimestamp renders a JSON string or number as a string ("" for null or absent).
+func rawTimestamp(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n.String()
+	}
+	return ""
+}
+
+// CreateKeyRequest represents a request to create an API key (POST /admin/keys).
 type CreateKeyRequest struct {
 	Name        string   `json:"name"`
 	Permissions []string `json:"permissions,omitempty"`
 	ExpiresAt   string   `json:"expires_at,omitempty"`
+	// Scope is the key's scope: read, write, admin or super_admin. The
+	// server requires it.
+	Scope string `json:"scope,omitempty"`
+	// Namespaces are the key's grants. nil omits the field (every
+	// namespace); GrantAllNamespaces sends null (every namespace);
+	// GrantNamespaces(...) sends the list ([] = no namespace). Since server
+	// v0.12.2 an entry may be a prefix pattern ("team-*") and invalid
+	// entries get 400.
+	Namespaces *NamespaceGrants `json:"namespaces,omitempty"`
+	// ExpiresInDays makes the key expire after that many days.
+	ExpiresInDays *int `json:"expires_in_days,omitempty"`
 }
 
 // KeyUsage represents usage statistics for an API key.
@@ -1582,6 +2040,10 @@ type CrossAgentNetworkRequest struct {
 	MinImportance float32 `json:"min_importance,omitempty"`
 	// Maximum cross-agent edges to return (default 200).
 	MaxCrossEdges int `json:"max_cross_edges,omitempty"`
+	// ContentPreviewChars cuts each node's Content to this many characters
+	// (1..10000; the server answers 400 outside) — server v0.12.2+. nil
+	// serves the full content. Nodes carry ContentLen / ContentTruncated.
+	ContentPreviewChars *int `json:"content_preview_chars,omitempty"`
 }
 
 // AgentNetworkInfo is summary information for one agent.
@@ -1600,6 +2062,12 @@ type AgentNetworkNode struct {
 	Tags       []string `json:"tags"`
 	MemoryType string   `json:"memory_type"`
 	CreatedAt  int64    `json:"created_at"`
+	// ContentLen is the length of the FULL content in characters (server
+	// v0.12.2+). nil on older servers.
+	ContentLen *int `json:"content_len,omitempty"`
+	// ContentTruncated reports whether Content was cut to the requested
+	// ContentPreviewChars (server v0.12.2+).
+	ContentTruncated *bool `json:"content_truncated,omitempty"`
 }
 
 // AgentNetworkEdge is a similarity edge between memories from two different agents.
@@ -1672,12 +2140,12 @@ type DakeraEvent struct {
 	// namespace_created
 	Dimension int `json:"dimension,omitempty"`
 	// operation_progress
-	OperationID string   `json:"operation_id,omitempty"`
-	OpType      string   `json:"op_type,omitempty"`
-	Progress    int      `json:"progress,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	Message     string   `json:"message,omitempty"`
-	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	OpType      string `json:"op_type,omitempty"`
+	Progress    int    `json:"progress,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Message     string `json:"message,omitempty"`
+	UpdatedAt   int64  `json:"updated_at,omitempty"`
 	// job_progress
 	JobID   string `json:"job_id,omitempty"`
 	JobType string `json:"job_type,omitempty"`
@@ -1817,12 +2285,12 @@ type BatchStoreMemoryRequest struct {
 
 // BatchStoredMemory is a single stored memory returned in a BatchStoreMemoryResponse.
 type BatchStoredMemory struct {
-	ID        string   `json:"id"`
-	Content   string   `json:"content"`
-	AgentID   string   `json:"agent_id"`
-	Tags      []string `json:"tags"`
+	ID         string   `json:"id"`
+	Content    string   `json:"content"`
+	AgentID    string   `json:"agent_id"`
+	Tags       []string `json:"tags"`
 	Importance float32  `json:"importance"`
-	CreatedAt int64    `json:"created_at"`
+	CreatedAt  int64    `json:"created_at"`
 }
 
 // BatchStoreMemoryResponse is the response from POST /v1/memories/store/batch.
@@ -1833,6 +2301,10 @@ type BatchStoreMemoryResponse struct {
 	StoredCount int `json:"stored_count"`
 	// TotalEmbeddingTimeMs is the time spent on ONNX embedding (milliseconds).
 	TotalEmbeddingTimeMs int64 `json:"total_embedding_time_ms"`
+	// EndedSessions lists the ended sessions this batch stored memories into
+	// (server v0.12.2+; the memories were stored all the same). Empty when
+	// none, and on older servers.
+	EndedSessions []string `json:"ended_sessions,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2357,30 +2829,48 @@ type KeySuccessResponse struct {
 
 // CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
 type CreateNamespaceKeyRequest struct {
-	Name         string `json:"name"`
-	ExpiresInDays *int  `json:"expires_in_days,omitempty"`
+	Name          string `json:"name"`
+	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
+	// Scope is the key's scope, at most admin. The server requires it.
+	Scope string `json:"scope,omitempty"`
+	// ExtraNamespaces are grants beyond the path namespace. Since server
+	// v0.12.2 they may be prefix patterns and must be contained in the
+	// caller's own grants.
+	ExtraNamespaces []string `json:"extra_namespaces,omitempty"`
 }
 
 // CreateNamespaceKeyResponse is returned by POST /v1/namespaces/:ns/keys (SEC-1).
 // The Key field is shown only once — store it securely.
 type CreateNamespaceKeyResponse struct {
-	KeyID     string  `json:"key_id"`
-	Key       string  `json:"key"`
-	Name      string  `json:"name"`
-	Namespace string  `json:"namespace"`
-	CreatedAt int64   `json:"created_at"`
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
-	Warning   string  `json:"warning"`
+	KeyID     string `json:"key_id"`
+	Key       string `json:"key"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	CreatedAt int64  `json:"created_at"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	Warning   string `json:"warning"`
+	// Scope is the key's scope.
+	Scope string `json:"scope,omitempty"`
+	// Namespaces are the key's grants (the path namespace and any extras).
+	Namespaces []string `json:"namespaces,omitempty"`
 }
 
 // NamespaceKeyInfo holds namespace-scoped API key metadata (no secret) — SEC-1.
 type NamespaceKeyInfo struct {
-	KeyID     string  `json:"key_id"`
-	Name      string  `json:"name"`
-	Namespace string  `json:"namespace"`
-	CreatedAt int64   `json:"created_at"`
-	Active    bool    `json:"active"`
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
+	KeyID     string `json:"key_id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	CreatedAt int64  `json:"created_at"`
+	Active    bool   `json:"active"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	// Scope is the key's scope.
+	Scope string `json:"scope,omitempty"`
+	// Namespaces are the key's grants (nil = every namespace).
+	Namespaces []string `json:"namespaces,omitempty"`
+	// GrantsVersion is the grant syntax (server v0.12.2+; see KeyInfo).
+	GrantsVersion *int `json:"grants_version,omitempty"`
+	// InertNamespaces are the grants that grant nothing (server v0.12.2+).
+	InertNamespaces []string `json:"inert_namespaces,omitempty"`
 }
 
 // ListNamespaceKeysResponse is returned by GET /v1/namespaces/:ns/keys (SEC-1).
@@ -2392,13 +2882,13 @@ type ListNamespaceKeysResponse struct {
 
 // NamespaceKeyUsageResponse is returned by GET /v1/namespaces/:ns/keys/:key_id/usage (SEC-1).
 type NamespaceKeyUsageResponse struct {
-	KeyID                string  `json:"key_id"`
-	Namespace            string  `json:"namespace"`
-	TotalRequests        uint64  `json:"total_requests"`
-	SuccessfulRequests   uint64  `json:"successful_requests"`
-	FailedRequests       uint64  `json:"failed_requests"`
-	BytesTransferred     uint64  `json:"bytes_transferred"`
-	AvgLatencyMs         float64 `json:"avg_latency_ms"`
+	KeyID              string  `json:"key_id"`
+	Namespace          string  `json:"namespace"`
+	TotalRequests      uint64  `json:"total_requests"`
+	SuccessfulRequests uint64  `json:"successful_requests"`
+	FailedRequests     uint64  `json:"failed_requests"`
+	BytesTransferred   uint64  `json:"bytes_transferred"`
+	AvgLatencyMs       float64 `json:"avg_latency_ms"`
 }
 
 // ===========================================================================
@@ -2429,15 +2919,15 @@ type MemoryExportResponse struct {
 // session_id, importance, timestamp (Unix milliseconds)}. ID carries the
 // integer as text; a string id decodes too.
 type AuditEvent struct {
-	ID        string                 `json:"id"`
-	EventType string                 `json:"event_type"`
-	AgentID   string                 `json:"agent_id,omitempty"`
-	MemoryID  string                 `json:"memory_id,omitempty"`
-	SessionID string                 `json:"session_id,omitempty"`
-	Importance *float32              `json:"importance,omitempty"`
-	Namespace string                 `json:"namespace,omitempty"`
-	Timestamp int64                  `json:"timestamp"`
-	Details   map[string]interface{} `json:"details,omitempty"`
+	ID         string                 `json:"id"`
+	EventType  string                 `json:"event_type"`
+	AgentID    string                 `json:"agent_id,omitempty"`
+	MemoryID   string                 `json:"memory_id,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	Importance *float32               `json:"importance,omitempty"`
+	Namespace  string                 `json:"namespace,omitempty"`
+	Timestamp  int64                  `json:"timestamp"`
+	Details    map[string]interface{} `json:"details,omitempty"`
 }
 
 // UnmarshalJSON accepts the server's integer id as well as a string id.
@@ -2466,9 +2956,9 @@ func (e *AuditEvent) UnmarshalJSON(data []byte) error {
 type AuditListResponse struct {
 	Events []AuditEvent `json:"events"`
 	// Count is the number of events returned (the server's field); Total mirrors it.
-	Count  int          `json:"count"`
-	Total  int          `json:"total"`
-	Cursor string       `json:"cursor,omitempty"`
+	Count  int    `json:"count"`
+	Total  int    `json:"total"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // AuditExportResponse is returned by ExportAudit (GET /v1/audit/export, OBS-1).
@@ -2759,6 +3249,11 @@ type WakeUpOptions struct {
 	TopN *int
 	// MinImportance filters out memories below this importance threshold (default 0.0).
 	MinImportance *float32
+	// IncludeDerived also ranks the derived records (CE-31 sentence
+	// sub-memories). Since server v0.12.2 wake-up leaves them out by default
+	// and TotalAvailable counts memories only; true restores the previous
+	// behaviour. Sent only when true.
+	IncludeDerived bool
 }
 
 // WakeUpResponse is returned by GET /v1/agents/{agent_id}/wake-up (DAK-1690).
@@ -2794,6 +3289,28 @@ type CompressResponse struct {
 	// DurationMs is the wall-clock duration of the compression pass in
 	// milliseconds. May be zero if the server does not report it.
 	DurationMs float64 `json:"duration_ms,omitempty"`
+	// MemoriesScanned is the number of memories the pass looked at.
+	MemoriesScanned int64 `json:"memories_scanned,omitempty"`
+	// ClustersFound is the number of clusters found.
+	ClustersFound int64 `json:"clusters_found,omitempty"`
+	// SummariesCreated is the number of summaries written (since server
+	// v0.12.2: what was actually written).
+	SummariesCreated int64 `json:"summaries_created,omitempty"`
+	// OriginalsDeprecated is the number of originals deprecated.
+	OriginalsDeprecated int64 `json:"originals_deprecated,omitempty"`
+	// SummaryIDs are the ids of the summaries written.
+	SummaryIDs []string `json:"summary_ids,omitempty"`
+	// DeprecatedIDs are the ids of the originals deprecated.
+	DeprecatedIDs []string `json:"deprecated_ids,omitempty"`
+	// SummariesSkipped are summaries the server refused or could not store
+	// (server v0.12.2+); the originals of their clusters are NOT deprecated.
+	SummariesSkipped []CompressSkippedSummary `json:"summaries_skipped,omitempty"`
+}
+
+// CompressSkippedSummary is a summary CompressAgent did not write, and why.
+type CompressSkippedSummary struct {
+	SummaryID string `json:"summary_id"`
+	Reason    string `json:"reason"`
 }
 
 // FulltextReindexNamespaceResult is the per-namespace breakdown from
@@ -2959,6 +3476,8 @@ type ShardInfo struct {
 type ShardListResponse struct {
 	Shards []ShardInfo `json:"shards"`
 	Total  uint32      `json:"total"`
+	// Unavailable lists namespaces left out of the answer (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // ShardRebalanceRequest is the request body for POST /admin/cluster/shards/rebalance.
@@ -2985,12 +3504,12 @@ type ShardRebalanceResponse struct {
 
 // MaintenanceStatus is returned by GET /admin/cluster/maintenance.
 type MaintenanceStatus struct {
-	Enabled              bool     `json:"enabled"`
-	Reason               string   `json:"reason,omitempty"`
-	EnabledAt            *uint64  `json:"enabled_at,omitempty"`
-	ScheduledEnd         *uint64  `json:"scheduled_end,omitempty"`
-	NodesInMaintenance   []string `json:"nodes_in_maintenance"`
-	RejectingRequests    bool     `json:"rejecting_requests"`
+	Enabled            bool     `json:"enabled"`
+	Reason             string   `json:"reason,omitempty"`
+	EnabledAt          *uint64  `json:"enabled_at,omitempty"`
+	ScheduledEnd       *uint64  `json:"scheduled_end,omitempty"`
+	NodesInMaintenance []string `json:"nodes_in_maintenance"`
+	RejectingRequests  bool     `json:"rejecting_requests"`
 }
 
 // EnableMaintenanceRequest is the request body for POST /admin/cluster/maintenance/enable.
@@ -3008,11 +3527,11 @@ type DisableMaintenanceRequest struct {
 
 // QuotaConfig is the quota configuration for a namespace.
 type QuotaConfig struct {
-	MaxVectors      *uint64 `json:"max_vectors,omitempty"`
-	MaxStorageBytes *uint64 `json:"max_storage_bytes,omitempty"`
-	MaxDimensions   *int    `json:"max_dimensions,omitempty"`
-	MaxMetadataBytes *int   `json:"max_metadata_bytes,omitempty"`
-	Enforcement     string  `json:"enforcement,omitempty"`
+	MaxVectors       *uint64 `json:"max_vectors,omitempty"`
+	MaxStorageBytes  *uint64 `json:"max_storage_bytes,omitempty"`
+	MaxDimensions    *int    `json:"max_dimensions,omitempty"`
+	MaxMetadataBytes *int    `json:"max_metadata_bytes,omitempty"`
+	Enforcement      string  `json:"enforcement,omitempty"`
 }
 
 // QuotaUsage holds current quota usage.
@@ -3026,13 +3545,13 @@ type QuotaUsage struct {
 
 // QuotaStatus holds combined quota config and usage.
 type QuotaStatus struct {
-	Namespace            string      `json:"namespace"`
-	Config               QuotaConfig `json:"config"`
-	Usage                QuotaUsage  `json:"usage"`
-	VectorUsagePercent   *float32    `json:"vector_usage_percent,omitempty"`
-	StorageUsagePercent  *float32    `json:"storage_usage_percent,omitempty"`
-	IsExceeded           bool        `json:"is_exceeded"`
-	ExceededQuotas       []string    `json:"exceeded_quotas"`
+	Namespace           string      `json:"namespace"`
+	Config              QuotaConfig `json:"config"`
+	Usage               QuotaUsage  `json:"usage"`
+	VectorUsagePercent  *float32    `json:"vector_usage_percent,omitempty"`
+	StorageUsagePercent *float32    `json:"storage_usage_percent,omitempty"`
+	IsExceeded          bool        `json:"is_exceeded"`
+	ExceededQuotas      []string    `json:"exceeded_quotas"`
 }
 
 // QuotaListResponse is returned by GET /admin/quotas.
@@ -3067,9 +3586,9 @@ type SetQuotaResponse struct {
 
 // QuotaCheckRequest is the request body for POST /admin/quotas/{namespace}/check.
 type QuotaCheckRequest struct {
-	VectorIDs    []string `json:"vector_ids"`
-	Dimensions   *int     `json:"dimensions,omitempty"`
-	MetadataBytes *int    `json:"metadata_bytes,omitempty"`
+	VectorIDs     []string `json:"vector_ids"`
+	Dimensions    *int     `json:"dimensions,omitempty"`
+	MetadataBytes *int     `json:"metadata_bytes,omitempty"`
 }
 
 // QuotaCheckResult is returned by POST /admin/quotas/{namespace}/check.
@@ -3082,20 +3601,20 @@ type QuotaCheckResult struct {
 
 // AdminBackupInfo holds backup metadata.
 type AdminBackupInfo struct {
-	BackupID        string  `json:"backup_id"`
-	Name            string  `json:"name"`
-	BackupType      string  `json:"backup_type"`
-	Status          string  `json:"status"`
+	BackupID        string   `json:"backup_id"`
+	Name            string   `json:"name"`
+	BackupType      string   `json:"backup_type"`
+	Status          string   `json:"status"`
 	Namespaces      []string `json:"namespaces"`
-	VectorCount     uint64  `json:"vector_count"`
-	SizeBytes       uint64  `json:"size_bytes"`
-	CreatedAt       uint64  `json:"created_at"`
-	CompletedAt     *uint64 `json:"completed_at,omitempty"`
-	DurationSeconds *uint64 `json:"duration_seconds,omitempty"`
-	StoragePath     string  `json:"storage_path,omitempty"`
-	Error           string  `json:"error,omitempty"`
-	Encrypted       bool    `json:"encrypted"`
-	Compression     string  `json:"compression,omitempty"`
+	VectorCount     uint64   `json:"vector_count"`
+	SizeBytes       uint64   `json:"size_bytes"`
+	CreatedAt       uint64   `json:"created_at"`
+	CompletedAt     *uint64  `json:"completed_at,omitempty"`
+	DurationSeconds *uint64  `json:"duration_seconds,omitempty"`
+	StoragePath     string   `json:"storage_path,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	Encrypted       bool     `json:"encrypted"`
+	Compression     string   `json:"compression,omitempty"`
 }
 
 // BackupListResponse is returned by GET /admin/backups.
@@ -3235,6 +3754,8 @@ type TtlStatsResponse struct {
 	Namespaces   []TtlNamespaceStats `json:"namespaces"`
 	TotalWithTtl uint64              `json:"total_with_ttl"`
 	TotalExpired uint64              `json:"total_expired"`
+	// Unavailable lists namespaces left out of the totals (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // TtlCleanupRequest is the request body for POST /admin/ttl/cleanup.
@@ -3325,6 +3846,8 @@ type StorageTierOverview struct {
 	Architecture []TierInfo   `json:"architecture"`
 	Config       TierConfig   `json:"config"`
 	Activity     TierActivity `json:"activity"`
+	// Unavailable lists namespaces left out of the answer (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // MemoryTypeStatsResponse is returned by GET /admin/memory-type-stats.
@@ -3335,6 +3858,8 @@ type MemoryTypeStatsResponse struct {
 	Semantic        uint64 `json:"semantic"`
 	Procedural      uint64 `json:"procedural"`
 	AgentNamespaces uint64 `json:"agent_namespaces"`
+	// Unavailable lists namespaces left out of the totals (server v0.12.2+).
+	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
 }
 
 // MigrateNamespaceDimensionsRequest is the request body for POST /admin/namespaces/migrate-dimensions.
@@ -3392,4 +3917,121 @@ type DrainReembedResponse struct {
 type StaticCountResponse struct {
 	// StaticCount is the number of _embedding_kind=static vectors pending re-embedding.
 	StaticCount int `json:"static_count"`
+}
+
+// ===========================================================================
+// Derived data (server v0.12.2)
+// ===========================================================================
+
+// DerivationHeal is a node's one-time derivation heal after the upgrade to
+// server v0.12.2.
+type DerivationHeal struct {
+	Version       int     `json:"version"`
+	Complete      bool    `json:"complete"`
+	Namespace     *string `json:"namespace,omitempty"`
+	Cursor        *string `json:"cursor,omitempty"`
+	ParentsHealed int64   `json:"parents_healed"`
+	GraphAdopted  int64   `json:"graph_adopted"`
+	StartedAt     *int64  `json:"started_at,omitempty"`
+	CompletedAt   *int64  `json:"completed_at,omitempty"`
+}
+
+// DerivationReconciler is the state of the background derivation reconciler.
+type DerivationReconciler struct {
+	// State is idle, waiting, standby, deferred, running or sleeping.
+	State         string  `json:"state"`
+	LastTickAt    *int64  `json:"last_tick_at,omitempty"`
+	Ticks         int64   `json:"ticks"`
+	NextNamespace *string `json:"next_namespace,omitempty"`
+}
+
+// DerivationCounters are per-process counters of the derivation machinery
+// since the server started.
+type DerivationCounters struct {
+	Derived        int64 `json:"derived"`
+	Adopted        int64 `json:"adopted"`
+	Rewritten      int64 `json:"rewritten"`
+	DeletedStale   int64 `json:"deleted_stale"`
+	DeletedOrphans int64 `json:"deleted_orphans"`
+	RecheckDeleted int64 `json:"recheck_deleted"`
+	Retries        int64 `json:"retries"`
+	Deferred       int64 `json:"deferred"`
+	Stamped        int64 `json:"stamped"`
+	Superseded     int64 `json:"superseded"`
+	BM25Restored   int64 `json:"bm25_restored"`
+	GraphRebuilds  int64 `json:"graph_rebuilds"`
+	GraphAdopted   int64 `json:"graph_adopted"`
+}
+
+// DerivationStatus is the response from GET /admin/derivations/status
+// (server v0.12.2+): what derived data is owed across every agent namespace.
+type DerivationStatus struct {
+	// Settled is true when every owed count is 0 and nothing is in flight.
+	Settled bool `json:"settled"`
+	// PendingSentences are sentences their parents call for with no child yet.
+	PendingSentences int64 `json:"pending_sentences"`
+	// PendingParents are parents with at least one pending sentence.
+	PendingParents int64 `json:"pending_parents"`
+	// UnmarkedParents are memories with text and no derivation marker.
+	UnmarkedParents int64 `json:"unmarked_parents"`
+	// StaleChildren are children whose sentence the parent's text no longer has.
+	StaleChildren int64 `json:"stale_children"`
+	// OrphanChildren are children whose parent is not stored.
+	OrphanChildren int64 `json:"orphan_children"`
+	// RemetaChildren are kept children whose inherited fields are out of date.
+	RemetaChildren int64 `json:"remeta_children"`
+	// DuplicateChildren are second children of one sentence.
+	DuplicateChildren int64 `json:"duplicate_children"`
+	// LegacyChildren are children without a marker under a marked parent.
+	LegacyChildren int64 `json:"legacy_children"`
+	// BM25Missing are memory records missing from the full-text index.
+	BM25Missing int64 `json:"bm25_missing"`
+	// GraphOwed are memories whose graph edges are owed and not queued.
+	GraphOwed int64 `json:"graph_owed"`
+	// InFlight is the number of derivation runs in flight.
+	InFlight int64 `json:"in_flight"`
+	// GraphQueueOwed are memories whose edges the edge queue holds.
+	GraphQueueOwed int64 `json:"graph_queue_owed"`
+	// DirtyNamespaces are namespaces marked for the reconciler.
+	DirtyNamespaces []string `json:"dirty_namespaces"`
+	// Namespaces is the number of agent namespaces counted.
+	Namespaces int64 `json:"namespaces"`
+	// UnreadableNamespaces could not be indexed and are not counted.
+	UnreadableNamespaces []string `json:"unreadable_namespaces"`
+	// Heal is this node's one-time heal; nil until loaded.
+	Heal *DerivationHeal `json:"heal,omitempty"`
+	// Reconciler is the background reconciler's state.
+	Reconciler DerivationReconciler `json:"reconciler"`
+	// Counters are per-process counters since start.
+	Counters DerivationCounters `json:"counters"`
+}
+
+// DrainDerivationsRequest is the optional body of POST /admin/derivations/drain.
+type DrainDerivationsRequest struct {
+	// TimeoutSecs bounds the drain (server default 600, capped at 4/5 of the
+	// server's request timeout).
+	TimeoutSecs *int `json:"timeout_secs,omitempty"`
+}
+
+// DrainDerivationsResponse is the response from POST /admin/derivations/drain
+// (server v0.12.2+).
+type DrainDerivationsResponse struct {
+	// Settled is true when nothing is owed any more.
+	Settled bool `json:"settled"`
+	// TimedOut is true only when the drain stopped on the timeout unsettled.
+	TimedOut  bool  `json:"timed_out"`
+	Rounds    int64 `json:"rounds"`
+	ElapsedMs int64 `json:"elapsed_ms"`
+	// ParentsRun is the number of parents whose derivation ran.
+	ParentsRun int64 `json:"parents_run"`
+	// PendingLeft are sentences the last round could not derive.
+	PendingLeft int64 `json:"pending_left"`
+	// Deleted are stale, orphaned or duplicate children deleted.
+	Deleted int64 `json:"deleted"`
+	// BM25Restored are full-text documents restored.
+	BM25Restored int64 `json:"bm25_restored"`
+	// GraphQueued are memories queued for a graph-edge rebuild.
+	GraphQueued int64 `json:"graph_queued"`
+	// Status is the derivation status after the drain.
+	Status DerivationStatus `json:"status"`
 }

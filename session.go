@@ -107,6 +107,14 @@ func (s *ChatMemorySession) Recall(ctx context.Context, query string, topK int) 
 	return resp.Memories, nil
 }
 
+// Touch records activity on the session so the server does not end it for
+// inactivity while the conversation is idle (server v0.12.2+, which ends
+// sessions after 4 hours without activity by default). Storing a turn counts
+// as activity too. See Client.TouchSession.
+func (s *ChatMemorySession) Touch(ctx context.Context) (*SessionTouchResponse, error) {
+	return s.client.TouchSession(ctx, s.sessionID)
+}
+
 // Close ends the Dakera session.
 func (s *ChatMemorySession) Close(ctx context.Context) (*SessionEndResponse, error) {
 	return s.client.EndSession(ctx, s.sessionID)

@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-10-08
+
+Support for Dakera server v0.12.2 (Dakera-AI/dakera#916). Every new request field is omitted
+unless you set it and every new response field is optional, so the SDK keeps working against
+v0.12.0 and v0.12.1 servers; the new routes answer `404` there.
+
+### Added
+
+- **Agents**: `CreateAgent(ctx, agentID)` — `POST /v1/agents` creates an agent (its memory
+  namespace) before its first memory. `CreateAgentResponse.Created` is `true` on `201` and `false`
+  for an existing agent (`200`, left untouched). `AgentSummary` gains `VectorCount` and
+  `Unavailable`.
+- **Keys**:
+  - `UpdateKey` (`PATCH /admin/keys/{id}`) and `UpdateNamespaceKey`
+    (`PATCH /v1/namespaces/{ns}/keys/{id}`) rename a key or replace its namespaces.
+    `UpdateKeyRequest.Namespaces` is a `*NamespaceGrants`: `nil` leaves the list unchanged,
+    `GrantAllNamespaces()` sends `null` (every namespace), `GrantNamespaces(...)` sends the list
+    (`[]` with no names). Both return the new `KeyInfo` type.
+  - `RotateKeyWithOptions(ctx, id, &RotateKeyOptions{GraceSecs: ...})` keeps the old key working
+    for up to 7 days (`MaxRotationGraceSecs`); `RotateKeyResponse` carries `OldKeyID` and
+    `OldKeyExpiresAt`. Without a grace period no body is sent, as before.
+  - `Whoami(ctx)` — `GET /v1/auth/whoami`: the key the client authenticates with, its scope,
+    grants, `Unrestricted`, `GrantsVersion`, `InertNamespaces` and `AuthEnabled`.
+  - `KeyInfo`, `ApiKey` and `NamespaceKeyInfo` carry `GrantsVersion` (1 = prefix patterns active,
+    0 = a pre-0.12.2 key whose `foo*` entries are inert until its namespaces are saved again) and
+    `InertNamespaces`. `KeyScope*` constants.
+  - `CreateKeyRequest` gains `Scope` (required by the server), `Namespaces` (`*NamespaceGrants`)
+    and `ExpiresInDays`; `CreateNamespaceKeyRequest` gains `Scope` and `ExtraNamespaces`.
+- **Namespaces**: `ListNamespacesWithKinds` (the `kinds` map of `GET /v1/namespaces`),
+  `NamespaceInfo.Kind` and the `NamespaceKind*` constants (`agent`, `data`, `system`).
+- **Capabilities v2**: `ServerCapabilities.Auth`, `.Naming` and `.Sessions` (nil on older
+  servers), with `SupportsKeyUpdate()`, `SupportsPrefixGrants()` and `SupportsSessionTouch()`.
+- **Sessions**:
+  - `StartSessionRequest.IdleTimeoutSecs` (`*int`, so `0` = never ended for inactivity can be
+    sent; at most `MaxSessionIdleTimeoutSecs`) and `StartSessionRequest.ID`.
+  - `TouchSession(ctx, id)` — `POST /v1/sessions/{id}/touch` — and `ChatMemorySession.Touch`.
+    `SessionTouchResponse` has `SessionState` and `IdleDeadlineAt`; an ended session is never
+    re-opened.
+  - `Session` gains `LastActivityAt`, `EndedReason` (`SessionEndedByClient` /
+    `SessionEndedIdle`), `IdleSince`, `IdleTimeoutSecs` and `IsEnded()`.
+  - `StoreMemoryResponse.SessionState` (`SessionStateActive` / `SessionStateEnded`) and
+    `BatchStoreMemoryResponse.EndedSessions` tell a client that it stored into an ended session.
+  - `SessionMemoriesWithOptions` — limit, offset, `CountOnly`, `ContentPreviewChars` — returning
+    the session, the memories and the total.
+  - `GetSessionIdleTimeout` / `SetSessionIdleTimeout` read and set the server-wide
+    `session_idle_timeout_secs` of `/admin/config` (`ConfigKeySessionIdleTimeoutSecs`).
+  - `MemoryEvent.Reason` on `session_ended` events.
+- **Derived records and previews**:
+  - `AgentMemoriesOptions.IncludeDerived`, `.Offset` and `.ContentPreviewChars`;
+    `WakeUpOptions.IncludeDerived`.
+  - `ContentPreviewChars` on `FullKnowledgeGraphRequest` and `CrossAgentNetworkRequest`;
+    `ContentLen` / `ContentTruncated` on `RecalledMemory`, `KnowledgeNode` and `AgentNetworkNode`.
+  - `AdminDerivationStatus` (`GET /admin/derivations/status`) and `AdminDrainDerivations`
+    (`POST /admin/derivations/drain`; `409` while another drain runs).
+- **Other response fields**: `DeduplicateResponse.DuplicatesSkippedChanged` and
+  `.DuplicatesMerged`; `CompressResponse.SummariesSkipped` plus the counts and ids the server
+  reports; `Unavailable []UnavailableNamespace` on `OpsStats`, `ClusterStatus`,
+  `ShardListResponse`, `TtlStatsResponse`, `StorageTierOverview`, `MemoryTypeStatsResponse`,
+  `AnalyticsOverview` and `StorageAnalytics`; `AgentStats.SubMemories`.
+
+### Fixed
+
+- **`SessionMemories`** decodes the server's `{session, memories, total}` answer (it expected a
+  bare list and failed on every server); a list is still accepted.
+- **`FullKnowledgeGraph`** decodes the server's cluster objects into
+  `KnowledgeGraphResponse.ClusterInfo` and fills `Clusters` with each cluster's node ids (it
+  expected lists of ids and failed); `Stats`, node `Tags`, `ClusterID`, `Centrality`, `CreatedAt`
+  and edge `SharedTags` are read.
+- **`Deduplicate`** decodes the server's group objects into `DuplicateGroups` (`Groups` holds the
+  ids, canonical first); `RemovedCount` falls back to `duplicates_merged`.
+- **`ListKeys`, `GetKey`, `CreateKey`, `RotateKey`** decode the server's key shapes: the
+  `{keys, total}` wrapper, `key_id`, `new_key` and numeric timestamps (kept as decimal strings in
+  `ApiKey.CreatedAt` / `ExpiresAt`).
+- **`AgentStats`** accepts the numeric `oldest_memory_at` / `newest_memory_at` the server sends.
+
+### Behaviour changes in server v0.12.2 to be aware of
+
+- Sessions end automatically after **4 hours without activity** by default. Keep a long-lived
+  session open with `TouchSession`, or start it with `IdleTimeoutSecs: &zero`. Storing into an
+  ended session still succeeds; check `SessionState` / `EndedSessions`.
+- Sessions are authorized by their agent: keys no longer need `_dakera_sessions` (the entry is
+  accepted and inert), a key without grants lists no sessions, and `EndSession` with a Read key
+  gets `403`.
+- Validation is stricter: invalid key grants, a client `dakera-curated` tag, `_dakera_*` metadata
+  keys other than `_dakera_content_date` / `_dakera_lang`, ids shaped `mem_s` + 24 hex, agent ids
+  over 241 bytes and TTLs over 100 years get `400` with the field named in the message.
+- The memory content limit is in **bytes** (`DAKERA_MAX_MEMORY_CONTENT_BYTES`, 100000 by default)
+  and also applies to `UpdateMemory`.
+- `AgentMemories` and `GetWakeUpContext` leave derived records (sentence sub-memories) out unless
+  `IncludeDerived` is set.
+
 ## [0.12.1] - 2026-10-01
 
 Fixes calls whose requests or answers did not match the server. Each was checked against

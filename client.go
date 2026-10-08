@@ -34,7 +34,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.12.1"
+const Version = "0.12.2"
 
 const defaultTimeout = 30 * time.Second
 
@@ -48,7 +48,7 @@ type Client struct {
 	httpClient  *http.Client
 
 	// OPS-1: last seen rate-limit headers
-	rlMu                sync.Mutex
+	rlMu                 sync.Mutex
 	lastRateLimitHeaders *RateLimitHeaders
 
 	// R9: per-instance capabilities cache (GET /v1/capabilities) + pre-flight switch
@@ -631,6 +631,21 @@ func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	return resp.Namespaces, nil
+}
+
+// ListNamespacesWithKinds returns every namespace with its kind —
+// GET /v1/namespaces. Kinds (NamespaceKindAgent / NamespaceKindData) is filled
+// by server v0.12.2+ and empty on older servers.
+func (c *Client) ListNamespacesWithKinds(ctx context.Context) (*NamespaceList, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/namespaces", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp NamespaceList
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
 }
 
 // GetNamespace returns information about a specific namespace.
@@ -1432,6 +1447,13 @@ func (c *Client) AgentGraphExport(ctx context.Context, agentID, format string) (
 // ===========================================================================
 
 // StartSession starts a new session.
+//
+// Server v0.12.2 ends a session automatically after it has been idle for its
+// timeout (4 hours by default). Set req.IdleTimeoutSecs to choose this
+// session's timeout (a pointer to 0 = never ended for inactivity), or keep it
+// open with TouchSession. Since v0.12.2 sessions are authorized by their agent
+// alone: the key needs Write on the agent's namespace, and no
+// _dakera_sessions grant.
 func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Session, error) {
 	respBody, err := c.request(ctx, "POST", "/v1/sessions/start", req)
 	if err != nil {
@@ -1446,6 +1468,12 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 }
 
 // EndSession ends a session and returns the session state and memory count.
+//
+// Server v0.12.2: a Read key gets 403 for any id (Write scope is checked
+// before the session is looked up); a session the server already ended
+// returns its persisted state (EndedReason "idle"); an unknown session, or one
+// of an agent the key cannot reach, returns the same idempotent 200 with an
+// empty AgentID and nothing written.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
 	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), map[string]interface{}{})
 	if err != nil {
@@ -1509,18 +1537,81 @@ func (c *Client) ListSessions(ctx context.Context, opts *ListSessionsOptions) ([
 	return wrapper.Sessions, nil
 }
 
-// SessionMemories gets memories for a session.
+// TouchSession records activity on an open session so the server does not end
+// it for inactivity — POST /v1/sessions/{id}/touch (server v0.12.2+). Write
+// scope and Write on the session's agent; a session of an agent the key cannot
+// reach answers 404 like a missing one.
+//
+// An ended session is never re-opened: the response then has SessionState
+// SessionStateEnded. An older server answers 404 (*NotFoundError).
+func (c *Client) TouchSession(ctx context.Context, sessionID string) (*SessionTouchResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/touch", url.PathEscape(sessionID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionTouchResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// SessionMemories gets memories for a session (the first page, server default
+// size). Use SessionMemoriesWithOptions for paging, the total and content
+// previews.
 func (c *Client) SessionMemories(ctx context.Context, sessionID string) ([]RecalledMemory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/sessions/%s/memories", sessionID), nil)
+	result, err := c.SessionMemoriesWithOptions(ctx, sessionID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return result.Memories, nil
+}
+
+// SessionMemoriesWithOptions gets a page of a session's memories —
+// GET /v1/sessions/{id}/memories — with the session and the total.
+//
+// opts.ContentPreviewChars (server v0.12.2+) cuts each memory's Content and
+// fills ContentLen / ContentTruncated; read a truncated memory in full with
+// GetMemory. A bare list answer is accepted too.
+func (c *Client) SessionMemoriesWithOptions(ctx context.Context, sessionID string, opts *SessionMemoriesOptions) (*SessionMemoriesResponse, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/memories", url.PathEscape(sessionID))
+	if opts != nil {
+		params := url.Values{}
+		if opts.Limit != nil {
+			params.Set("limit", strconv.Itoa(*opts.Limit))
+		}
+		if opts.Offset != nil {
+			params.Set("offset", strconv.Itoa(*opts.Offset))
+		}
+		if opts.CountOnly {
+			params.Set("count_only", "true")
+		}
+		if opts.ContentPreviewChars != nil {
+			params.Set("content_preview_chars", strconv.Itoa(*opts.ContentPreviewChars))
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	respBody, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []RecalledMemory
+	trimmed := bytes.TrimSpace(respBody)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var memories []RecalledMemory
+		if err := json.Unmarshal(trimmed, &memories); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		return &SessionMemoriesResponse{Memories: memories}, nil
+	}
+	var result SessionMemoriesResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ===========================================================================
@@ -1541,7 +1632,34 @@ func (c *Client) ListAgents(ctx context.Context) ([]AgentSummary, error) {
 	return result, nil
 }
 
+// CreateAgent creates an agent (its memory namespace) before its first memory
+// — POST /v1/agents (server v0.12.2+). It needs Write on the agent's namespace
+// (_dakera_agent_<agentID>), so a key granted "_dakera_agent_mlx-*" can create
+// agents whose ids start with "mlx-".
+//
+// Created is true when the agent was created (HTTP 201) and false when it
+// already existed and was left untouched (HTTP 200). An invalid id (more than
+// 241 bytes, a leading "_dakera_", characters outside [a-zA-Z0-9_.-]) gets
+// 400. An older server has no such route.
+func (c *Client) CreateAgent(ctx context.Context, agentID string) (*CreateAgentResponse, error) {
+	respBody, err := c.request(ctx, "POST", "/v1/agents", map[string]string{"agent_id": agentID})
+	if err != nil {
+		return nil, err
+	}
+	var result CreateAgentResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
 // AgentMemories gets memories for an agent.
+//
+// Since server v0.12.2 the listing leaves derived records (CE-31 sentence
+// sub-memories) out unless opts.IncludeDerived is set, and
+// opts.ContentPreviewChars cuts each memory's Content (ContentLen /
+// ContentTruncated are then set; read a truncated memory in full with
+// GetMemory).
 func (c *Client) AgentMemories(ctx context.Context, agentID string, opts *AgentMemoriesOptions) ([]RecalledMemory, error) {
 	path := fmt.Sprintf("/v1/agents/%s/memories", agentID)
 	if opts != nil {
@@ -1551,6 +1669,15 @@ func (c *Client) AgentMemories(ctx context.Context, agentID string, opts *AgentM
 		}
 		if opts.Limit != nil {
 			params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		}
+		if opts.Offset != nil {
+			params.Set("offset", strconv.Itoa(*opts.Offset))
+		}
+		if opts.IncludeDerived {
+			params.Set("include_derived", "true")
+		}
+		if opts.ContentPreviewChars != nil {
+			params.Set("content_preview_chars", strconv.Itoa(*opts.ContentPreviewChars))
 		}
 		if encoded := params.Encode(); encoded != "" {
 			path += "?" + encoded
@@ -1629,6 +1756,9 @@ func (c *Client) GetWakeUpContext(ctx context.Context, agentID string, opts *Wak
 		}
 		if opts.MinImportance != nil {
 			params.Set("min_importance", fmt.Sprintf("%g", *opts.MinImportance))
+		}
+		if opts.IncludeDerived {
+			params.Set("include_derived", "true")
 		}
 		if encoded := params.Encode(); encoded != "" {
 			path += "?" + encoded
@@ -2085,6 +2215,56 @@ func (c *Client) UpdateConfig(ctx context.Context, config map[string]interface{}
 	return result, nil
 }
 
+// ConfigKeySessionIdleTimeoutSecs is the GET/PUT /admin/config field holding
+// the server-wide session idle timeout in seconds (server v0.12.2+; 0 = the
+// server ends no session that did not set its own timeout; at most 2592000).
+const ConfigKeySessionIdleTimeoutSecs = "session_idle_timeout_secs"
+
+// MaxSessionIdleTimeoutSecs is the largest idle timeout a session or the
+// server may be given (30 days).
+const MaxSessionIdleTimeoutSecs = 2592000
+
+// GetSessionIdleTimeout returns the server-wide session idle timeout in
+// seconds from GET /admin/config (server v0.12.2+, Admin scope). ok is false
+// when the server does not report it (older servers).
+func (c *Client) GetSessionIdleTimeout(ctx context.Context) (secs int64, ok bool, err error) {
+	cfg, err := c.GetConfig(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	secs, ok = sessionIdleTimeoutFrom(cfg)
+	return secs, ok, nil
+}
+
+// SetSessionIdleTimeout sets the server-wide session idle timeout — PUT
+// /admin/config {"session_idle_timeout_secs": secs} (server v0.12.2+). 0 stops
+// the server from ending sessions that did not set their own timeout; more
+// than MaxSessionIdleTimeoutSecs gets 400. The change is persisted as a
+// runtime override and takes effect at the reaper's next tick. Returns the
+// value the server reports back (ok false when it reports none).
+func (c *Client) SetSessionIdleTimeout(ctx context.Context, secs int64) (applied int64, ok bool, err error) {
+	result, err := c.UpdateConfig(ctx, map[string]interface{}{ConfigKeySessionIdleTimeoutSecs: secs})
+	if err != nil {
+		return 0, false, err
+	}
+	if inner, isMap := result["config"].(map[string]interface{}); isMap {
+		result = inner
+	}
+	applied, ok = sessionIdleTimeoutFrom(result)
+	return applied, ok, nil
+}
+
+func sessionIdleTimeoutFrom(cfg map[string]interface{}) (int64, bool) {
+	if cfg == nil {
+		return 0, false
+	}
+	v, ok := cfg[ConfigKeySessionIdleTimeoutSecs].(float64)
+	if !ok {
+		return 0, false
+	}
+	return int64(v), true
+}
+
 // GetQuotas gets quota settings.
 func (c *Client) GetQuotas(ctx context.Context) (map[string]interface{}, error) {
 	data, err := c.request(ctx, "GET", "/v1/admin/quotas", nil)
@@ -2333,11 +2513,22 @@ func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*ApiKey, 
 	return &result, nil
 }
 
-// ListKeys lists all API keys.
+// ListKeys lists all API keys. Both the server's {"keys": [...], "total": N}
+// answer and a bare list are accepted.
 func (c *Client) ListKeys(ctx context.Context) ([]ApiKey, error) {
 	data, err := c.request(ctx, "GET", "/admin/keys", nil)
 	if err != nil {
 		return nil, err
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var wrapper struct {
+			Keys []ApiKey `json:"keys"`
+		}
+		if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal api keys: %w", err)
+		}
+		return wrapper.Keys, nil
 	}
 	var result []ApiKey
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -2378,7 +2569,9 @@ func (c *Client) DeactivateKey(ctx context.Context, keyID string) (*ApiKey, erro
 	return &result, nil
 }
 
-// RotateKey rotates an API key.
+// RotateKey rotates an API key and deactivates the old one at once. The
+// returned ApiKey carries the new secret (Key) and the new key's id (ID). Use
+// RotateKeyWithOptions for a grace period (server v0.12.2+).
 func (c *Client) RotateKey(ctx context.Context, keyID string) (*ApiKey, error) {
 	data, err := c.request(ctx, "POST", fmt.Sprintf("/admin/keys/%s/rotate", url.PathEscape(keyID)), nil)
 	if err != nil {
@@ -3785,6 +3978,49 @@ func (c *Client) AdminDrainReembed(ctx context.Context, req DrainReembedRequest)
 	var result DrainReembedResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal drain reembed response: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminDerivationStatus reports what derived data (CE-31 sentence
+// sub-memories, full-text entries, graph edges) is owed across every agent
+// namespace — GET /admin/derivations/status (server v0.12.2+, global Admin
+// scope). Read-only. Settled is true when nothing is owed and nothing is in
+// flight. After an upgrade to v0.12.2 it shows the progress of the one-time
+// heal (Heal).
+func (c *Client) AdminDerivationStatus(ctx context.Context) (*DerivationStatus, error) {
+	resp, err := c.request(ctx, "GET", "/v1/admin/derivations/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DerivationStatus
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal derivation status: %w", err)
+	}
+	return &result, nil
+}
+
+// AdminDrainDerivations runs the derivation heal and every agent namespace's
+// reconciliation now, on this node, until nothing is owed or the timeout —
+// POST /admin/derivations/drain (server v0.12.2+, global Admin scope).
+//
+// req may be nil (server default timeout 600 s, capped at 4/5 of the server's
+// request timeout). The call blocks for up to that long, so give the client a
+// long enough ClientOptions.Timeout or ctx deadline. Another drain in progress
+// gets 409 (*ConflictError). A benchmark calls it after AdminDrainReembed and
+// before recall.
+func (c *Client) AdminDrainDerivations(ctx context.Context, req *DrainDerivationsRequest) (*DrainDerivationsResponse, error) {
+	var body interface{} = map[string]interface{}{}
+	if req != nil {
+		body = req
+	}
+	resp, err := c.request(ctx, "POST", "/v1/admin/derivations/drain", body)
+	if err != nil {
+		return nil, err
+	}
+	var result DrainDerivationsResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal derivation drain response: %w", err)
 	}
 	return &result, nil
 }

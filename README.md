@@ -195,6 +195,72 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 
 ---
 
+## What's new in v0.12.2
+
+SDK v0.12.2 targets **Dakera server v0.12.2** and stays **compatible with v0.12.0 and v0.12.1
+servers**: new request fields are omitted unless you set them, new response fields are optional
+(`nil` / empty on an older server), and the new routes answer `404` there. Check
+`caps.Auth`, `caps.Sessions` (or `SupportsKeyUpdate()`, `SupportsSessionTouch()`) to see what the
+connected server has.
+
+| Feature | API |
+|---|---|
+| Create an agent before its first memory | `CreateAgent(ctx, "mlx-dev")` (`Created` is false for an existing agent) |
+| Edit a key's name or namespaces | `UpdateKey`, `UpdateNamespaceKey` with `UpdateKeyRequest{Namespaces: dakera.GrantNamespaces("team-*")}` (`nil` = unchanged, `GrantAllNamespaces()` = `null`, `GrantNamespaces()` = `[]`) |
+| Rotate with a grace period | `RotateKeyWithOptions(ctx, id, &dakera.RotateKeyOptions{GraceSecs: &grace})` → `OldKeyID`, `OldKeyExpiresAt` |
+| Who am I | `Whoami(ctx)` — scope, grants, `Unrestricted`, `GrantsVersion`, `InertNamespaces` |
+| Namespace kinds | `ListNamespacesWithKinds`, `NamespaceInfo.Kind` |
+| Session idle lifecycle | `StartSessionRequest.IdleTimeoutSecs`, `TouchSession`, `Session.EndedReason` / `LastActivityAt` / `IdleSince`, `StoreMemoryResponse.SessionState`, `BatchStoreMemoryResponse.EndedSessions`, `SetSessionIdleTimeout` |
+| Derived records | `IncludeDerived` on `AgentMemoriesOptions` and `WakeUpOptions`; `AdminDerivationStatus`, `AdminDrainDerivations` |
+| Content previews | `ContentPreviewChars` on `AgentMemoriesOptions`, `SessionMemoriesOptions`, `FullKnowledgeGraphRequest`, `CrossAgentNetworkRequest` → `ContentLen`, `ContentTruncated` |
+
+```go
+// A developer key that may create and use its own agents (prefix grant).
+key, _ := client.CreateKey(ctx, dakera.CreateKeyRequest{
+    Name: "dev", Scope: dakera.KeyScopeWrite,
+    Namespaces: dakera.GrantNamespaces("_dakera_agent_mlx-*"),
+})
+_ = key // key.Key is shown once: store it in your secret manager, never in code
+
+// A session the server never ends for inactivity.
+zero := 0
+sess, _ := client.StartSession(ctx, dakera.StartSessionRequest{AgentID: "mlx-dev", IdleTimeoutSecs: &zero})
+
+// A list view: 200-character previews, full text only when needed.
+preview := 200
+mems, _ := client.AgentMemories(ctx, "mlx-dev", &dakera.AgentMemoriesOptions{ContentPreviewChars: &preview})
+for _, m := range mems {
+    if m.ContentTruncated != nil && *m.ContentTruncated {
+        full, _ := client.GetMemory(ctx, "mlx-dev", m.ID)
+        _ = full
+    }
+}
+_ = sess
+```
+
+Behaviour changes in server v0.12.2 that clients can hit:
+
+- **Sessions end after 4 hours without activity** by default (`DAKERA_SESSION_IDLE_TIMEOUT_SECS`).
+  Activity is a memory stored, batch-stored, imported or updated with the session, a
+  session-scoped recall or search, or `TouchSession`. Storing into an ended session still
+  succeeds: check `StoreMemoryResponse.SessionState` / `BatchStoreMemoryResponse.EndedSessions`
+  and start a new session when it says `ended`.
+- **Sessions are authorized by their agent**: keys no longer need a `_dakera_sessions` grant (it
+  is accepted and inert), a key without grants lists no sessions, and `EndSession` with a Read key
+  gets `403`.
+- **Stricter validation (400, the field named in the message)**: invalid key grants (`a**b`,
+  blank entries, internal namespaces), a client-set `dakera-curated` tag, `_dakera_*` metadata
+  keys other than `_dakera_content_date` / `_dakera_lang`, ids of the form `mem_s` + 24 hex, agent
+  ids over 241 bytes, TTLs over 100 years.
+- **The content limit is in bytes** (UTF-8, `DAKERA_MAX_MEMORY_CONTENT_BYTES`, 100000 by default)
+  and `UpdateMemory` enforces it too.
+- **Listings exclude derived records**: `AgentMemories` and `GetWakeUpContext` leave CE-31
+  sentence sub-memories out unless `IncludeDerived` is set.
+- **Legacy `foo*` grants stay inert** on keys created before v0.12.2 (`GrantsVersion` 0,
+  `InertNamespaces`) until the key's namespaces are saved again with `UpdateKey`.
+
+---
+
 ## What's new in v0.12.0
 
 SDK v0.12.0 targets **Dakera server v0.12.0** and is **compatible with both v0.11.108 and
