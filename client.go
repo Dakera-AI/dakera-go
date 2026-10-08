@@ -48,7 +48,7 @@ type Client struct {
 	httpClient  *http.Client
 
 	// OPS-1: last seen rate-limit headers
-	rlMu                sync.Mutex
+	rlMu                 sync.Mutex
 	lastRateLimitHeaders *RateLimitHeaders
 
 	// R9: per-instance capabilities cache (GET /v1/capabilities) + pre-flight switch

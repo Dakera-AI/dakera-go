@@ -244,9 +244,9 @@ func TestWarmCache(t *testing.T) {
 		assert.Equal(t, "/v1/namespaces/test-ns/cache/warm", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":        "ok",
+			"status":         "ok",
 			"entries_warmed": 50,
-			"time_taken_ms": 120,
+			"time_taken_ms":  120,
 		})
 	}))
 	defer server.Close()
@@ -270,9 +270,9 @@ func TestUpsertText(t *testing.T) {
 		assert.Equal(t, "/v1/namespaces/test-ns/upsert-text", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"upserted_count":   2,
-			"tokens_processed": 150,
-			"model":            "minilm",
+			"upserted_count":    2,
+			"tokens_processed":  150,
+			"model":             "minilm",
 			"embedding_time_ms": 25,
 		})
 	}))
@@ -296,9 +296,9 @@ func TestQueryText(t *testing.T) {
 			"results": []map[string]interface{}{
 				{"id": "doc-1", "score": 0.92, "text": "Hello world"},
 			},
-			"model":            "minilm",
+			"model":             "minilm",
 			"embedding_time_ms": 5,
-			"search_time_ms":   3,
+			"search_time_ms":    3,
 		})
 	}))
 	defer server.Close()
@@ -319,9 +319,9 @@ func TestBatchQueryText(t *testing.T) {
 				{{"id": "doc-1", "score": 0.9}},
 				{{"id": "doc-2", "score": 0.85}},
 			},
-			"model":            "minilm",
+			"model":             "minilm",
 			"embedding_time_ms": 10,
-			"search_time_ms":   6,
+			"search_time_ms":    6,
 		})
 	}))
 	defer server.Close()
@@ -392,17 +392,17 @@ func TestAnalyticsOverview(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/v1/analytics/overview")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"total_queries":       10000,
-			"avg_latency_ms":      5.2,
-			"p95_latency_ms":      12.5,
-			"p99_latency_ms":      25.0,
-			"queries_per_second":  150.0,
-			"error_rate":          0.001,
-			"cache_hit_rate":      0.85,
-			"storage_used_bytes":  1073741824,
-			"total_vectors":       500000,
-			"total_namespaces":    10,
-			"uptime_seconds":      86400,
+			"total_queries":      10000,
+			"avg_latency_ms":     5.2,
+			"p95_latency_ms":     12.5,
+			"p99_latency_ms":     25.0,
+			"queries_per_second": 150.0,
+			"error_rate":         0.001,
+			"cache_hit_rate":     0.85,
+			"storage_used_bytes": 1073741824,
+			"total_vectors":      500000,
+			"total_namespaces":   10,
+			"uptime_seconds":     86400,
 		})
 	}))
 	defer server.Close()
@@ -419,12 +419,12 @@ func TestAnalyticsLatency(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/v1/analytics/latency")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"period":  "1h",
-			"avg_ms":  4.5,
-			"p50_ms":  3.0,
-			"p95_ms":  10.0,
-			"p99_ms":  20.0,
-			"max_ms":  150.0,
+			"period": "1h",
+			"avg_ms": 4.5,
+			"p50_ms": 3.0,
+			"p95_ms": 10.0,
+			"p99_ms": 20.0,
+			"max_ms": 150.0,
 		})
 	}))
 	defer server.Close()
@@ -477,14 +477,14 @@ func TestGetKpis(t *testing.T) {
 		assert.Equal(t, "/v1/kpis", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"recall_latency_p50_ms":            2.5,
-			"recall_latency_p99_ms":            15.0,
-			"store_latency_p50_ms":             3.0,
-			"api_error_rate_5xx_pct":           0.01,
-			"active_agents_count":              25,
-			"session_count_week":               150,
-			"cross_agent_network_node_count":   500,
-			"memory_retention_7d_pct":          92.5,
+			"recall_latency_p50_ms":          2.5,
+			"recall_latency_p99_ms":          15.0,
+			"store_latency_p50_ms":           3.0,
+			"api_error_rate_5xx_pct":         0.01,
+			"active_agents_count":            25,
+			"session_count_week":             150,
+			"cross_agent_network_node_count": 500,
+			"memory_retention_7d_pct":        92.5,
 		})
 	}))
 	defer server.Close()

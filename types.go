@@ -116,8 +116,8 @@ func (s *IndexStats) UnmarshalJSON(data []byte) error {
 	type plain IndexStats
 	aux := struct {
 		*plain
-		IndexTypeSnake  string `json:"index_type"`
-		SizeBytesSnake  *int64 `json:"size_bytes"`
+		IndexTypeSnake   string `json:"index_type"`
+		SizeBytesSnake   *int64 `json:"size_bytes"`
 		VectorCountSnake *int64 `json:"vector_count"`
 	}{plain: (*plain)(s)}
 	if err := json.Unmarshal(data, &aux); err != nil {
@@ -129,7 +129,7 @@ func (s *IndexStats) UnmarshalJSON(data []byte) error {
 	if aux.SizeBytesSnake != nil {
 		s.SizeBytes = *aux.SizeBytesSnake
 	}
-	if aux.VectorCountSnake!= nil {
+	if aux.VectorCountSnake != nil {
 		s.VectorCount = *aux.VectorCountSnake
 	}
 	if s.IndexedVectors == 0 && s.IndexedCount != 0 {
@@ -201,8 +201,8 @@ func (h *HybridSearchResult) UnmarshalJSON(data []byte) error {
 
 // HealthResponse represents the server health check response.
 type HealthResponse struct {
-	Status   string `json:"status"`
-	Version  string `json:"version,omitempty"`
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
 	// BuildSha is the git commit SHA baked into the binary at build time. Present since server v0.11.84.
 	BuildSha string `json:"build_sha,omitempty"`
 }
@@ -477,12 +477,12 @@ const (
 	// Existence check
 	OpExists = "$exists"
 	// String operators
-	OpContains    = "$contains"
-	OpIContains   = "$icontains"
-	OpStartsWith  = "$startsWith"
-	OpEndsWith    = "$endsWith"
-	OpGlob        = "$glob"
-	OpRegex       = "$regex"
+	OpContains   = "$contains"
+	OpIContains  = "$icontains"
+	OpStartsWith = "$startsWith"
+	OpEndsWith   = "$endsWith"
+	OpGlob       = "$glob"
+	OpRegex      = "$regex"
 	// Array operators (CE-79)
 	OpArrayContains    = "$arrayContains"
 	OpArrayContainsAll = "$arrayContainsAll"
@@ -721,8 +721,8 @@ type StoreMemoryRequest struct {
 	// ExpiresAt is an optional explicit expiry Unix timestamp (seconds). Takes
 	// precedence over TTLSeconds when both are set. The memory is hard-deleted
 	// by the decay engine on expiry (DECAY-3).
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
-	SessionID string  `json:"session_id,omitempty"`
+	ExpiresAt *int64    `json:"expires_at,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
 	Embedding []float32 `json:"embedding,omitempty"`
 	// ValidFrom is an optional Unix timestamp (seconds) indicating when this
 	// memory becomes temporally valid. Defaults to ingest time when omitted.
@@ -782,14 +782,14 @@ type Memory struct {
 // Score is set to SmartScore when present, then WeightedScore, then raw Score —
 // matching the server's ranking key so results appear in true rank order.
 type RecalledMemory struct {
-	ID         string                 `json:"id"`
-	Content    string                 `json:"content"`
-	MemoryType string                 `json:"memory_type"`
-	Importance float32                `json:"importance"`
+	ID         string  `json:"id"`
+	Content    string  `json:"content"`
+	MemoryType string  `json:"memory_type"`
+	Importance float32 `json:"importance"`
 	// Ranking score — equals SmartScore when present, then WeightedScore, then raw score.
-	Score         float32  `json:"score"`
-	SmartScore    *float32 `json:"smart_score,omitempty"`
-	WeightedScore *float32 `json:"weighted_score,omitempty"`
+	Score         float32                `json:"score"`
+	SmartScore    *float32               `json:"smart_score,omitempty"`
+	WeightedScore *float32               `json:"weighted_score,omitempty"`
 	Tags          []string               `json:"tags,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt     int64                  `json:"created_at,omitempty"`
@@ -932,21 +932,21 @@ type ConsolidationLogEntry struct {
 
 // ConsolidateRequest represents a request to consolidate memories.
 type ConsolidateRequest struct {
-	AgentID    string               `json:"agent_id,omitempty"`
-	MemoryType string               `json:"memory_type,omitempty"`
-	Threshold  *float32             `json:"threshold,omitempty"`
-	DryRun     bool                 `json:"dry_run,omitempty"`
+	AgentID    string   `json:"agent_id,omitempty"`
+	MemoryType string   `json:"memory_type,omitempty"`
+	Threshold  *float32 `json:"threshold,omitempty"`
+	DryRun     bool     `json:"dry_run,omitempty"`
 	// Config selects the DBSCAN clustering algorithm and tunes its parameters (CE-6).
-	Config     *ConsolidationConfig `json:"config,omitempty"`
+	Config *ConsolidationConfig `json:"config,omitempty"`
 }
 
 // ConsolidateResponse represents the response from consolidation.
 type ConsolidateResponse struct {
-	MemoriesRemoved    int                     `json:"memories_removed"`
-	SourceMemoryIDs    []string                `json:"source_memory_ids"`
-	ConsolidatedMemory *Memory                 `json:"consolidated_memory,omitempty"`
+	MemoriesRemoved    int      `json:"memories_removed"`
+	SourceMemoryIDs    []string `json:"source_memory_ids"`
+	ConsolidatedMemory *Memory  `json:"consolidated_memory,omitempty"`
 	// Log is the step-by-step consolidation log (CE-6, may be nil).
-	Log                []ConsolidationLogEntry `json:"log,omitempty"`
+	Log []ConsolidationLogEntry `json:"log,omitempty"`
 }
 
 // MemoryFeedbackRequest represents a request for memory feedback.
@@ -1302,39 +1302,39 @@ type QueryExplainRequest struct {
 
 // QueryExplainResponse represents the response from query explain.
 type QueryExplainResponse struct {
-	Plan         map[string]interface{}   `json:"plan"`
-	Steps        []map[string]interface{} `json:"steps,omitempty"`
-	TotalTimeMs  *float64                 `json:"total_time_ms,omitempty"`
-	Results      []QueryResult            `json:"results,omitempty"`
-	IndexType    string                   `json:"index_type,omitempty"`
-	VectorsScanned *int64                 `json:"vectors_scanned,omitempty"`
+	Plan           map[string]interface{}   `json:"plan"`
+	Steps          []map[string]interface{} `json:"steps,omitempty"`
+	TotalTimeMs    *float64                 `json:"total_time_ms,omitempty"`
+	Results        []QueryResult            `json:"results,omitempty"`
+	IndexType      string                   `json:"index_type,omitempty"`
+	VectorsScanned *int64                   `json:"vectors_scanned,omitempty"`
 }
 
 // ColumnUpsertRequest represents a column-format upsert request for efficient bulk operations.
 type ColumnUpsertRequest struct {
-	IDs        []string                          `json:"ids"`
-	Vectors    [][]float32                       `json:"vectors"`
-	Attributes map[string][]interface{}           `json:"attributes,omitempty"`
-	TTLSeconds *int                              `json:"ttl_seconds,omitempty"`
-	Dimension  *int                              `json:"dimension,omitempty"`
+	IDs        []string                 `json:"ids"`
+	Vectors    [][]float32              `json:"vectors"`
+	Attributes map[string][]interface{} `json:"attributes,omitempty"`
+	TTLSeconds *int                     `json:"ttl_seconds,omitempty"`
+	Dimension  *int                     `json:"dimension,omitempty"`
 }
 
 // WarmCacheRequest represents a request to warm the cache.
 type WarmCacheRequest struct {
-	VectorIDs       []string `json:"vector_ids,omitempty"`
-	Priority        string   `json:"priority,omitempty"`
-	TargetTier      string   `json:"target_tier,omitempty"`
-	Background      bool     `json:"background,omitempty"`
-	TTLHintSeconds  *int     `json:"ttl_hint_seconds,omitempty"`
-	AccessPattern   string   `json:"access_pattern,omitempty"`
-	MaxVectors      *int     `json:"max_vectors,omitempty"`
+	VectorIDs      []string `json:"vector_ids,omitempty"`
+	Priority       string   `json:"priority,omitempty"`
+	TargetTier     string   `json:"target_tier,omitempty"`
+	Background     bool     `json:"background,omitempty"`
+	TTLHintSeconds *int     `json:"ttl_hint_seconds,omitempty"`
+	AccessPattern  string   `json:"access_pattern,omitempty"`
+	MaxVectors     *int     `json:"max_vectors,omitempty"`
 }
 
 // WarmCacheResponse represents the response from cache warming.
 type WarmCacheResponse struct {
-	Status       string `json:"status"`
-	EntriesWarmed int   `json:"entries_warmed"`
-	TimeTakenMs  *int64 `json:"time_taken_ms,omitempty"`
+	Status        string `json:"status"`
+	EntriesWarmed int    `json:"entries_warmed"`
+	TimeTakenMs   *int64 `json:"time_taken_ms,omitempty"`
 }
 
 // ===========================================================================
@@ -1353,12 +1353,12 @@ type OpsStats struct {
 
 // ClusterStatus represents the cluster status response.
 type ClusterStatus struct {
-	Status       string `json:"status"`
-	Nodes        int    `json:"nodes"`
-	Healthy      bool   `json:"healthy"`
-	Version      string `json:"version,omitempty"`
+	Status  string `json:"status"`
+	Nodes   int    `json:"nodes"`
+	Healthy bool   `json:"healthy"`
+	Version string `json:"version,omitempty"`
 	// RedisHealthy indicates Redis connectivity (OPS-3).
-	RedisHealthy *bool  `json:"redis_healthy,omitempty"`
+	RedisHealthy *bool `json:"redis_healthy,omitempty"`
 }
 
 // ClusterNode represents a cluster node.
@@ -1408,10 +1408,10 @@ type SlowQueryOptions struct {
 
 // AutoPilotConfig represents the AutoPilot configuration.
 type AutoPilotConfig struct {
-	Enabled                      bool    `json:"enabled"`
-	DedupThreshold               float32 `json:"dedup_threshold"`
-	DedupIntervalHours           uint64  `json:"dedup_interval_hours"`
-	ConsolidationIntervalHours   uint64  `json:"consolidation_interval_hours"`
+	Enabled                    bool    `json:"enabled"`
+	DedupThreshold             float32 `json:"dedup_threshold"`
+	DedupIntervalHours         uint64  `json:"dedup_interval_hours"`
+	ConsolidationIntervalHours uint64  `json:"consolidation_interval_hours"`
 }
 
 // DedupResultSnapshot is the result from a deduplication cycle.
@@ -1431,13 +1431,13 @@ type ConsolidationResultSnapshot struct {
 
 // AutoPilotStatusResponse is returned by GET /v1/admin/autopilot/status (PILOT-1).
 type AutoPilotStatusResponse struct {
-	Config                AutoPilotConfig              `json:"config"`
-	LastDedupAt           *uint64                      `json:"last_dedup_at,omitempty"`
-	LastConsolidationAt   *uint64                      `json:"last_consolidation_at,omitempty"`
-	LastDedup             *DedupResultSnapshot          `json:"last_dedup,omitempty"`
-	LastConsolidation     *ConsolidationResultSnapshot  `json:"last_consolidation,omitempty"`
-	TotalDedupRemoved     uint64                       `json:"total_dedup_removed"`
-	TotalConsolidated     uint64                       `json:"total_consolidated"`
+	Config              AutoPilotConfig              `json:"config"`
+	LastDedupAt         *uint64                      `json:"last_dedup_at,omitempty"`
+	LastConsolidationAt *uint64                      `json:"last_consolidation_at,omitempty"`
+	LastDedup           *DedupResultSnapshot         `json:"last_dedup,omitempty"`
+	LastConsolidation   *ConsolidationResultSnapshot `json:"last_consolidation,omitempty"`
+	TotalDedupRemoved   uint64                       `json:"total_dedup_removed"`
+	TotalConsolidated   uint64                       `json:"total_consolidated"`
 }
 
 // AutoPilotConfigRequest is the request for PUT /v1/admin/autopilot/config (PILOT-2).
@@ -1672,12 +1672,12 @@ type DakeraEvent struct {
 	// namespace_created
 	Dimension int `json:"dimension,omitempty"`
 	// operation_progress
-	OperationID string   `json:"operation_id,omitempty"`
-	OpType      string   `json:"op_type,omitempty"`
-	Progress    int      `json:"progress,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	Message     string   `json:"message,omitempty"`
-	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	OpType      string `json:"op_type,omitempty"`
+	Progress    int    `json:"progress,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Message     string `json:"message,omitempty"`
+	UpdatedAt   int64  `json:"updated_at,omitempty"`
 	// job_progress
 	JobID   string `json:"job_id,omitempty"`
 	JobType string `json:"job_type,omitempty"`
@@ -1817,12 +1817,12 @@ type BatchStoreMemoryRequest struct {
 
 // BatchStoredMemory is a single stored memory returned in a BatchStoreMemoryResponse.
 type BatchStoredMemory struct {
-	ID        string   `json:"id"`
-	Content   string   `json:"content"`
-	AgentID   string   `json:"agent_id"`
-	Tags      []string `json:"tags"`
+	ID         string   `json:"id"`
+	Content    string   `json:"content"`
+	AgentID    string   `json:"agent_id"`
+	Tags       []string `json:"tags"`
 	Importance float32  `json:"importance"`
-	CreatedAt int64    `json:"created_at"`
+	CreatedAt  int64    `json:"created_at"`
 }
 
 // BatchStoreMemoryResponse is the response from POST /v1/memories/store/batch.
@@ -2357,30 +2357,30 @@ type KeySuccessResponse struct {
 
 // CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
 type CreateNamespaceKeyRequest struct {
-	Name         string `json:"name"`
-	ExpiresInDays *int  `json:"expires_in_days,omitempty"`
+	Name          string `json:"name"`
+	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
 }
 
 // CreateNamespaceKeyResponse is returned by POST /v1/namespaces/:ns/keys (SEC-1).
 // The Key field is shown only once — store it securely.
 type CreateNamespaceKeyResponse struct {
-	KeyID     string  `json:"key_id"`
-	Key       string  `json:"key"`
-	Name      string  `json:"name"`
-	Namespace string  `json:"namespace"`
-	CreatedAt int64   `json:"created_at"`
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
-	Warning   string  `json:"warning"`
+	KeyID     string `json:"key_id"`
+	Key       string `json:"key"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	CreatedAt int64  `json:"created_at"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	Warning   string `json:"warning"`
 }
 
 // NamespaceKeyInfo holds namespace-scoped API key metadata (no secret) — SEC-1.
 type NamespaceKeyInfo struct {
-	KeyID     string  `json:"key_id"`
-	Name      string  `json:"name"`
-	Namespace string  `json:"namespace"`
-	CreatedAt int64   `json:"created_at"`
-	Active    bool    `json:"active"`
-	ExpiresAt *int64  `json:"expires_at,omitempty"`
+	KeyID     string `json:"key_id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	CreatedAt int64  `json:"created_at"`
+	Active    bool   `json:"active"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
 }
 
 // ListNamespaceKeysResponse is returned by GET /v1/namespaces/:ns/keys (SEC-1).
@@ -2392,13 +2392,13 @@ type ListNamespaceKeysResponse struct {
 
 // NamespaceKeyUsageResponse is returned by GET /v1/namespaces/:ns/keys/:key_id/usage (SEC-1).
 type NamespaceKeyUsageResponse struct {
-	KeyID                string  `json:"key_id"`
-	Namespace            string  `json:"namespace"`
-	TotalRequests        uint64  `json:"total_requests"`
-	SuccessfulRequests   uint64  `json:"successful_requests"`
-	FailedRequests       uint64  `json:"failed_requests"`
-	BytesTransferred     uint64  `json:"bytes_transferred"`
-	AvgLatencyMs         float64 `json:"avg_latency_ms"`
+	KeyID              string  `json:"key_id"`
+	Namespace          string  `json:"namespace"`
+	TotalRequests      uint64  `json:"total_requests"`
+	SuccessfulRequests uint64  `json:"successful_requests"`
+	FailedRequests     uint64  `json:"failed_requests"`
+	BytesTransferred   uint64  `json:"bytes_transferred"`
+	AvgLatencyMs       float64 `json:"avg_latency_ms"`
 }
 
 // ===========================================================================
@@ -2429,15 +2429,15 @@ type MemoryExportResponse struct {
 // session_id, importance, timestamp (Unix milliseconds)}. ID carries the
 // integer as text; a string id decodes too.
 type AuditEvent struct {
-	ID        string                 `json:"id"`
-	EventType string                 `json:"event_type"`
-	AgentID   string                 `json:"agent_id,omitempty"`
-	MemoryID  string                 `json:"memory_id,omitempty"`
-	SessionID string                 `json:"session_id,omitempty"`
-	Importance *float32              `json:"importance,omitempty"`
-	Namespace string                 `json:"namespace,omitempty"`
-	Timestamp int64                  `json:"timestamp"`
-	Details   map[string]interface{} `json:"details,omitempty"`
+	ID         string                 `json:"id"`
+	EventType  string                 `json:"event_type"`
+	AgentID    string                 `json:"agent_id,omitempty"`
+	MemoryID   string                 `json:"memory_id,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	Importance *float32               `json:"importance,omitempty"`
+	Namespace  string                 `json:"namespace,omitempty"`
+	Timestamp  int64                  `json:"timestamp"`
+	Details    map[string]interface{} `json:"details,omitempty"`
 }
 
 // UnmarshalJSON accepts the server's integer id as well as a string id.
@@ -2466,9 +2466,9 @@ func (e *AuditEvent) UnmarshalJSON(data []byte) error {
 type AuditListResponse struct {
 	Events []AuditEvent `json:"events"`
 	// Count is the number of events returned (the server's field); Total mirrors it.
-	Count  int          `json:"count"`
-	Total  int          `json:"total"`
-	Cursor string       `json:"cursor,omitempty"`
+	Count  int    `json:"count"`
+	Total  int    `json:"total"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // AuditExportResponse is returned by ExportAudit (GET /v1/audit/export, OBS-1).
@@ -2985,12 +2985,12 @@ type ShardRebalanceResponse struct {
 
 // MaintenanceStatus is returned by GET /admin/cluster/maintenance.
 type MaintenanceStatus struct {
-	Enabled              bool     `json:"enabled"`
-	Reason               string   `json:"reason,omitempty"`
-	EnabledAt            *uint64  `json:"enabled_at,omitempty"`
-	ScheduledEnd         *uint64  `json:"scheduled_end,omitempty"`
-	NodesInMaintenance   []string `json:"nodes_in_maintenance"`
-	RejectingRequests    bool     `json:"rejecting_requests"`
+	Enabled            bool     `json:"enabled"`
+	Reason             string   `json:"reason,omitempty"`
+	EnabledAt          *uint64  `json:"enabled_at,omitempty"`
+	ScheduledEnd       *uint64  `json:"scheduled_end,omitempty"`
+	NodesInMaintenance []string `json:"nodes_in_maintenance"`
+	RejectingRequests  bool     `json:"rejecting_requests"`
 }
 
 // EnableMaintenanceRequest is the request body for POST /admin/cluster/maintenance/enable.
@@ -3008,11 +3008,11 @@ type DisableMaintenanceRequest struct {
 
 // QuotaConfig is the quota configuration for a namespace.
 type QuotaConfig struct {
-	MaxVectors      *uint64 `json:"max_vectors,omitempty"`
-	MaxStorageBytes *uint64 `json:"max_storage_bytes,omitempty"`
-	MaxDimensions   *int    `json:"max_dimensions,omitempty"`
-	MaxMetadataBytes *int   `json:"max_metadata_bytes,omitempty"`
-	Enforcement     string  `json:"enforcement,omitempty"`
+	MaxVectors       *uint64 `json:"max_vectors,omitempty"`
+	MaxStorageBytes  *uint64 `json:"max_storage_bytes,omitempty"`
+	MaxDimensions    *int    `json:"max_dimensions,omitempty"`
+	MaxMetadataBytes *int    `json:"max_metadata_bytes,omitempty"`
+	Enforcement      string  `json:"enforcement,omitempty"`
 }
 
 // QuotaUsage holds current quota usage.
@@ -3026,13 +3026,13 @@ type QuotaUsage struct {
 
 // QuotaStatus holds combined quota config and usage.
 type QuotaStatus struct {
-	Namespace            string      `json:"namespace"`
-	Config               QuotaConfig `json:"config"`
-	Usage                QuotaUsage  `json:"usage"`
-	VectorUsagePercent   *float32    `json:"vector_usage_percent,omitempty"`
-	StorageUsagePercent  *float32    `json:"storage_usage_percent,omitempty"`
-	IsExceeded           bool        `json:"is_exceeded"`
-	ExceededQuotas       []string    `json:"exceeded_quotas"`
+	Namespace           string      `json:"namespace"`
+	Config              QuotaConfig `json:"config"`
+	Usage               QuotaUsage  `json:"usage"`
+	VectorUsagePercent  *float32    `json:"vector_usage_percent,omitempty"`
+	StorageUsagePercent *float32    `json:"storage_usage_percent,omitempty"`
+	IsExceeded          bool        `json:"is_exceeded"`
+	ExceededQuotas      []string    `json:"exceeded_quotas"`
 }
 
 // QuotaListResponse is returned by GET /admin/quotas.
@@ -3067,9 +3067,9 @@ type SetQuotaResponse struct {
 
 // QuotaCheckRequest is the request body for POST /admin/quotas/{namespace}/check.
 type QuotaCheckRequest struct {
-	VectorIDs    []string `json:"vector_ids"`
-	Dimensions   *int     `json:"dimensions,omitempty"`
-	MetadataBytes *int    `json:"metadata_bytes,omitempty"`
+	VectorIDs     []string `json:"vector_ids"`
+	Dimensions    *int     `json:"dimensions,omitempty"`
+	MetadataBytes *int     `json:"metadata_bytes,omitempty"`
 }
 
 // QuotaCheckResult is returned by POST /admin/quotas/{namespace}/check.
@@ -3082,20 +3082,20 @@ type QuotaCheckResult struct {
 
 // AdminBackupInfo holds backup metadata.
 type AdminBackupInfo struct {
-	BackupID        string  `json:"backup_id"`
-	Name            string  `json:"name"`
-	BackupType      string  `json:"backup_type"`
-	Status          string  `json:"status"`
+	BackupID        string   `json:"backup_id"`
+	Name            string   `json:"name"`
+	BackupType      string   `json:"backup_type"`
+	Status          string   `json:"status"`
 	Namespaces      []string `json:"namespaces"`
-	VectorCount     uint64  `json:"vector_count"`
-	SizeBytes       uint64  `json:"size_bytes"`
-	CreatedAt       uint64  `json:"created_at"`
-	CompletedAt     *uint64 `json:"completed_at,omitempty"`
-	DurationSeconds *uint64 `json:"duration_seconds,omitempty"`
-	StoragePath     string  `json:"storage_path,omitempty"`
-	Error           string  `json:"error,omitempty"`
-	Encrypted       bool    `json:"encrypted"`
-	Compression     string  `json:"compression,omitempty"`
+	VectorCount     uint64   `json:"vector_count"`
+	SizeBytes       uint64   `json:"size_bytes"`
+	CreatedAt       uint64   `json:"created_at"`
+	CompletedAt     *uint64  `json:"completed_at,omitempty"`
+	DurationSeconds *uint64  `json:"duration_seconds,omitempty"`
+	StoragePath     string   `json:"storage_path,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	Encrypted       bool     `json:"encrypted"`
+	Compression     string   `json:"compression,omitempty"`
 }
 
 // BackupListResponse is returned by GET /admin/backups.

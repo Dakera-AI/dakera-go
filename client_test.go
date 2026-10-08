@@ -730,11 +730,11 @@ func TestBatchRecall(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"memories": []map[string]interface{}{
 					{
-						"id":         "mem_1",
-						"content":    "test memory",
+						"id":          "mem_1",
+						"content":     "test memory",
 						"memory_type": "episodic",
-						"importance": 0.8,
-						"score":      0.9,
+						"importance":  0.8,
+						"score":       0.9,
 					},
 				},
 				"total":    10,
@@ -866,7 +866,7 @@ func TestStoreMemoriesBatch(t *testing.T) {
 					{"id": "mem-1", "content": "Dark mode", "agent_id": "agent-1", "tags": []string{}, "importance": 0.8, "created_at": 1700000000},
 					{"id": "mem-2", "content": "Berlin user", "agent_id": "agent-1", "tags": []string{}, "importance": 0.7, "created_at": 1700000001},
 				},
-				"stored_count":           2,
+				"stored_count":            2,
 				"total_embedding_time_ms": 42,
 			})
 		}))
@@ -908,14 +908,14 @@ func TestAutopilotStatus(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"config": map[string]interface{}{
-				"enabled":                        true,
-				"dedup_threshold":                0.93,
-				"dedup_interval_hours":           6,
-				"consolidation_interval_hours":   12,
+				"enabled":                      true,
+				"dedup_threshold":              0.93,
+				"dedup_interval_hours":         6,
+				"consolidation_interval_hours": 12,
 			},
-			"last_dedup_at":        1700000000,
-			"total_dedup_removed":  42,
-			"total_consolidated":   10,
+			"last_dedup_at":       1700000000,
+			"total_dedup_removed": 42,
+			"total_consolidated":  10,
 		})
 	}))
 	defer server.Close()
@@ -1069,7 +1069,7 @@ func TestDecayConfig(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"strategy":       "exponential",
+			"strategy":        "exponential",
 			"half_life_hours": 168.0,
 			"min_importance":  0.05,
 		})
@@ -1113,7 +1113,7 @@ func TestDecayUpdateConfig(t *testing.T) {
 		halfLife := 72.0
 		client := NewClient(server.URL)
 		resp, err := client.DecayUpdateConfig(context.Background(), DecayConfigUpdateRequest{
-			Strategy:     &strategy,
+			Strategy:      &strategy,
 			HalfLifeHours: &halfLife,
 		})
 
@@ -2208,13 +2208,13 @@ func TestNamespaceKeyUsage(t *testing.T) {
 		capturedURL = r.URL.String()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"key_id":               "key-abc",
-			"namespace":            "prod-ns",
-			"total_requests":       uint64(1000),
-			"successful_requests":  uint64(980),
-			"failed_requests":      uint64(20),
-			"bytes_transferred":    uint64(512000),
-			"avg_latency_ms":       12.4,
+			"key_id":              "key-abc",
+			"namespace":           "prod-ns",
+			"total_requests":      uint64(1000),
+			"successful_requests": uint64(980),
+			"failed_requests":     uint64(20),
+			"bytes_transferred":   uint64(512000),
+			"avg_latency_ms":      12.4,
 		})
 	}))
 	defer server.Close()
@@ -2348,8 +2348,8 @@ func TestOdeExtractEntities(t *testing.T) {
 			{"text": "Alice", "label": "person", "start": 0, "end": 5, "score": 0.97},
 			{"text": "Paris", "label": "location", "start": 16, "end": 21, "score": 0.92},
 		},
-		"model":               "gliner-multi-v2.1",
-		"processing_time_ms":  34,
+		"model":              "gliner-multi-v2.1",
+		"processing_time_ms": 34,
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2460,10 +2460,10 @@ func TestDebugConfig(t *testing.T) {
 		assert.Equal(t, "/debug/config", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"DAKERA_ENABLE_BM25":       "true",
-			"DAKERA_RERANKER_ENABLED":  "true",
-			"_version":                 "0.11.104",
-			"_build_sha":               "abc1234",
+			"DAKERA_ENABLE_BM25":      "true",
+			"DAKERA_RERANKER_ENABLED": "true",
+			"_version":                "0.11.104",
+			"_build_sha":              "abc1234",
 		})
 	}))
 	defer server.Close()

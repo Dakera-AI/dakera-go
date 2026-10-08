@@ -17,20 +17,20 @@ type recalledMemoryWire struct {
 	Memory *Memory `json:"memory"`
 
 	// Top-level fields present in all formats
-	Score        float32  `json:"score"`
+	Score         float32  `json:"score"`
 	WeightedScore *float32 `json:"weighted_score,omitempty"`
 	SmartScore    *float32 `json:"smart_score,omitempty"`
-	Depth        *int     `json:"depth,omitempty"`
+	Depth         *int     `json:"depth,omitempty"`
 
 	// Flat fields — populated when the "memory" wrapper is absent
-	ID         string                 `json:"id"`
-	Content    string                 `json:"content"`
-	MemoryType string                 `json:"memory_type"`
-	Importance float32                `json:"importance"`
-	Tags       []string               `json:"tags,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt  int64                  `json:"created_at,omitempty"`
-	AttachmentRef string              `json:"attachment_ref,omitempty"`
+	ID            string                 `json:"id"`
+	Content       string                 `json:"content"`
+	MemoryType    string                 `json:"memory_type"`
+	Importance    float32                `json:"importance"`
+	Tags          []string               `json:"tags,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt     int64                  `json:"created_at,omitempty"`
+	AttachmentRef string                 `json:"attachment_ref,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler for RecalledMemory.

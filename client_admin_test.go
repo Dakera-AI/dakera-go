@@ -265,7 +265,7 @@ func TestGetConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"max_connections": 100,
-			"write_buffer":   4096,
+			"write_buffer":    4096,
 		})
 	}))
 	defer server.Close()
@@ -297,8 +297,8 @@ func TestGetQuotas(t *testing.T) {
 		assert.Equal(t, "/v1/admin/quotas", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"max_vectors":  1000000,
-			"max_storage":  10737418240,
+			"max_vectors": 1000000,
+			"max_storage": 10737418240,
 		})
 	}))
 	defer server.Close()
@@ -539,9 +539,9 @@ func TestAdminClusterReplication(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"replication_factor": 3,
-			"healthy_replicas":  3,
-			"total_nodes":       3,
-			"replication_lag":   []map[string]interface{}{},
+			"healthy_replicas":   3,
+			"total_nodes":        3,
+			"replication_lag":    []map[string]interface{}{},
 		})
 	}))
 	defer server.Close()
@@ -577,10 +577,10 @@ func TestAdminRebalanceShards(t *testing.T) {
 		assert.Equal(t, "/v1/admin/cluster/shards/rebalance", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"initiated":      true,
-			"operation_id":   "rebal-001",
+			"initiated":       true,
+			"operation_id":    "rebal-001",
 			"shards_affected": 2,
-			"planned_moves":  []map[string]interface{}{},
+			"planned_moves":   []map[string]interface{}{},
 		})
 	}))
 	defer server.Close()
@@ -597,9 +597,9 @@ func TestAdminMaintenanceStatus(t *testing.T) {
 		assert.Equal(t, "/v1/admin/cluster/maintenance", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"enabled":               false,
-			"nodes_in_maintenance":  []string{},
-			"rejecting_requests":    false,
+			"enabled":              false,
+			"nodes_in_maintenance": []string{},
+			"rejecting_requests":   false,
 		})
 	}))
 	defer server.Close()
@@ -1048,9 +1048,9 @@ func TestAdminTtlStats(t *testing.T) {
 		assert.Equal(t, "/v1/admin/ttl/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"namespaces":    []map[string]interface{}{},
+			"namespaces":     []map[string]interface{}{},
 			"total_with_ttl": 100,
-			"total_expired": 5,
+			"total_expired":  5,
 		})
 	}))
 	defer server.Close()
@@ -1191,10 +1191,10 @@ func TestAdminStorageTierOverview(t *testing.T) {
 				"tier_check_interval_secs":    300,
 			},
 			"activity": map[string]interface{}{
-				"promotions":       10,
-				"demotions":        5,
-				"cache_hit_rate":   0.9,
-				"storage_backend":  "local",
+				"promotions":        10,
+				"demotions":         5,
+				"cache_hit_rate":    0.9,
+				"storage_backend":   "local",
 				"promotions_to_hot": 10,
 				"demotions_to_warm": 3,
 				"demotions_to_cold": 2,

@@ -242,8 +242,8 @@ func TestConsolidate(t *testing.T) {
 		assert.Equal(t, "/v1/memory/consolidate", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"memories_removed":   3,
-			"source_memory_ids":  []string{"mem-002", "mem-003", "mem-004"},
+			"memories_removed":  3,
+			"source_memory_ids": []string{"mem-002", "mem-003", "mem-004"},
 			"consolidated_memory": map[string]interface{}{
 				"id": "mem-consolidated", "content": "merged content", "memory_type": "semantic", "importance": 0.9,
 			},
@@ -301,9 +301,9 @@ func TestPatchConsolidationConfig(t *testing.T) {
 		assert.Equal(t, "/v1/agents/agent-1/consolidation/config", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"enabled":              true,
-			"epsilon":              0.85,
-			"min_samples":          2,
+			"enabled":               true,
+			"epsilon":               0.85,
+			"min_samples":           2,
 			"soft_deprecation_days": 7,
 		})
 	}))
@@ -340,6 +340,7 @@ func TestMemoryFeedback(t *testing.T) {
 	assert.Equal(t, float32(0.9), *result.UpdatedImportance)
 	assert.Equal(t, map[string]interface{}{"agent_id": "agent-1", "memory_id": "mem-001", "signal": "upvote"}, body)
 }
+
 // ===========================================================================
 // Session Operations
 // ===========================================================================
@@ -670,6 +671,7 @@ func TestExportAudit(t *testing.T) {
 	assert.Equal(t, 1, result.Count)
 	assert.Contains(t, result.Data, "memory_stored")
 }
+
 // ===========================================================================
 // Extract & Namespace Config
 // ===========================================================================
