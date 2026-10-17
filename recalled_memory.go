@@ -21,6 +21,14 @@ type recalledMemoryWire struct {
 	WeightedScore *float32 `json:"weighted_score,omitempty"`
 	SmartScore    *float32 `json:"smart_score,omitempty"`
 	Depth         *int     `json:"depth,omitempty"`
+	VectorScore   *float32 `json:"vector_score,omitempty"`
+	TextScore     *float32 `json:"text_score,omitempty"`
+
+	// #917 additions — absent from older servers.
+	MatchedText string   `json:"matched_text,omitempty"`
+	MatchedIDs  []string `json:"matched_ids,omitempty"`
+	Retrieval   string   `json:"retrieval,omitempty"`
+	ContextOf   string   `json:"context_of,omitempty"`
 
 	// Content preview fields (listings with content_preview_chars, server v0.12.2+)
 	ContentLen       *int  `json:"content_len,omitempty"`
@@ -35,9 +43,13 @@ type recalledMemoryWire struct {
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt     int64                  `json:"created_at,omitempty"`
 	AttachmentRef string                 `json:"attachment_ref,omitempty"`
+	SessionID     string                 `json:"session_id,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler for RecalledMemory.
+//
+// Unknown fields are ignored, and fields an older server does not send stay
+// zero, so it decodes answers of older and newer servers alike.
 //
 // Handles two wire formats:
 //   - Nested (server): {"memory": {"id": "...", "content": "..."}, "score": N, "smart_score": N}
@@ -58,6 +70,7 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.Metadata = wire.Memory.Metadata
 		r.CreatedAt = wire.Memory.CreatedAt
 		r.AttachmentRef = wire.Memory.AttachmentRef
+		r.SessionID = wire.Memory.SessionID
 	} else {
 		// Flat format — fields are at the top level.
 		r.ID = wire.ID
@@ -68,6 +81,7 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.Metadata = wire.Metadata
 		r.CreatedAt = wire.CreatedAt
 		r.AttachmentRef = wire.AttachmentRef
+		r.SessionID = wire.SessionID
 	}
 
 	// smart_score is the server's ranking key; prefer it over weighted_score and raw score.
@@ -84,5 +98,11 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 	r.Depth = wire.Depth
 	r.ContentLen = wire.ContentLen
 	r.ContentTruncated = wire.ContentTruncated
+	r.VectorScore = wire.VectorScore
+	r.TextScore = wire.TextScore
+	r.MatchedText = wire.MatchedText
+	r.MatchedIDs = wire.MatchedIDs
+	r.Retrieval = wire.Retrieval
+	r.ContextOf = wire.ContextOf
 	return nil
 }

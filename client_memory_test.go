@@ -831,7 +831,7 @@ func TestCreateKey(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
-	result, err := client.CreateKey(context.Background(), CreateKeyRequest{Name: "test-key", Permissions: []string{"read", "write"}})
+	result, err := client.CreateKey(context.Background(), CreateKeyRequest{Name: "test-key", Scope: KeyScopeWrite})
 	require.NoError(t, err)
 	assert.Equal(t, "key-001", result.ID)
 	assert.True(t, result.Active)

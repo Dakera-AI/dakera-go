@@ -14,7 +14,6 @@
 package dakera
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -46,6 +45,9 @@ type Client struct {
 	retryConfig RetryConfig
 	headers     map[string]string
 	httpClient  *http.Client
+	// streamClient serves long-lived event streams: same transport, no
+	// overall timeout.
+	streamClient *http.Client
 
 	// OPS-1: last seen rate-limit headers
 	rlMu                 sync.Mutex
@@ -188,11 +190,30 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 
 	baseURL := strings.TrimSuffix(opts.BaseURL, "/")
 
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: connectTimeout,
-		}).DialContext,
+	// Start from Go's default transport: proxy from the environment
+	// (HTTPS_PROXY / NO_PROXY), TLS handshake timeout, HTTP/2, idle
+	// connection limits; TLS uses crypto/tls defaults (TLS 1.2+, system roots,
+	// certificate verification on).
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
 	}
+	transport.DialContext = (&net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	// A server that accepts the connection but never answers is given up on
+	// after the request timeout, streams included.
+	transport.ResponseHeaderTimeout = timeout
 
 	return &Client{
 		baseURL:     baseURL,
@@ -204,7 +225,8 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 			Timeout:   timeout,
 			Transport: transport,
 		},
-		preflight: opts.Preflight,
+		streamClient: &http.Client{Transport: transport},
+		preflight:    opts.Preflight,
 	}
 }
 
@@ -253,7 +275,7 @@ func (c *Client) Upsert(ctx context.Context, namespace string, vectors []VectorI
 		"vectors": vectors,
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +307,7 @@ func (c *Client) Query(ctx context.Context, namespace string, vector []float32, 
 		body["include_metadata"] = true
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +332,7 @@ func (c *Client) Delete(ctx context.Context, namespace string, opts DeleteOption
 		body["delete_all"] = true
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/delete", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/delete", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +350,7 @@ func (c *Client) BulkUpdateVectors(ctx context.Context, namespace string, filter
 		"filter": filter,
 		"update": update,
 	}
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-update", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-update", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +366,7 @@ func (c *Client) BulkDeleteVectors(ctx context.Context, namespace string, filter
 	body := map[string]interface{}{
 		"filter": filter,
 	}
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-delete", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/bulk-delete", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +383,7 @@ func (c *Client) CountVectors(ctx context.Context, namespace string, filter map[
 	if filter != nil {
 		body["filter"] = filter
 	}
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/count", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/vectors/count", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +418,7 @@ func (c *Client) BatchQuery(ctx context.Context, namespace string, queries []Bat
 		"queries": reqQueries,
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +450,7 @@ func (c *Client) UpsertText(ctx context.Context, namespace string, documents []T
 		body["model"] = opts.Model
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/upsert-text", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/upsert-text", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +491,7 @@ func (c *Client) QueryText(ctx context.Context, namespace string, text string, o
 		body["include_text"] = true
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query-text", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/query-text", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +529,7 @@ func (c *Client) BatchQueryText(ctx context.Context, namespace string, queries [
 		body["top_k"] = 10
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query-text", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/batch-query-text", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +551,7 @@ func (c *Client) IndexDocuments(ctx context.Context, namespace string, documents
 		"documents": documents,
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/index", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/index", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +580,7 @@ func (c *Client) FulltextSearch(ctx context.Context, namespace string, query str
 		body["top_k"] = 10
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/search", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/fulltext/search", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +621,7 @@ func (c *Client) HybridSearch(ctx context.Context, namespace string, vector []fl
 		body["vector_weight"] = 0.5
 	}
 
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/hybrid", namespace), body)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/namespaces/%s/hybrid", url.PathEscape(namespace)), body)
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +672,7 @@ func (c *Client) ListNamespacesWithKinds(ctx context.Context) (*NamespaceList, e
 
 // GetNamespace returns information about a specific namespace.
 func (c *Client) GetNamespace(ctx context.Context, namespace string) (*NamespaceInfo, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s", namespace), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s", url.PathEscape(namespace)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +728,7 @@ func (c *Client) ConfigureNamespace(ctx context.Context, namespace string, req C
 			return nil, err
 		}
 	}
-	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s", namespace), req)
+	respBody, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s", url.PathEscape(namespace)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -720,7 +742,7 @@ func (c *Client) ConfigureNamespace(ctx context.Context, namespace string, req C
 
 // DeleteNamespace deletes a namespace.
 func (c *Client) DeleteNamespace(ctx context.Context, namespace string) error {
-	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s", namespace), nil)
+	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s", url.PathEscape(namespace)), nil)
 	return err
 }
 
@@ -924,6 +946,12 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 // Set req.IncludeAssociated = true to enable COG-2 associative recall —
 // the response will include AssociatedMemories surfaced via KG depth-1
 // traversal from the primary results.
+//
+// Under the server's default neighbourhood mode (inline) Memories may hold
+// more than TopK items: the ranked results followed by neighbourhood context
+// (RecalledMemory.IsNeighborhood). Set req.NeighborhoodMode to
+// NeighborhoodModeSeparate for at most TopK ranked results, with the context
+// in RecallResponse.ContextMemories.
 func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) (*RecallResponse, error) {
 	req.AgentID = agentID
 	respBody, err := c.request(ctx, "POST", "/v1/memory/recall", req)
@@ -945,7 +973,7 @@ func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) 
 
 // GetMemory gets a specific memory.
 func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s?agent_id=%s", memoryID, url.QueryEscape(agentID)), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s?agent_id=%s", url.PathEscape(memoryID), url.QueryEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,6 +1115,31 @@ func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchM
 	return wrapper.Memories, nil
 }
 
+// SearchMemoriesDetailed is SearchMemories returning the whole answer of
+// POST /v1/memory/search: the results plus total_count, rerank_report and
+// effective_top_k. A legacy bare-list answer is accepted (TotalCount is then
+// the number of results).
+func (c *Client) SearchMemoriesDetailed(ctx context.Context, agentID string, req SearchMemoriesRequest) (*SearchMemoriesResponse, error) {
+	req.AgentID = agentID
+	respBody, err := c.request(ctx, "POST", "/v1/memory/search", req)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(respBody)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var memories []RecalledMemory
+		if err := json.Unmarshal(trimmed, &memories); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		return &SearchMemoriesResponse{Memories: memories, TotalCount: len(memories)}, nil
+	}
+	var result SearchMemoriesResponse
+	if err := json.Unmarshal(trimmed, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
 // UpdateImportance updates the importance of memories.
 func (c *Client) UpdateImportance(ctx context.Context, agentID string, req UpdateImportanceRequest) error {
 	for _, mid := range req.MemoryIDs {
@@ -1119,7 +1172,7 @@ func (c *Client) Consolidate(ctx context.Context, agentID string, req Consolidat
 
 // ConsolidateAgent consolidates memories directly for an agent (DBSCAN clustering).
 func (c *Client) ConsolidateAgent(ctx context.Context, agentID string) (*AgentConsolidateResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/consolidate", agentID), nil)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/agents/%s/consolidate", url.PathEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,7 +1185,7 @@ func (c *Client) ConsolidateAgent(ctx context.Context, agentID string) (*AgentCo
 
 // GetConsolidationLog gets the consolidation execution log for an agent.
 func (c *Client) GetConsolidationLog(ctx context.Context, agentID string) ([]AgentConsolidationLogEntry, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/consolidation/log", agentID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/consolidation/log", url.PathEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1145,7 +1198,7 @@ func (c *Client) GetConsolidationLog(ctx context.Context, agentID string) ([]Age
 
 // PatchConsolidationConfig updates the consolidation configuration for an agent.
 func (c *Client) PatchConsolidationConfig(ctx context.Context, agentID string, patch ConsolidationConfigPatch) (*AgentConsolidationConfig, error) {
-	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/agents/%s/consolidation/config", agentID), patch)
+	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/agents/%s/consolidation/config", url.PathEscape(agentID)), patch)
 	if err != nil {
 		return nil, err
 	}
@@ -1210,7 +1263,7 @@ func (c *Client) MemoryFeedback(ctx context.Context, agentID string, req MemoryF
 //   - FeedbackSignalFlag: marks as irrelevant — accelerates decay on next cycle.
 func (c *Client) FeedbackMemory(ctx context.Context, memoryID string, agentID string, signal FeedbackSignal) (*FeedbackResponse, error) {
 	req := MemoryFeedbackBodyRequest{AgentID: agentID, Signal: signal}
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/memories/%s/feedback", memoryID), req)
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/memories/%s/feedback", url.PathEscape(memoryID)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -1223,7 +1276,7 @@ func (c *Client) FeedbackMemory(ctx context.Context, memoryID string, agentID st
 
 // GetMemoryFeedbackHistory returns the full feedback history for a memory (INT-1).
 func (c *Client) GetMemoryFeedbackHistory(ctx context.Context, memoryID string) (*FeedbackHistoryResponse, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memories/%s/feedback", memoryID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memories/%s/feedback", url.PathEscape(memoryID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1248,7 +1301,7 @@ func (c *Client) EvaluateTif(ctx context.Context, memoryID string) (TifScore, er
 
 // GetAgentFeedbackSummary returns aggregate feedback counts and health score for an agent (INT-1).
 func (c *Client) GetAgentFeedbackSummary(ctx context.Context, agentID string) (*AgentFeedbackSummary, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/feedback/summary", agentID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/feedback/summary", url.PathEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1262,7 +1315,7 @@ func (c *Client) GetAgentFeedbackSummary(ctx context.Context, agentID string) (*
 // PatchMemoryImportance directly overrides a memory's importance score (INT-1).
 func (c *Client) PatchMemoryImportance(ctx context.Context, memoryID string, agentID string, importance float32) (*FeedbackResponse, error) {
 	req := MemoryImportancePatchRequest{AgentID: agentID, Importance: importance}
-	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/memories/%s/importance", memoryID), req)
+	respBody, err := c.request(ctx, "PATCH", fmt.Sprintf("/v1/memories/%s/importance", url.PathEscape(memoryID)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -1278,7 +1331,7 @@ func (c *Client) PatchMemoryImportance(ctx context.Context, memoryID string, age
 // The health score is the mean importance of all non-expired memories (0.0–1.0).
 // A higher score indicates a healthier, more relevant memory store.
 func (c *Client) GetFeedbackHealth(ctx context.Context, agentID string) (*FeedbackHealthResponse, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/feedback/health?agent_id=%s", agentID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/feedback/health?agent_id=%s", url.QueryEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1475,7 +1528,7 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 // of an agent the key cannot reach, returns the same idempotent 200 with an
 // empty AgentID and nothing written.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", sessionID), map[string]interface{}{})
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", url.PathEscape(sessionID)), map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
@@ -1489,7 +1542,7 @@ func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndR
 
 // GetSession gets session details.
 func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/sessions/%s", sessionID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/sessions/%s", url.PathEscape(sessionID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1661,7 +1714,7 @@ func (c *Client) CreateAgent(ctx context.Context, agentID string) (*CreateAgentR
 // ContentTruncated are then set; read a truncated memory in full with
 // GetMemory).
 func (c *Client) AgentMemories(ctx context.Context, agentID string, opts *AgentMemoriesOptions) ([]RecalledMemory, error) {
-	path := fmt.Sprintf("/v1/agents/%s/memories", agentID)
+	path := fmt.Sprintf("/v1/agents/%s/memories", url.PathEscape(agentID))
 	if opts != nil {
 		params := url.Values{}
 		if opts.MemoryType != "" {
@@ -1698,7 +1751,7 @@ func (c *Client) AgentMemories(ctx context.Context, agentID string, opts *AgentM
 
 // AgentStats gets stats for an agent.
 func (c *Client) AgentStats(ctx context.Context, agentID string) (*AgentStats, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/stats", agentID), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/agents/%s/stats", url.PathEscape(agentID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1712,7 +1765,7 @@ func (c *Client) AgentStats(ctx context.Context, agentID string) (*AgentStats, e
 
 // AgentSessions gets sessions for an agent.
 func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentSessionsOptions) ([]Session, error) {
-	path := fmt.Sprintf("/v1/agents/%s/sessions", agentID)
+	path := fmt.Sprintf("/v1/agents/%s/sessions", url.PathEscape(agentID))
 	if opts != nil {
 		params := url.Values{}
 		if opts.ActiveOnly != nil {
@@ -1748,7 +1801,7 @@ func (c *Client) AgentSessions(ctx context.Context, agentID string, opts *AgentS
 //
 // Requires Read scope on the agent namespace.
 func (c *Client) GetWakeUpContext(ctx context.Context, agentID string, opts *WakeUpOptions) (*WakeUpResponse, error) {
-	path := fmt.Sprintf("/v1/agents/%s/wake-up", agentID)
+	path := fmt.Sprintf("/v1/agents/%s/wake-up", url.PathEscape(agentID))
 	if opts != nil {
 		params := url.Values{}
 		if opts.TopN != nil {
@@ -1780,7 +1833,7 @@ func (c *Client) GetWakeUpContext(ctx context.Context, agentID string, opts *Wak
 // CompressAgent runs a server-side compression pass on the agent's memory
 // namespace (CE-12). Returns statistics about the compression operation.
 func (c *Client) CompressAgent(ctx context.Context, agentID string) (*CompressResponse, error) {
-	path := fmt.Sprintf("/v1/agents/%s/compress", agentID)
+	path := fmt.Sprintf("/v1/agents/%s/compress", url.PathEscape(agentID))
 	respBody, err := c.request(ctx, "POST", path, nil)
 	if err != nil {
 		return nil, err
@@ -2340,11 +2393,29 @@ func (c *Client) SlowQueries(ctx context.Context, opts *SlowQueryOptions) ([]Slo
 }
 
 // CreateBackup creates a backup.
+//
+// Deprecated: use AdminCreateBackup. The server has no include_data field
+// (a backup always holds the data) and requires a name; this method sends a
+// full backup named "backup-<unix seconds>" and maps the answer to
+// BackupInfo. includeData is ignored.
 func (c *Client) CreateBackup(ctx context.Context, includeData bool) (*BackupInfo, error) {
-	body := map[string]interface{}{"include_data": includeData}
-	data, err := c.request(ctx, "POST", "/v1/admin/backups", body)
+	_ = includeData
+	req := CreateBackupRequest{Name: fmt.Sprintf("backup-%d", time.Now().Unix()), BackupType: "full"}
+	data, err := c.request(ctx, "POST", "/v1/admin/backups", req)
 	if err != nil {
 		return nil, err
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup info: %w", err)
+	}
+	if _, wrapped := probe["backup"]; wrapped {
+		var result CreateBackupResponse
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal backup info: %w", err)
+		}
+		info := legacyBackupInfo(result.Backup)
+		return &info, nil
 	}
 	var result BackupInfo
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -2353,14 +2424,40 @@ func (c *Client) CreateBackup(ctx context.Context, includeData bool) (*BackupInf
 	return &result, nil
 }
 
-// ListBackups lists all backups.
+// legacyBackupInfo maps the server's backup record to the legacy BackupInfo.
+func legacyBackupInfo(b AdminBackupInfo) BackupInfo {
+	return BackupInfo{
+		ID:          b.BackupID,
+		CreatedAt:   strconv.FormatUint(b.CreatedAt, 10),
+		SizeBytes:   int64(b.SizeBytes),
+		Status:      b.Status,
+		IncludeData: true,
+	}
+}
+
+// ListBackups lists all backups. The server's {"backups": [...], "total": N}
+// answer and a legacy bare list are both accepted.
+//
+// Deprecated: use AdminListBackups, which returns the full records.
 func (c *Client) ListBackups(ctx context.Context) ([]BackupInfo, error) {
 	data, err := c.request(ctx, "GET", "/v1/admin/backups", nil)
 	if err != nil {
 		return nil, err
 	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var wrapper BackupListResponse
+		if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal backups: %w", err)
+		}
+		result := make([]BackupInfo, 0, len(wrapper.Backups))
+		for _, b := range wrapper.Backups {
+			result = append(result, legacyBackupInfo(b))
+		}
+		return result, nil
+	}
 	var result []BackupInfo
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := json.Unmarshal(trimmed, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal backups: %w", err)
 	}
 	return result, nil
@@ -2502,6 +2599,14 @@ func (c *Client) GetKpis(ctx context.Context) (*KpiSnapshot, error) {
 
 // CreateKey creates a new API key.
 func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*ApiKey, error) {
+	if len(req.Permissions) > 0 || req.ExpiresAt != "" {
+		return nil, &ValidationError{DakeraError: DakeraError{
+			Message: "CreateKeyRequest.Permissions and ExpiresAt are not server fields " +
+				"(the server answers 422 for unknown fields): use Scope and ExpiresInDays",
+			StatusCode: 0,
+			Code:       ErrorCodeInvalidRequest,
+		}}
+	}
 	data, err := c.request(ctx, "POST", "/admin/keys", req)
 	if err != nil {
 		return nil, err
@@ -2712,7 +2817,7 @@ func (c *Client) KnowledgeExport(ctx context.Context, agentID, format string) (*
 
 // GetNamespaceEntityConfig gets entity extraction configuration for a namespace.
 func (c *Client) GetNamespaceEntityConfig(ctx context.Context, namespace string) (*NamespaceEntityConfig, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/config", namespace), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/config", url.PathEscape(namespace)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2771,7 +2876,7 @@ func (c *Client) PatchNamespaceEntityConfig(ctx context.Context, namespace strin
 
 // GetNamespaceExtractor gets the extractor provider configuration for a namespace.
 func (c *Client) GetNamespaceExtractor(ctx context.Context, namespace string) (*ExtractorConfigResponse, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/extractor", namespace), nil)
+	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/extractor", url.PathEscape(namespace)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3085,57 +3190,16 @@ func (c *Client) StreamAuditEvents(ctx context.Context, agentID string, eventTyp
 		path += "?" + params.Encode()
 	}
 
-	reqURL := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create stream request: %w", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, NewConnectionError(fmt.Sprintf("failed to connect to audit stream: %v", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		var errBody struct {
-			Error string    `json:"error"`
-			Code  ErrorCode `json:"code"`
-		}
-		json.Unmarshal(body, &errBody)
-		errMsg := errBody.Error
-		if errMsg == "" {
-			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-		errorCode := errBody.Code
-		if errorCode == "" {
-			errorCode = ErrorCodeUnknown
-		}
-		switch resp.StatusCode {
-		case 401:
-			return nil, NewAuthenticationError("Authentication failed", resp.StatusCode, errBody, errorCode)
-		case 403:
-			return nil, NewAuthorizationError(errMsg, resp.StatusCode, errorCode, errBody)
-		case 404:
-			return nil, NewNotFoundError(errMsg, resp.StatusCode, errBody, errorCode)
-		default:
-			return nil, NewServerError(errMsg, resp.StatusCode, errBody, errorCode)
-		}
+		return nil, err
 	}
 
 	ch := make(chan *AuditEvent, 16)
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newSSEScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data:") {
@@ -3204,18 +3268,22 @@ func (c *Client) ConfigureNamespaceExtractor(ctx context.Context, namespace stri
 // SEC-3: AES-256-GCM Encryption Key Rotation
 // ===========================================================================
 
-// RotateEncryptionKey re-encrypts all memory content blobs with a new
-// AES-256-GCM key (SEC-3). POST /v1/admin/encryption/rotate-key.
+// RotateEncryptionKey rotates the data key that seals memory content, text
+// documents and BM25 indexes at rest (SEC-3).
+// POST /v1/admin/encryption/rotate-key.
 //
-// After this call the new key is active in the running process. The operator
-// must update DAKERA_ENCRYPTION_KEY and restart to make the rotation durable.
-//
-// Requires Admin scope. Pass namespace="" to rotate all namespaces.
+// newKey is a passphrase or 64-char hex key; "" lets the server generate a
+// random key. namespace="" rotates the global key. Requires a global Admin
+// key. See RotateEncryptionKeyWithOptions for WaitSecs, and the response's
+// ActionRequired for what the operator must do next.
 func (c *Client) RotateEncryptionKey(ctx context.Context, newKey string, namespace string) (*RotateEncryptionKeyResponse, error) {
-	req := RotateEncryptionKeyRequest{NewKey: newKey}
-	if namespace != "" {
-		req.Namespace = namespace
-	}
+	return c.RotateEncryptionKeyWithOptions(ctx, RotateEncryptionKeyRequest{NewKey: newKey, Namespace: namespace})
+}
+
+// RotateEncryptionKeyWithOptions is RotateEncryptionKey with every request
+// field (WaitSecs). Only fields the server accepts are sent; unset ones are
+// omitted (the route answers 422 for unknown fields).
+func (c *Client) RotateEncryptionKeyWithOptions(ctx context.Context, req RotateEncryptionKeyRequest) (*RotateEncryptionKeyResponse, error) {
 	resp, err := c.request(ctx, "POST", "/v1/admin/encryption/rotate-key", req)
 	if err != nil {
 		return nil, err
@@ -3225,6 +3293,52 @@ func (c *Client) RotateEncryptionKey(ctx context.Context, newKey string, namespa
 		return nil, fmt.Errorf("failed to unmarshal rotate encryption key response: %w", err)
 	}
 	return &result, nil
+}
+
+// EncryptionStatus returns the encryption-at-rest status: keys (ids only) and
+// re-seal progress. GET /v1/admin/encryption/status. Global Admin key.
+func (c *Client) EncryptionStatus(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "GET", "/v1/admin/encryption/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal encryption status: %w", err)
+	}
+	return result, nil
+}
+
+// ResealEncryption starts (and optionally waits for) a re-seal pass that
+// moves values to the current key. POST /v1/admin/encryption/reseal. The
+// answer is {"pass": {...}} when the pass finished within WaitSecs, else
+// {"reseal": "running", "status_url": ...}. Global Admin key.
+func (c *Client) ResealEncryption(ctx context.Context, req ResealEncryptionRequest) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "POST", "/v1/admin/encryption/reseal", req)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal reseal response: %w", err)
+	}
+	return result, nil
+}
+
+// RevokeEncryptionMaster revokes the master of a retired operator key, so
+// the passphrase it came from no longer opens the keyring (the data key is
+// kept). POST /v1/admin/encryption/keys/{keyID}/revoke-master. The server
+// answers 409 while the key still seals or is not retired. Global Admin key.
+func (c *Client) RevokeEncryptionMaster(ctx context.Context, keyID string) (map[string]interface{}, error) {
+	resp, err := c.request(ctx, "POST", fmt.Sprintf("/v1/admin/encryption/keys/%s/revoke-master", url.PathEscape(keyID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal revoke-master response: %w", err)
+	}
+	return result, nil
 }
 
 // ===========================================================================
@@ -3768,7 +3882,12 @@ func (c *Client) OpsCompact(ctx context.Context, req CompactionRequest) (*Compac
 	return &result, nil
 }
 
-// OpsShutdown requests a graceful server shutdown.
+// OpsShutdown requests a graceful server shutdown. POST /ops/shutdown.
+//
+// It stops the node for every tenant, so the server requires a global
+// super_admin key (KeyScopeSuperAdmin); a global admin key gets a 403
+// (*AuthorizationError) from servers newer than v0.12.2. Like every POST it
+// is not retried after a 5xx answer or a dropped connection.
 func (c *Client) OpsShutdown(ctx context.Context) (map[string]interface{}, error) {
 	resp, err := c.request(ctx, "POST", "/ops/shutdown", nil)
 	if err != nil {

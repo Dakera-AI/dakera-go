@@ -4,6 +4,8 @@ package dakera
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -821,6 +823,8 @@ type Memory struct {
 	AccessCount    *int                   `json:"access_count,omitempty"`
 	// AttachmentRef is the attachment ("sha256:<hex>") the memory points at (server v0.12+).
 	AttachmentRef string `json:"attachment_ref,omitempty"`
+	// SessionID is the session the memory was stored in ("" when none).
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // RecalledMemory represents a recalled memory with similarity score.
@@ -857,7 +861,60 @@ type RecalledMemory struct {
 	// a content preview; when true, read the whole memory with GetMemory
 	// before showing or editing it.
 	ContentTruncated *bool `json:"content_truncated,omitempty"`
+	// SessionID is the session the memory was stored in ("" when none).
+	SessionID string `json:"session_id,omitempty"`
+	// VectorScore and TextScore are the normalized dense-vector and BM25
+	// sub-scores of hybrid fusion (hybrid-routed results only).
+	VectorScore *float32 `json:"vector_score,omitempty"`
+	TextScore   *float32 `json:"text_score,omitempty"`
+	// MatchedText is set when the server collapses derived sentence
+	// sub-memories into their source (DAKERA_RECALL_COLLAPSE_DERIVED): the
+	// sentence that matched best, when it outranked the source's own text.
+	// The result itself is then the source memory. Empty otherwise and on
+	// older servers.
+	MatchedText string `json:"matched_text,omitempty"`
+	// MatchedIDs are the ids of the derived sentence sub-memories collapsed
+	// into this result, best first. nil when none matched.
+	MatchedIDs []string `json:"matched_ids,omitempty"`
+	// Retrieval says how a non-ranked item got into the response:
+	// RetrievalNeighborhood for neighbourhood context returned inline (its
+	// Score is the raw similarity of a different search and is NOT comparable
+	// with the ranked results' scores). Empty for ranked results.
+	Retrieval string `json:"retrieval,omitempty"`
+	// ContextOf is set on a RecallResponse.ContextMemories entry: the id of
+	// the ranked memory it is neighbourhood context for.
+	ContextOf string `json:"context_of,omitempty"`
 }
+
+// RetrievalNeighborhood is RecalledMemory.Retrieval of a neighbourhood
+// context item returned inline in RecallResponse.Memories.
+const RetrievalNeighborhood = "neighborhood"
+
+// IsNeighborhood reports whether this item is neighbourhood context rather
+// than a ranked result (Retrieval == RetrievalNeighborhood, or ContextOf set).
+func (r RecalledMemory) IsNeighborhood() bool {
+	return r.Retrieval == RetrievalNeighborhood || r.ContextOf != ""
+}
+
+// NeighborhoodMode says where a recall returns its neighbourhood context
+// (session-adjacent memories of the top results). The zero value omits the
+// field, so the server default applies (DAKERA_NEIGHBORHOOD_MODE, itself
+// "inline" by default). Servers older than the release that added it ignore
+// the field.
+type NeighborhoodMode string
+
+const (
+	// NeighborhoodModeInline appends the context to Memories after the TopK
+	// ranked results, each marked Retrieval == RetrievalNeighborhood
+	// (the v0.11 behaviour; len(Memories) may exceed TopK).
+	NeighborhoodModeInline NeighborhoodMode = "inline"
+	// NeighborhoodModeSeparate returns the context in
+	// RecallResponse.ContextMemories, each with ContextOf set, so
+	// len(Memories) <= TopK. Use it when TopK means "at most TopK results".
+	NeighborhoodModeSeparate NeighborhoodMode = "separate"
+	// NeighborhoodModeOff fetches no neighbourhood context.
+	NeighborhoodModeOff NeighborhoodMode = "off"
+)
 
 // RoutingMode controls which retrieval index the server uses for recall and
 // search (CE-10). RoutingModeAuto (default) lets the server pick the best
@@ -871,7 +928,7 @@ const (
 	RoutingModeVector RoutingMode = "vector"
 	// RoutingModeBM25 forces BM25 full-text search.
 	RoutingModeBM25 RoutingMode = "bm25"
-	// RoutingModeHybrid fuses ANN and BM25 scores (RRF).
+	// RoutingModeHybrid fuses ANN and BM25 scores (see FusionStrategy).
 	RoutingModeHybrid RoutingMode = "hybrid"
 )
 
@@ -894,6 +951,13 @@ type RecallRequest struct {
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// SessionID restricts the recall to one session ("" = every session).
+	SessionID string `json:"session_id,omitempty"`
+	// Tags restricts the recall to memories carrying these tags.
+	Tags []string `json:"tags,omitempty"`
+	// ImportanceWeighted toggles importance-weighted re-ranking. nil uses the
+	// server default (true).
+	ImportanceWeighted *bool `json:"importance_weighted,omitempty"`
 	// COG-2: traverse KG from recalled memories and include
 	// associatively linked memories in the response (default: false)
 	IncludeAssociated bool `json:"include_associated,omitempty"`
@@ -910,8 +974,12 @@ type RecallRequest struct {
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
 	// CE-13: cross-encoder reranking. nil uses server default (true for recall).
-	// Set to pointer-to-false to disable on latency-sensitive paths.
+	// Set to pointer-to-false to disable on latency-sensitive paths. On hybrid
+	// routing the candidate pool is 10x the ranking depth (max(TopK, 10)).
 	Rerank *bool `json:"rerank,omitempty"`
+	// RerankCandidates bounds how many retrieved candidates the cross-encoder
+	// scores (the best by retrieval score). nil = the whole candidate pool.
+	RerankCandidates *int `json:"rerank_candidates,omitempty"`
 	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyMinMax since v0.11.2).
 	Fusion *FusionStrategy `json:"fusion,omitempty"`
 	// CE-17: explicit vector/BM25 weight for Hybrid routing (0.0–1.0).
@@ -923,8 +991,18 @@ type RecallRequest struct {
 	// Only effective when Routing = RoutingModeBm25.
 	Iterations *uint8 `json:"iterations,omitempty"`
 	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
-	// Set to pointer-to-false to disable on latency-sensitive paths.
+	// Set to pointer-to-false to disable on latency-sensitive paths. false
+	// means NeighborhoodModeOff and wins over NeighborhoodMode.
 	Neighborhood *bool `json:"neighborhood,omitempty"`
+	// NeighborhoodMode says where the neighbourhood context goes (inline,
+	// separate or off). Empty uses the server default. Request
+	// NeighborhoodModeSeparate to get at most TopK ranked results in Memories
+	// and the context in RecallResponse.ContextMemories.
+	NeighborhoodMode NeighborhoodMode `json:"neighborhood_mode,omitempty"`
+	// IncludeSummaries says whether session-summary memories may be recalled.
+	// nil uses the server default (DAKERA_RECALL_EXCLUDE_SUMMARIES; they may
+	// unless the server excludes them).
+	IncludeSummaries *bool `json:"include_summaries,omitempty"`
 	// Lang is the language of Query (server v0.12+); it selects the temporal
 	// expressions and routing patterns that classify the query. It does not
 	// translate or filter anything. Empty uses the server default; an
@@ -935,9 +1013,62 @@ type RecallRequest struct {
 // RecallResponse is the response from the recall endpoint.
 // Use associated_memories (COG-2 / KG-3) by setting IncludeAssociated on the request.
 // Each associated memory includes a Depth field (KG-3).
+//
+// The first k Memories of a TopK=k recall are the first k of a TopK=10 recall
+// for k <= 10 (server DAKERA_RECALL_RANK_DEPTH, default 10). Under
+// NeighborhoodModeInline, neighbourhood context follows the ranked results
+// in Memories (RecalledMemory.IsNeighborhood); under NeighborhoodModeSeparate
+// it is in ContextMemories instead. Fields a server does not send stay zero.
 type RecallResponse struct {
 	Memories           []RecalledMemory `json:"memories"`
 	AssociatedMemories []RecalledMemory `json:"associated_memories,omitempty"`
+	// ContextMemories is the neighbourhood context under
+	// NeighborhoodModeSeparate, each entry with ContextOf set. nil otherwise.
+	ContextMemories []RecalledMemory `json:"context_memories,omitempty"`
+	// QueryEmbeddingTimeMs and SearchTimeMs are the server-side timings.
+	QueryEmbeddingTimeMs uint64 `json:"query_embedding_time_ms,omitempty"`
+	SearchTimeMs         uint64 `json:"search_time_ms,omitempty"`
+	// RerankReport is what the cross-encoder did for this recall (the
+	// server's rerank_report, or rerank from v0.12 pre-releases). nil from
+	// older servers.
+	RerankReport *RerankReport `json:"rerank_report,omitempty"`
+	// LateInteractionFirstStage names the first stage that served the recall
+	// under the late-interaction strategy. Empty otherwise.
+	LateInteractionFirstStage string `json:"late_interaction_first_stage,omitempty"`
+}
+
+// RerankReport says what the cross-encoder did for one recall or search.
+type RerankReport struct {
+	// Applied is true when the cross-encoder rescored candidates and its
+	// order was used.
+	Applied bool `json:"applied"`
+	// Candidates is how many candidates it scored.
+	Candidates int `json:"candidates"`
+	// Skipped says why it did not run (disabled, bm25_routing, no_query, ...)
+	// or why its order was not used (low_confidence). Empty when applied.
+	Skipped string `json:"skipped,omitempty"`
+}
+
+// UnmarshalJSON accepts the v0.12 pre-release name "rerank" for
+// rerank_report (the request's rerank is a bool; the response's is the
+// report) and ignores fields it does not know.
+func (r *RecallResponse) UnmarshalJSON(data []byte) error {
+	type plain RecallResponse
+	var wire struct {
+		plain
+		Rerank json.RawMessage `json:"rerank,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*r = RecallResponse(wire.plain)
+	if r.RerankReport == nil && len(wire.Rerank) > 0 && wire.Rerank[0] == '{' {
+		var report RerankReport
+		if err := json.Unmarshal(wire.Rerank, &report); err == nil {
+			r.RerankReport = &report
+		}
+	}
+	return nil
 }
 
 // UpdateMemoryRequest represents a request to update a memory.
@@ -952,11 +1083,24 @@ type UpdateMemoryRequest struct {
 
 // SearchMemoriesRequest represents a request to search memories.
 type SearchMemoriesRequest struct {
-	AgentID       string   `json:"agent_id,omitempty"`
-	Query         string   `json:"query"`
+	AgentID string `json:"agent_id,omitempty"`
+	// Query ranks the results. Empty omits it: a filter-only search.
+	Query         string   `json:"query,omitempty"`
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// MaxImportance excludes memories above this importance.
+	MaxImportance *float32 `json:"max_importance,omitempty"`
+	// SessionID restricts the search to one session.
+	SessionID string `json:"session_id,omitempty"`
+	// Tags restricts the search to memories carrying these tags.
+	Tags []string `json:"tags,omitempty"`
+	// CreatedAfter / CreatedBefore bound created_at (Unix seconds).
+	CreatedAfter  *uint64 `json:"created_after,omitempty"`
+	CreatedBefore *uint64 `json:"created_before,omitempty"`
+	// SortBy orders a filter-only search: created_at, last_accessed_at,
+	// importance or access_count. Empty uses the server default.
+	SortBy string `json:"sort_by,omitempty"`
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
 	// CE-13: cross-encoder reranking. nil uses server default (false for search).
@@ -964,6 +1108,21 @@ type SearchMemoriesRequest struct {
 	Rerank *bool `json:"rerank,omitempty"`
 	// Lang is the language of Query (server v0.12+), as on RecallRequest.
 	Lang string `json:"lang,omitempty"`
+}
+
+// SearchMemoriesResponse is the full answer of POST /v1/memory/search
+// (SearchMemoriesDetailed). Results carry the same optional fields as recall
+// results (MatchedText, MatchedIDs, ...). Fields a server does not send stay
+// zero.
+type SearchMemoriesResponse struct {
+	Memories []RecalledMemory `json:"memories"`
+	// TotalCount is the number of matches before TopK was applied.
+	TotalCount int `json:"total_count"`
+	// RerankReport is what the cross-encoder did (nil from older servers).
+	RerankReport *RerankReport `json:"rerank_report,omitempty"`
+	// EffectiveTopK is the TopK the search could honour (a search with a
+	// query ranks at most 500 candidates). 0 from older servers.
+	EffectiveTopK int `json:"effective_top_k,omitempty"`
 }
 
 // UpdateImportanceRequest represents a request to update memory importance.
@@ -1998,10 +2157,18 @@ func rawTimestamp(raw json.RawMessage) string {
 }
 
 // CreateKeyRequest represents a request to create an API key (POST /admin/keys).
+//
+// The server refuses unknown fields on this route with 422, so only name,
+// scope, namespaces and expires_in_days are ever sent.
 type CreateKeyRequest struct {
-	Name        string   `json:"name"`
-	Permissions []string `json:"permissions,omitempty"`
-	ExpiresAt   string   `json:"expires_at,omitempty"`
+	Name string `json:"name"`
+	// Deprecated: the server has no permissions field (the Scope is the
+	// permission level). It is never sent; CreateKey returns an error when
+	// it is set instead of silently dropping it.
+	Permissions []string `json:"-"`
+	// Deprecated: the server has no expires_at field; use ExpiresInDays. It
+	// is never sent; CreateKey returns an error when it is set.
+	ExpiresAt string `json:"-"`
 	// Scope is the key's scope: read, write, admin or super_admin. The
 	// server requires it.
 	Scope string `json:"scope,omitempty"`
@@ -2828,6 +2995,8 @@ type KeySuccessResponse struct {
 }
 
 // CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts.
 type CreateNamespaceKeyRequest struct {
 	Name          string `json:"name"`
 	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
@@ -3007,19 +3176,73 @@ type extractProvidersResponse struct {
 // ===========================================================================
 
 // RotateEncryptionKeyRequest is the body for POST /v1/admin/encryption/rotate-key (SEC-3).
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts, and unset ones are omitted. String and GoString redact
+// NewKey.
 type RotateEncryptionKeyRequest struct {
-	// NewKey is the new passphrase or 64-char hex key to rotate to.
-	NewKey string `json:"new_key"`
-	// Namespace, if set, restricts rotation to memories in that namespace.
-	// Omit (empty string) to rotate all namespaces.
+	// NewKey is the passphrase or 64-char hex key the new data key is derived
+	// from. Empty omits it: the server generates a random 256-bit key.
+	NewKey string `json:"new_key,omitempty"`
+	// Namespace, if set, rotates only that namespace's key. Empty rotates the
+	// global key (every namespace moves to it).
 	Namespace string `json:"namespace,omitempty"`
+	// WaitSecs is how long the server waits for the re-seal before answering
+	// (server default 10, at most 300; 0 = answer at once). nil omits it.
+	WaitSecs *int `json:"wait_secs,omitempty"`
 }
 
+// String redacts NewKey.
+func (r RotateEncryptionKeyRequest) String() string {
+	key := ""
+	if r.NewKey != "" {
+		key = redacted
+	}
+	wait := "<default>"
+	if r.WaitSecs != nil {
+		wait = strconv.Itoa(*r.WaitSecs)
+	}
+	return fmt.Sprintf("RotateEncryptionKeyRequest{NewKey:%q Namespace:%q WaitSecs:%s}", key, r.Namespace, wait)
+}
+
+// GoString redacts NewKey (for %#v).
+func (r RotateEncryptionKeyRequest) GoString() string { return r.String() }
+
 // RotateEncryptionKeyResponse is returned by POST /v1/admin/encryption/rotate-key (SEC-3).
+// It carries key ids only, never key material. Fields an older server does
+// not send stay zero.
 type RotateEncryptionKeyResponse struct {
+	// KeyID is the id of the new active key.
+	KeyID string `json:"key_id,omitempty"`
+	// PreviousKeyID is the id of the key it replaces for this scope.
+	PreviousKeyID string `json:"previous_key_id,omitempty"`
+	// Scope is "global" or "namespace".
+	Scope     string `json:"scope,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	// Reseal is "completed", "running" or "partial".
+	Reseal string `json:"reseal,omitempty"`
+	// Rotated / Skipped count the values re-sealed / not re-sealed by the
+	// time of the answer.
 	Rotated    int      `json:"rotated"`
 	Skipped    int      `json:"skipped"`
 	Namespaces []string `json:"namespaces"`
+	// FulltextIndicesRotated counts the BM25 index blobs re-sealed.
+	FulltextIndicesRotated int `json:"fulltext_indices_rotated,omitempty"`
+	// FailedNamespaces could not be processed (retried in the background).
+	FailedNamespaces []string `json:"failed_namespaces,omitempty"`
+	// ActionRequired is set when the operator must act (for example set
+	// DAKERA_ENCRYPTION_KEY before the next restart).
+	ActionRequired string `json:"action_required,omitempty"`
+	// StatusURL is where the re-seal progress is reported.
+	StatusURL string `json:"status_url,omitempty"`
+}
+
+// ResealEncryptionRequest is the body of POST /v1/admin/encryption/reseal.
+type ResealEncryptionRequest struct {
+	// Namespace re-seals only that namespace. Empty re-seals everything.
+	Namespace string `json:"namespace,omitempty"`
+	// WaitSecs is how long to wait for the pass (server default 0: start it
+	// and answer at once). nil omits it.
+	WaitSecs *int `json:"wait_secs,omitempty"`
 }
 
 // ===========================================================================
@@ -3624,6 +3847,10 @@ type BackupListResponse struct {
 }
 
 // CreateBackupRequest is the request body for POST /admin/backups.
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts. BackupType is full, incremental or snapshot;
+// Compression is none, zstd or lz4; Encrypt seals the backup (needs
+// encryption at rest configured).
 type CreateBackupRequest struct {
 	Name        string   `json:"name"`
 	BackupType  string   `json:"backup_type,omitempty"`

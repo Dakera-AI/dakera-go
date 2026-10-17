@@ -1,16 +1,77 @@
 package dakera
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// maxSSELineBytes bounds one line of a server-sent event stream. A memory
+// event carries the memory's content, which can be far over bufio.Scanner's
+// 64 KiB default; a longer line ends the stream with an error.
+const maxSSELineBytes = 16 << 20
+
+// maxErrorBodyBytes bounds how much of an error answer is read.
+const maxErrorBodyBytes = 1 << 20
+
+// readOnlyPostSuffixes are POST routes that change nothing on the server
+// (searches with a JSON body), so a retry after a 5xx answer or a dropped
+// connection cannot apply a write twice.
+var readOnlyPostSuffixes = []string{
+	"/query", "/query-text", "/batch-query", "/batch-query-text", "/hybrid",
+	"/fulltext/search", "/vectors/count", "/explain", "/aggregate",
+	"/unified-query", "/multi-vector",
+}
+
+// retrySafe reports whether a request may be sent again after an answer that
+// does not say whether it was applied (a 5xx other than 503, or a connection
+// that dropped after the request was written): GET, HEAD, OPTIONS, PUT and
+// DELETE, and the read-only POST routes (recall, search, queries).
+func retrySafe(method, path string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+		return true
+	case http.MethodPost:
+	default:
+		return false
+	}
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	switch path {
+	case "/v1/memory/recall", "/v1/memory/search", "/v1/memories/recall/batch", "/v1/route":
+		return true
+	}
+	if strings.HasPrefix(path, "/v1/namespaces/") {
+		for _, suffix := range readOnlyPostSuffixes {
+			if strings.HasSuffix(path, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// notSent reports whether a transport error happened before the request
+// could reach the server (DNS lookup, TCP connect), so a retry is safe for
+// any method.
+func notSent(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
 
 // ErrorBody is the JSON error document every v0.12 server answer carries (and
 // v0.11 servers carried for most errors). It is what DakeraError.ResponseBody
@@ -122,10 +183,12 @@ func newAPIError(status int, header http.Header, respBody []byte) error {
 }
 
 // retryPlan decides whether an error answer is worth another attempt and how
-// long to wait first. 429 and 503 honour Retry-After (capped at the retry
-// config's MaxDelay); other 5xx answers back off exponentially; 501 (a feature
-// that is off, or a backend limit) and every other 4xx are final.
-func (c *Client) retryPlan(status int, header http.Header, attempt int) (bool, time.Duration) {
+// long to wait first. 429 and 503 (the server refused the request) honour
+// Retry-After (capped at the retry config's MaxDelay) for every method; other
+// 5xx answers back off exponentially, for retry-safe requests only (a POST
+// that writes may have been applied); 501 (a feature that is off, or a
+// backend limit) and every other 4xx are final.
+func (c *Client) retryPlan(status int, header http.Header, attempt int, safe bool) (bool, time.Duration) {
 	retryAfter := parseRetryAfter(header.Get("Retry-After"))
 	switch {
 	case status == 429 || status == 503:
@@ -140,7 +203,7 @@ func (c *Client) retryPlan(status int, header http.Header, attempt int) (bool, t
 	case status == 501:
 		return false, 0
 	case status >= 500:
-		return true, c.computeBackoff(attempt)
+		return safe, c.computeBackoff(attempt)
 	}
 	return false, 0
 }
@@ -160,9 +223,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// send performs one logical request. With retry set it retries connection
-// failures, 429, 503 (honouring Retry-After) and other 5xx answers up to
-// RetryConfig.MaxRetries attempts; without it exactly one attempt is made.
+// send performs one logical request. With retry set it retries up to
+// RetryConfig.MaxRetries attempts: 429 and 503 (honouring Retry-After) and
+// connection failures before the request was sent, for every method; other
+// 5xx answers, dropped connections and unreadable answers only for
+// retry-safe requests (see retrySafe). Without retry exactly one attempt is
+// made.
 func (c *Client) send(ctx context.Context, method, path, contentType string, payload []byte, retry bool) (*apiResponse, error) {
 	return c.sendOpts(ctx, method, path, contentType, payload, retry, false)
 }
@@ -171,6 +237,7 @@ func (c *Client) send(ctx context.Context, method, path, contentType string, pay
 // retried (a health probe's 503 is its answer, not a transient failure).
 func (c *Client) sendOpts(ctx context.Context, method, path, contentType string, payload []byte, retry, finalOn503 bool) (*apiResponse, error) {
 	reqURL := c.baseURL + path
+	safe := retrySafe(method, path)
 	attempts := c.retryConfig.MaxRetries
 	if !retry || attempts < 1 {
 		attempts = 1
@@ -203,7 +270,7 @@ func (c *Client) sendOpts(ctx context.Context, method, path, contentType string,
 				return nil, NewTimeoutError(fmt.Sprintf("request timed out: %v", err))
 			}
 			lastErr = NewConnectionError(fmt.Sprintf("failed to connect: %v", err))
-			if attempt < attempts-1 {
+			if attempt < attempts-1 && (safe || notSent(err)) {
 				if serr := sleepCtx(ctx, c.computeBackoff(attempt)); serr != nil {
 					return nil, NewTimeoutError(fmt.Sprintf("request cancelled while retrying: %v", serr))
 				}
@@ -221,8 +288,14 @@ func (c *Client) sendOpts(ctx context.Context, method, path, contentType string,
 		c.rlMu.Unlock()
 
 		if readErr != nil {
-			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
-			continue
+			lastErr = NewConnectionError(fmt.Sprintf("failed to read response body: %v", readErr))
+			if attempt < attempts-1 && safe {
+				if serr := sleepCtx(ctx, c.computeBackoff(attempt)); serr != nil {
+					return nil, NewTimeoutError(fmt.Sprintf("request cancelled while retrying: %v", serr))
+				}
+				continue
+			}
+			return nil, lastErr
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -230,7 +303,7 @@ func (c *Client) sendOpts(ctx context.Context, method, path, contentType string,
 		}
 
 		failure := newAPIError(resp.StatusCode, resp.Header, respBody)
-		retryable, wait := c.retryPlan(resp.StatusCode, resp.Header, attempt)
+		retryable, wait := c.retryPlan(resp.StatusCode, resp.Header, attempt, safe)
 		if finalOn503 && resp.StatusCode == 503 {
 			retryable = false
 		}
@@ -274,4 +347,50 @@ func (c *Client) requestRaw(ctx context.Context, method, path, contentType strin
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+// openStream opens a long-lived GET (server-sent events) with the client's
+// auth and headers, on a client with no overall timeout (the connect and
+// response-header timeouts still apply; cancel ctx to close it). A non-2xx
+// answer is returned as the same typed error a JSON request gets
+// (*AuthenticationError, *AuthorizationError, *RateLimitError, ...).
+func (c *Client) openStream(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("dakera: failed to create stream request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("User-Agent", "dakera-go/"+Version)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	streamClient := c.streamClient
+	if streamClient == nil {
+		streamClient = &http.Client{}
+	}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, NewTimeoutError(fmt.Sprintf("stream request cancelled: %v", err))
+		}
+		return nil, NewConnectionError(fmt.Sprintf("dakera: SSE connection failed: %v", err))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		resp.Body.Close()
+		return nil, newAPIError(resp.StatusCode, resp.Header, body)
+	}
+	return resp, nil
+}
+
+// newSSEScanner reads an event stream line by line (LF or CRLF), with lines
+// up to maxSSELineBytes.
+func newSSEScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
+	return scanner
 }

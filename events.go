@@ -1,11 +1,10 @@
 package dakera
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -101,7 +100,8 @@ func (c *Client) StreamMemoryEvents(ctx context.Context) (<-chan MemoryEventResu
 // It wraps [Client.StreamMemoryEvents], filtering events by agentID and an
 // optional tags list.  When tags is non-empty, only events whose tags have at
 // least one element in common with the filter are forwarded.  The connection
-// is re-established automatically on error until ctx is cancelled.
+// is re-established automatically on error until ctx is cancelled, except
+// after a 401, 403 or 404: that error is sent on the channel and it is closed.
 //
 // The returned channel is closed when ctx is cancelled or the parent context
 // is done.
@@ -135,6 +135,16 @@ func (c *Client) SubscribeAgentMemories(ctx context.Context, agentID string, tag
 
 			inner, err := c.StreamMemoryEvents(ctx)
 			if err != nil {
+				if permanentStreamError(err) {
+					// A bad key, a missing scope or a missing route will not
+					// fix itself: report it and stop instead of reconnecting
+					// forever in silence.
+					select {
+					case ch <- MemoryEventResult{Err: err}:
+					case <-ctx.Done():
+					}
+					return
+				}
 				select {
 				case <-ctx.Done():
 					return
@@ -181,6 +191,15 @@ func (c *Client) SubscribeAgentMemories(ctx context.Context, agentID string, tag
 	return ch, nil
 }
 
+// permanentStreamError reports whether reconnecting cannot help: 401, 403,
+// 404 (*AuthenticationError, *AuthorizationError, *NotFoundError).
+func permanentStreamError(err error) bool {
+	var authn *AuthenticationError
+	var authz *AuthorizationError
+	var notFound *NotFoundError
+	return errors.As(err, &authn) || errors.As(err, &authz) || errors.As(err, &notFound)
+}
+
 // hasTagOverlap reports whether slice a and slice b share at least one element.
 func hasTagOverlap(a, b []string) bool {
 	set := make(map[string]struct{}, len(a))
@@ -197,29 +216,9 @@ func hasTagOverlap(a, b []string) bool {
 
 // streamMemorySSE opens an SSE connection and pumps MemoryEvent values into a channel.
 func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan MemoryEventResult, error) {
-	rawURL := c.baseURL + path
-
-	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("dakera: failed to create SSE request: %w", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-
-	sseClient := &http.Client{}
-	resp, err := sseClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("dakera: SSE connection failed: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		resp.Body.Close()
-		return nil, fmt.Errorf("dakera: SSE connection returned HTTP %d", resp.StatusCode)
+		return nil, err
 	}
 
 	ch := make(chan MemoryEventResult, 64)
@@ -228,7 +227,7 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 		defer close(ch)
 		defer resp.Body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newSSEScanner(resp.Body)
 		var dataLines []string
 		var sseEventType string
 
@@ -301,30 +300,9 @@ func (c *Client) streamMemorySSE(ctx context.Context, path string) (<-chan Memor
 
 // streamSSE opens an SSE connection and pumps events into a channel.
 func (c *Client) streamSSE(ctx context.Context, path string) (<-chan EventResult, error) {
-	rawURL := c.baseURL + path
-
-	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("dakera: failed to create SSE request: %w", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-
-	// Use a client without read timeout so the connection stays open.
-	sseClient := &http.Client{}
-	resp, err := sseClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("dakera: SSE connection failed: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		resp.Body.Close()
-		return nil, fmt.Errorf("dakera: SSE connection returned HTTP %d", resp.StatusCode)
+		return nil, err
 	}
 
 	ch := make(chan EventResult, 64)
@@ -333,7 +311,7 @@ func (c *Client) streamSSE(ctx context.Context, path string) (<-chan EventResult
 		defer close(ch)
 		defer resp.Body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newSSEScanner(resp.Body)
 		var dataLines []string
 
 		for scanner.Scan() {
@@ -380,7 +358,7 @@ func (c *Client) streamSSE(ctx context.Context, path string) (<-chan EventResult
 			}
 		}
 
-		if err := scanner.Err(); err != nil {
+		if err := scanner.Err(); err != nil && ctx.Err() == nil {
 			select {
 			case ch <- EventResult{Err: fmt.Errorf("dakera: SSE read error: %w", err)}:
 			case <-ctx.Done():

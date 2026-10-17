@@ -137,6 +137,38 @@ defer cancel()
 resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "preferences", TopK: 3})
 ```
 
+### Recall: at most `TopK` results, context apart
+
+A recall also returns *neighbourhood context*: memories written in the same session within a few
+minutes of the top results. By default (server `DAKERA_NEIGHBORHOOD_MODE=inline`) they follow the
+ranked results in `Memories`, so `len(resp.Memories)` can exceed `TopK`; each one has
+`IsNeighborhood()` true and a `Score` that is not comparable with the ranked results'. Ask for
+`NeighborhoodModeSeparate` to keep `Memories` to at most `TopK` ranked results and get the context
+in `ContextMemories` (each with `ContextOf`, the id of the ranked memory it belongs to):
+
+```go
+resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{
+    Query:            "where does Alice live?",
+    TopK:             3,
+    NeighborhoodMode: dakera.NeighborhoodModeSeparate, // or NeighborhoodModeInline / NeighborhoodModeOff
+})
+for _, m := range resp.Memories { // at most 3
+    fmt.Println(m.ID, m.Score, m.MatchedText) // MatchedText / MatchedIDs: see below
+}
+for _, c := range resp.ContextMemories {
+    fmt.Println("context of", c.ContextOf, ":", c.Content)
+}
+```
+
+`IncludeSummaries` (`*bool`) says whether session summaries may be recalled (unset: the server's
+choice). When the server collapses derived sentence sub-memories into their source
+(`DAKERA_RECALL_COLLAPSE_DERIVED`), a result is the source memory with `MatchedIDs` (the sentences
+that matched, best first) and `MatchedText` (the best sentence, when it outranked the source's own
+text); search results carry the same fields (`SearchMemoriesDetailed` also returns `TotalCount`,
+`RerankReport` and `EffectiveTopK`). Every new field is omitted from requests unless set and is
+optional in answers, so older servers keep working (they ignore `NeighborhoodMode` and answer
+inline).
+
 ### Text auto-embedding
 
 Send raw text without pre-computing embeddings — Dakera embeds server-side:
@@ -192,6 +224,19 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
     RetryBackoff: &dakera.RetryConfig{MaxRetries: 5, BaseDelay: 200 * time.Millisecond, MaxDelay: 30 * time.Second, Jitter: true},
 })
 ```
+
+Defaults: a 30 s request timeout (`Timeout`, also the connect and response-header timeout unless
+`ConnectTimeout` is set), Go's TLS defaults (TLS 1.2+, system roots, verification on) and proxy
+settings from the environment (`HTTPS_PROXY`, `NO_PROXY`). Event streams have no overall timeout
+(cancel their `ctx`). `MaxRetries` is the number of attempts. `429` and `503` (honouring
+`Retry-After`) and connection failures before the request was sent are retried for every request;
+other `5xx` answers and dropped connections are retried only for requests that cannot apply a write
+twice (`GET`, `PUT`, `DELETE`, recall, search and the query routes), never for a write `POST` such
+as `StoreMemory`. The API key is never printed: `Client` and `ClientOptions` redact it in `%v`,
+`%+v` and `%#v`.
+
+`OpsShutdown` (`POST /ops/shutdown`) needs a global **`super_admin`** key; an `admin` key gets a
+`403` (`*AuthorizationError`) from servers after v0.12.2.
 
 ---
 
