@@ -20,8 +20,8 @@ func (o ClientOptions) String() string {
 		headers = append(headers, k)
 	}
 	sort.Strings(headers)
-	return fmt.Sprintf("ClientOptions{BaseURL:%q APIKey:%q Timeout:%s ConnectTimeout:%s MaxRetries:%d Headers:%v Preflight:%t OdeURL:%q}",
-		o.BaseURL, key, o.Timeout, o.ConnectTimeout, o.MaxRetries, headers, o.Preflight, o.OdeURL)
+	return fmt.Sprintf("ClientOptions{BaseURL:%q APIKey:%q Timeout:%s ConnectTimeout:%s MaxRetries:%d Headers:%v Preflight:%t OdeURL:%q CustomTransport:%t}",
+		o.BaseURL, key, o.Timeout, o.ConnectTimeout, o.MaxRetries, headers, o.Preflight, o.OdeURL, o.Transport != nil)
 }
 
 // GoString is String (for %#v), so the API key is redacted there too.

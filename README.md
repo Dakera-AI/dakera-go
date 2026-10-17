@@ -137,6 +137,15 @@ defer cancel()
 resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "preferences", TopK: 3})
 ```
 
+## What's new in v0.12.3
+
+SDK v0.12.3 targets **Dakera server v0.12.3** (Dakera-AI/dakera#917, #920, #921) and stays
+**compatible with v0.12.0 – v0.12.2 servers**: new request fields are omitted unless you set them and new
+response fields are optional (zero on an older server). The neighbourhood modes, `IncludeSummaries`,
+`MatchedText` / `MatchedIDs`, `Retrieval`, `ContextOf` and `ContextMemories` need **server >= 0.12.3**
+(an older server ignores the new request fields and answers inline). The `super_admin` requirement of
+`OpsShutdown` and the `422` on unknown admin-request fields are server 0.12.3 behaviour.
+
 ### Recall: at most `TopK` results, context apart
 
 A recall also returns *neighbourhood context*: memories written in the same session within a few
@@ -226,17 +235,30 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
 ```
 
 Defaults: a 30 s request timeout (`Timeout`, also the connect and response-header timeout unless
-`ConnectTimeout` is set), Go's TLS defaults (TLS 1.2+, system roots, verification on) and proxy
-settings from the environment (`HTTPS_PROXY`, `NO_PROXY`). Event streams have no overall timeout
-(cancel their `ctx`). `MaxRetries` is the number of attempts. `429` and `503` (honouring
+`ConnectTimeout` is set) and Go's TLS defaults (TLS 1.2+, system roots, verification on). Event
+streams have no overall timeout (cancel their `ctx`).
+
+**Proxies (since v0.12.3)**: the default transport is a clone of `http.DefaultTransport`, so the
+client honours the `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables like any Go HTTP
+client (before v0.12.3 it ignored them). To opt out, set `NO_PROXY` for the Dakera host, or pass your
+own transport with `Proxy: nil`:
+
+```go
+t := http.DefaultTransport.(*http.Transport).Clone()
+t.Proxy = nil // never use a proxy
+client := dakera.NewClientWithOptions(dakera.ClientOptions{BaseURL: "http://localhost:3000", Transport: t})
+```
+
+Retries: `MaxRetries` is the number of attempts. `429` and `503` (honouring
 `Retry-After`) and connection failures before the request was sent are retried for every request;
 other `5xx` answers and dropped connections are retried only for requests that cannot apply a write
 twice (`GET`, `PUT`, `DELETE`, recall, search and the query routes), never for a write `POST` such
 as `StoreMemory`. The API key is never printed: `Client` and `ClientOptions` redact it in `%v`,
-`%+v` and `%#v`.
+`%+v` and `%#v`. `OdeExtractEntities` requests to the ODE sidecar (`OdeURL`) currently carry the
+Dakera API key; tracked in [Dakera-AI/dakera#924](https://github.com/Dakera-AI/dakera/issues/924).
 
 `OpsShutdown` (`POST /ops/shutdown`) needs a global **`super_admin`** key; an `admin` key gets a
-`403` (`*AuthorizationError`) from servers after v0.12.2.
+`403` (`*AuthorizationError`) from servers v0.12.3 and later.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"time"
 )
@@ -495,8 +496,23 @@ type ClientOptions struct {
 	Preflight bool
 
 	// OdeURL is the base URL of the dakera-ode sidecar (e.g. "http://localhost:8080").
-	// Required to call Client.ExtractEntities.
+	// Required to call Client.ExtractEntities. Requests to the sidecar
+	// currently carry the Dakera API key; tracked in
+	// https://github.com/Dakera-AI/dakera/issues/924.
 	OdeURL string
+
+	// Transport replaces the HTTP transport (nil = the default). The default
+	// is a clone of http.DefaultTransport, so it honours the HTTPS_PROXY,
+	// HTTP_PROXY and NO_PROXY environment variables (http.ProxyFromEnvironment).
+	// To opt out of proxies, pass a transport with Proxy: nil, e.g.
+	//
+	//	t := http.DefaultTransport.(*http.Transport).Clone()
+	//	t.Proxy = nil
+	//	client := dakera.NewClientWithOptions(dakera.ClientOptions{BaseURL: url, Transport: t})
+	//
+	// A custom transport is used as is: ConnectTimeout does not apply to it
+	// (Timeout still bounds each request; event streams have none).
+	Transport http.RoundTripper
 }
 
 // Filter operators for metadata filtering.
@@ -899,8 +915,8 @@ func (r RecalledMemory) IsNeighborhood() bool {
 // NeighborhoodMode says where a recall returns its neighbourhood context
 // (session-adjacent memories of the top results). The zero value omits the
 // field, so the server default applies (DAKERA_NEIGHBORHOOD_MODE, itself
-// "inline" by default). Servers older than the release that added it ignore
-// the field.
+// "inline" by default). Needs server >= 0.12.3; older servers ignore the
+// field and answer inline.
 type NeighborhoodMode string
 
 const (

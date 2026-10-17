@@ -616,3 +616,32 @@ func TestRelease_SubscribeAgentMemories_StopsOnAuthError(t *testing.T) {
 	assert.False(t, ok, "the channel is closed after a permanent error")
 	assert.EqualValues(t, 1, atomic.LoadInt32(&calls))
 }
+
+func TestRelease_DefaultTransportHonoursProxyEnvironment(t *testing.T) {
+	tr := defaultTransport(time.Second, time.Second)
+	require.NotNil(t, tr.Proxy, "the default transport takes its proxy from the environment")
+}
+
+func TestRelease_CustomTransportIsUsed(t *testing.T) {
+	var used int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v12JSON(w, 200, map[string]interface{}{"memories": []interface{}{}})
+	}))
+	defer server.Close()
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.Proxy = nil
+	client := NewClientWithOptions(ClientOptions{
+		BaseURL: server.URL,
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&used, 1)
+			return base.RoundTrip(r)
+		}),
+	})
+	_, err := client.Recall(context.Background(), "a", RecallRequest{Query: "q"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, atomic.LoadInt32(&used))
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

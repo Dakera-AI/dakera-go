@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Support for the next Dakera server release (Dakera-AI/dakera#917, #920, #921) and a client
-hardening pass. Every new request field is omitted unless you set it and every new response field
-is optional, so the SDK keeps working against v0.12.x servers.
+## [0.12.3] - Unreleased
+
+Support for Dakera server **v0.12.3** (Dakera-AI/dakera#917, #920, #921) and a client hardening
+pass. Every new request field is omitted unless you set it and every new response field is
+optional, so the SDK keeps working against v0.12.0 – v0.12.2 servers; the neighbourhood modes,
+`IncludeSummaries` and the result provenance fields need server >= 0.12.3.
 
 ### Added
 
@@ -63,12 +66,17 @@ is optional, so the SDK keeps working against v0.12.x servers.
   answer is retried only for `GET`, `PUT`, `DELETE`, recall, search and the namespace query routes.
   `429` and `503` (honouring `Retry-After`) and connection failures before the request was sent are
   still retried for every request.
-- The HTTP transport starts from Go's default: proxy from the environment (`HTTPS_PROXY`,
-  `NO_PROXY`), TLS handshake timeout, HTTP/2, idle-connection limits; the response-header timeout is
-  the request timeout.
+- **The client now honours `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`**: the HTTP transport is a
+  clone of `http.DefaultTransport` (proxy from the environment, TLS handshake timeout, HTTP/2,
+  idle-connection limits; the response-header timeout is the request timeout). Before, proxy
+  variables were ignored. To opt out, set `NO_PROXY` for the Dakera host or pass
+  `ClientOptions.Transport` with `Proxy: nil`.
+- `ClientOptions.Transport` (`http.RoundTripper`) replaces the default transport.
+- Docs: requests to the ODE sidecar (`OdeURL`, `OdeExtractEntities`) currently carry the Dakera
+  API key; tracked in Dakera-AI/dakera#924.
 - `Client` and `ClientOptions` redact the API key in `%v` / `%+v` / `%#v`;
   `RotateEncryptionKeyRequest` redacts `NewKey`.
-- Docs: `OpsShutdown` needs a global `super_admin` key (`403` for `admin` on newer servers);
+- Docs: `OpsShutdown` needs a global `super_admin` key (`403` for `admin` from server v0.12.3);
   hybrid fusion default is `minmax`; the rerank pool on hybrid routing is 10x the ranking depth.
 
 ## [0.12.2] - 2026-10-08

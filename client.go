@@ -33,7 +33,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.12.2"
+const Version = "0.12.3"
 
 const defaultTimeout = 30 * time.Second
 
@@ -191,9 +191,37 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 	baseURL := strings.TrimSuffix(opts.BaseURL, "/")
 
 	// Start from Go's default transport: proxy from the environment
-	// (HTTPS_PROXY / NO_PROXY), TLS handshake timeout, HTTP/2, idle
-	// connection limits; TLS uses crypto/tls defaults (TLS 1.2+, system roots,
-	// certificate verification on).
+	// (HTTPS_PROXY / HTTP_PROXY / NO_PROXY, via http.ProxyFromEnvironment),
+	// TLS handshake timeout, HTTP/2, idle connection limits; TLS uses
+	// crypto/tls defaults (TLS 1.2+, system roots, certificate verification
+	// on). ClientOptions.Transport replaces it (e.g. Proxy: nil to opt out).
+	var transport http.RoundTripper
+	if opts.Transport != nil {
+		transport = opts.Transport
+	} else {
+		transport = defaultTransport(connectTimeout, timeout)
+	}
+
+	return &Client{
+		baseURL:     baseURL,
+		odeURL:      strings.TrimSuffix(opts.OdeURL, "/"),
+		apiKey:      opts.APIKey,
+		retryConfig: rc,
+		headers:     opts.Headers,
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+		},
+		streamClient: &http.Client{Transport: transport},
+		preflight:    opts.Preflight,
+	}
+}
+
+// defaultTransport is the transport a client uses unless
+// ClientOptions.Transport is set: a clone of http.DefaultTransport (so proxy
+// settings come from HTTPS_PROXY / HTTP_PROXY / NO_PROXY) with the client's
+// connect timeout, and its request timeout as the response-header timeout.
+func defaultTransport(connectTimeout, timeout time.Duration) *http.Transport {
 	var transport *http.Transport
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = dt.Clone()
@@ -214,20 +242,7 @@ func NewClientWithOptions(opts ClientOptions) *Client {
 	// A server that accepts the connection but never answers is given up on
 	// after the request timeout, streams included.
 	transport.ResponseHeaderTimeout = timeout
-
-	return &Client{
-		baseURL:     baseURL,
-		odeURL:      strings.TrimSuffix(opts.OdeURL, "/"),
-		apiKey:      opts.APIKey,
-		retryConfig: rc,
-		headers:     opts.Headers,
-		httpClient: &http.Client{
-			Timeout:   timeout,
-			Transport: transport,
-		},
-		streamClient: &http.Client{Transport: transport},
-		preflight:    opts.Preflight,
-	}
+	return transport
 }
 
 // computeBackoff returns the wait duration for a given attempt number.
@@ -3352,7 +3367,9 @@ func (c *Client) RevokeEncryptionMaster(ctx context.Context, keyID string) (map[
 // dedicated GLiNER sidecar and returns character offsets, model name, and
 // processing time.
 //
-// Requires OdeURL to be set in ClientOptions.
+// Requires OdeURL to be set in ClientOptions. Requests to the sidecar
+// currently carry the Dakera API key (Authorization header); tracked in
+// https://github.com/Dakera-AI/dakera/issues/924.
 func (c *Client) OdeExtractEntities(ctx context.Context, req ExtractEntitiesRequest) (*ExtractEntitiesResponse, error) {
 	if c.odeURL == "" {
 		return nil, fmt.Errorf("OdeURL must be configured to use ExtractEntities(); " +
@@ -3886,7 +3903,7 @@ func (c *Client) OpsCompact(ctx context.Context, req CompactionRequest) (*Compac
 //
 // It stops the node for every tenant, so the server requires a global
 // super_admin key (KeyScopeSuperAdmin); a global admin key gets a 403
-// (*AuthorizationError) from servers newer than v0.12.2. Like every POST it
+// (*AuthorizationError) from server v0.12.3 on. Like every POST it
 // is not retried after a 5xx answer or a dropped connection.
 func (c *Client) OpsShutdown(ctx context.Context) (map[string]interface{}, error) {
 	resp, err := c.request(ctx, "POST", "/ops/shutdown", nil)
