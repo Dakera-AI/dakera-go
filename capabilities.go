@@ -388,6 +388,9 @@ type ServerCapabilities struct {
 	Naming *NamingCapabilities `json:"naming,omitempty"`
 	// Sessions is the session lifecycle (server v0.12.2+); nil on older servers.
 	Sessions *SessionCapabilities `json:"sessions,omitempty"`
+	// Documents is the document import surface (server v0.12.3+); nil on
+	// older servers.
+	Documents *DocumentCapabilities `json:"documents,omitempty"`
 	// Raw is the verbatim document — carries fields this SDK does not model yet.
 	Raw map[string]interface{} `json:"-"`
 }
@@ -460,6 +463,33 @@ func (c *ServerCapabilities) SupportsKeyUpdate() bool {
 // patterns — auth.prefix_patterns, server v0.12.2+.
 func (c *ServerCapabilities) SupportsPrefixGrants() bool {
 	return c.Auth != nil && c.Auth.PrefixPatterns
+}
+
+// DocumentCapabilities is capabilities.documents (server v0.12.3+).
+type DocumentCapabilities struct {
+	// Enabled reports whether the document routes answer (DAKERA_DOCUMENTS).
+	Enabled bool `json:"enabled"`
+	// TextMediaTypes are the media types ImportDocument takes as text.
+	TextMediaTypes []string `json:"text_media_types"`
+	// MediaTypes are the attachment media types ImportAttachmentDocument reads.
+	MediaTypes []string `json:"media_types"`
+	// MaxBytes is the largest source document (DAKERA_DOCUMENT_MAX_BYTES).
+	MaxBytes int64 `json:"max_bytes"`
+	// MaxTextBytes is the most text one extraction may produce.
+	MaxTextBytes int64 `json:"max_text_bytes"`
+	// MaxChunks is the most chunks one document may become.
+	MaxChunks int `json:"max_chunks"`
+	// DefaultChunkTokens / DefaultOverlapTokens are the chunking defaults.
+	DefaultChunkTokens   int `json:"default_chunk_tokens"`
+	DefaultOverlapTokens int `json:"default_overlap_tokens"`
+	// Strategies are the ChunkingOptions.Strategy values.
+	Strategies []ChunkStrategy `json:"strategies"`
+}
+
+// SupportsDocuments reports whether the server has document import switched
+// on (documents.enabled, server v0.12.3+).
+func (c *ServerCapabilities) SupportsDocuments() bool {
+	return c.Documents != nil && c.Documents.Enabled
 }
 
 // SupportsSessionTouch reports whether the server has TouchSession and ends

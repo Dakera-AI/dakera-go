@@ -16,6 +16,17 @@ optional, so the SDK keeps working against v0.12.0 – v0.12.2 servers; the neig
 
 ### Added
 
+- **Document import (#923)**: `ImportDocument` (`POST /v1/memory/documents`: text, Markdown or
+  HTML), `ImportAttachmentDocument` (`POST /v1/namespaces/{ns}/attachments/{ref}/document`: PDF,
+  DOCX, HTML, Markdown, text), `GetDocumentJob` and `WaitForDocumentJob` (context / timeout-bounded
+  polling; a failed job is a `*JobFailedError` with its status and code), `ListDocuments` (cursor),
+  `GetDocument`, `DeleteDocument`. Types `ImportDocumentRequest`, `ImportAttachmentDocumentRequest`,
+  `DocumentImportOptions`, `ChunkingOptions` / `ChunkStrategy`, `ImportDocumentAccepted`,
+  `DocumentSummary`, `DocumentListResponse`, `DocumentDetail`, `DocumentChunkInfo`,
+  `DeleteDocumentResponse`, `DocumentChunkMeta` with `DocumentChunkMetaOf` and
+  `RecalledMemory.DocumentChunk()` / `Memory.DocumentChunk()` (reads `_dakera_document`);
+  `ServerCapabilities.Documents` and `SupportsDocuments()`. A `404` from a server older than
+  v0.12.3 says the routes need it.
 - **Recall neighbourhood modes (#917)**: `RecallRequest.NeighborhoodMode` (`NeighborhoodModeInline`,
   `NeighborhoodModeSeparate`, `NeighborhoodModeOff`; empty = server default) and
   `RecallRequest.IncludeSummaries` (`*bool`). `RecallResponse.ContextMemories` holds the context under

@@ -178,6 +178,47 @@ text); search results carry the same fields (`SearchMemoriesDetailed` also retur
 optional in answers, so older servers keep working (they ignore `NeighborhoodMode` and answer
 inline).
 
+### Document import (server v0.12.3+)
+
+A PDF, DOCX, HTML, Markdown or text document becomes a set of *chunk memories* of an agent:
+ordinary memories, each sized for the embedding model, carrying its heading breadcrumb and its
+provenance (`_dakera_document`: document id, title, pages, heading path). Recall, search and
+filters treat them as memories; a result can cite the document, page and section.
+
+```go
+// Text, Markdown or HTML given inline
+acc, err := client.ImportDocument(ctx, dakera.ImportDocumentRequest{
+    AgentID:   "docs-bot",
+    Content:   markdown,
+    MediaType: dakera.MediaTypeMarkdown,
+    DocumentImportOptions: dakera.DocumentImportOptions{
+        Tags:     []string{"manual"},
+        Chunking: &dakera.ChunkingOptions{Strategy: dakera.ChunkStrategyStructure},
+    },
+})
+// A PDF / DOCX: upload it as an attachment, then import it
+up, _ := client.UploadAttachment(ctx, "library", pdfBytes, dakera.MediaTypePDF)
+acc, err = client.ImportAttachmentDocument(ctx, "library", up.AttachmentRef,
+    dakera.ImportAttachmentDocumentRequest{AgentID: "docs-bot", DocumentID: "manual-v3"})
+
+// The import is a job
+job, err := client.WaitForDocumentJob(ctx, "docs-bot", acc.JobID, dakera.JobWaitOptions{Timeout: 5 * time.Minute})
+
+// Cite where a recalled chunk comes from
+for _, m := range resp.Memories {
+    if doc := m.DocumentChunk(); doc != nil {
+        fmt.Println(doc.Title, doc.HeadingPath, doc.PageStart)
+    }
+}
+```
+
+`ListDocuments` (cursor paging), `GetDocument` (a document and its chunks) and `DeleteDocument`
+complete the surface. `Capabilities(ctx)` reports `Documents` (`SupportsDocuments()`, limits,
+media types). A server with `DAKERA_DOCUMENTS` off answers `501` (`*FeatureDisabledError`); a
+server older than v0.12.3 answers `404` (`*NotFoundError`, whose message says so). A failed job
+(`*JobFailedError`) carries the status and code: `413` (too big / too many chunks), `422`
+(`UNPROCESSABLE_CONTENT`), `504` (`EXTRACTION_TIMEOUT`).
+
 ### Text auto-embedding
 
 Send raw text without pre-computing embeddings — Dakera embeds server-side:
