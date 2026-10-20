@@ -18,6 +18,7 @@ type recalledMemoryWire struct {
 
 	// Top-level fields present in all formats
 	Score         float32  `json:"score"`
+	RankScore     *float32 `json:"rank_score,omitempty"`
 	WeightedScore *float32 `json:"weighted_score,omitempty"`
 	SmartScore    *float32 `json:"smart_score,omitempty"`
 	Depth         *int     `json:"depth,omitempty"`
@@ -84,10 +85,14 @@ func (r *RecalledMemory) UnmarshalJSON(data []byte) error {
 		r.SessionID = wire.SessionID
 	}
 
-	// smart_score is the server's ranking key; prefer it over weighted_score and raw score.
+	// rank_score (server v0.12.3+, #940) is the ranking field, non-increasing over a
+	// recall's results; older servers: smart_score, then weighted_score, then score.
+	r.RankScore = wire.RankScore
 	r.SmartScore = wire.SmartScore
 	r.WeightedScore = wire.WeightedScore
 	switch {
+	case wire.RankScore != nil:
+		r.Score = *wire.RankScore
 	case wire.SmartScore != nil:
 		r.Score = *wire.SmartScore
 	case wire.WeightedScore != nil:

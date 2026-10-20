@@ -850,15 +850,20 @@ type Memory struct {
 // UnmarshalJSON handles this nested wire format transparently so callers always
 // see populated ID, Content, and other fields.
 //
-// Score is set to SmartScore when present, then WeightedScore, then raw Score —
-// matching the server's ranking key so results appear in true rank order.
+// Score is set to RankScore when present (server v0.12.3+), then SmartScore, then
+// WeightedScore, then raw Score — the server's ranking field, so Score never rises
+// down a recall's results.
 type RecalledMemory struct {
 	ID         string  `json:"id"`
 	Content    string  `json:"content"`
 	MemoryType string  `json:"memory_type"`
 	Importance float32 `json:"importance"`
-	// Ranking score — equals SmartScore when present, then WeightedScore, then raw score.
-	Score         float32                `json:"score"`
+	// Ranking score — equals RankScore when present, then SmartScore, then WeightedScore,
+	// then raw score.
+	Score float32 `json:"score"`
+	// RankScore is the server's ranking field (recall, v0.12.3+, #940): non-increasing
+	// over Memories in response order. Nil from older servers and from search.
+	RankScore     *float32               `json:"rank_score,omitempty"`
 	SmartScore    *float32               `json:"smart_score,omitempty"`
 	WeightedScore *float32               `json:"weighted_score,omitempty"`
 	Tags          []string               `json:"tags,omitempty"`
