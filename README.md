@@ -139,12 +139,65 @@ resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "prefere
 
 ## What's new in v0.12.3
 
-SDK v0.12.3 targets **Dakera server v0.12.3** (Dakera-AI/dakera#917, #920, #921) and stays
-**compatible with v0.12.0 – v0.12.2 servers**: new request fields are omitted unless you set them and new
-response fields are optional (zero on an older server). The neighbourhood modes, `IncludeSummaries`,
-`MatchedText` / `MatchedIDs`, `Retrieval`, `ContextOf` and `ContextMemories` need **server >= 0.12.3**
-(an older server ignores the new request fields and answers inline). The `super_admin` requirement of
-`OpsShutdown` and the `422` on unknown admin-request fields are server 0.12.3 behaviour.
+SDK v0.12.3 targets **Dakera server v0.12.3** (Dakera-AI/dakera#917, #920, #921, #923, #926, #930,
+#932, #933, #938, #940) and stays **compatible with v0.12.0 – v0.12.2 servers**: new request fields are
+omitted unless you set them and new response fields are optional (zero on an older server). The
+neighbourhood modes, `IncludeSummaries`, `MatchedText` / `MatchedIDs`, `Retrieval`, `ContextOf`,
+`ContextMemories`, `RankScore`, `EventTime`, the truncation report, `Warnings`, the deduplicated-memory
+routes and `GetMemory` without an agent id need **server >= 0.12.3** (an older server ignores the new
+request fields and answers inline). The `super_admin` requirement of `OpsShutdown` and the `422` on
+unknown admin-request fields are server 0.12.3 behaviour.
+
+Also server 0.12.3 behaviour: recall, search and batch recall for an agent that has stored nothing
+answer **`200` with no memories** (older servers answered `404 NAMESPACE_NOT_FOUND`), and session ids
+may contain `:` (`Capabilities(ctx)` reports `Naming.SessionIDPattern`).
+
+### Event time: memories that happened earlier
+
+A client that writes history (an import, a backfill, a replayed conversation) can say when each
+memory's event happened. The server records it as metadata `_dakera_event_time` and uses it, not the
+ingest time, for recency, `Since` / `Until`, the temporal windows and graph ordering (`CreatedAt`
+stays the ingest time; TTL and decay count from it):
+
+```go
+_, err := client.StoreMemory(ctx, "my-agent", dakera.StoreMemoryRequest{
+    Content:   "Alice moved to Paris.",
+    EventTime: dakera.EventTimeAt(time.Date(2023, 5, 20, 2, 21, 0, 0, time.UTC)), // or EventTimeUnix(1684549260)
+})
+batch, err := client.StoreMemoriesBatch(ctx, dakera.BatchStoreMemoryRequest{
+    AgentID:  "my-agent",
+    Memories: []dakera.BatchStoreMemoryItem{{Content: "Bob joined.", EventTime: dakera.EventTimeRFC3339("2023-06-02T10:00:00Z")}},
+})
+```
+
+More than 24 hours ahead or before 1970 is a `*ValidationError` naming `event_time`.
+`StoreMemoryRequest.ValidFrom` is now sent as metadata `valid_from`, where the server reads it.
+
+### Truncation report and ignored-field warnings
+
+Content longer than the embedding model reads is stored whole, but its vector covers only the first
+`EmbeddedTokens`. `StoreMemory` and `UpdateMemory` then return `resp.Truncation`
+(`ContentTokens`, `EmbeddedTokens`, `MaxTokens`, `Windows`), and `StoreMemoriesBatch` lists such
+memories in `resp.Truncated`. Store, batch store, recall and batch recall answers carry `Warnings`
+naming request fields the server ignored (`"unknown field 'created_at' ignored"`); every field the SDK
+sends is one the server knows, so `Warnings` stays nil unless the server is older than the SDK.
+
+### Deduplicated memories
+
+With AutoPilot deduplication in `merge` mode (`AutopilotUpdateConfig` with `DedupMode:
+dakera.DedupModeMerge`; `DedupModeReport` only counts duplicates), a memory folded into a duplicate,
+or merged by consolidation, stays restorable for `TrashRetentionHours`:
+
+```go
+list, err := client.ListDeduplicated(ctx, "my-agent")
+for _, m := range list.Memories {
+    fmt.Println(m.ID, m.Kind, "->", m.SurvivorID, "restorable until", m.RestorableUntil)
+}
+mem, err := client.RestoreDeduplicated(ctx, "my-agent", list.Memories[0].ID) // 404: no copy, 409: id taken again
+```
+
+The audit log records `deduplicated` and `restored` events with a `Reason`. `GetMemory(ctx, "", id)`
+finds a memory without its agent id when exactly one agent your key can read holds it.
 
 ### Recall: at most `TopK` results, context apart
 

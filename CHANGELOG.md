@@ -7,14 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.3] - Unreleased
+## [0.12.3] - 2026-10-22
 
-Support for Dakera server **v0.12.3** (Dakera-AI/dakera#917, #920, #921) and a client hardening
-pass. Every new request field is omitted unless you set it and every new response field is
-optional, so the SDK keeps working against v0.12.0 – v0.12.2 servers; the neighbourhood modes,
-`IncludeSummaries` and the result provenance fields need server >= 0.12.3.
+Support for Dakera server **v0.12.3** (Dakera-AI/dakera#917, #920, #921, #923, #926, #930, #932,
+#933, #938, #940) and a client hardening pass. Every new request field is omitted unless you set it
+and every new response field is optional, so the SDK keeps working against v0.12.0 – v0.12.2
+servers; the neighbourhood modes, `IncludeSummaries`, the result provenance fields, `EventTime`,
+the truncation report, `Warnings` and the deduplicated-memory routes need server >= 0.12.3.
 
 ### Added
+
+- **Event time (#932)**: `StoreMemoryRequest.EventTime` and `BatchStoreMemoryItem.EventTime` date
+  a memory's event for a client that writes history (an import, a backfill, a replayed
+  conversation). Build it with `EventTimeUnix(secs)`, `EventTimeAt(time.Time)` (RFC 3339) or
+  `EventTimeRFC3339(string)`. The server records it as metadata `_dakera_event_time` and uses it
+  instead of the ingest time for recency, `Since` / `Until`, the temporal windows and graph
+  ordering; `CreatedAt` stays the ingest time. Out of range (more than 24 h ahead, before 1970) is a
+  `*ValidationError` naming `event_time`.
+- **Truncation report (#933)**: `StoreMemoryResponse.Truncation` (`*EmbedTruncation`:
+  `ContentTokens`, `EmbeddedTokens`, `MaxTokens`, `TokensEstimated`, `Windows`) when the content
+  is longer than the embedding model reads, on `StoreMemory` and `UpdateMemory`;
+  `BatchStoreMemoryResponse.Truncated` (`[]TruncatedMemory`) on `StoreMemoriesBatch`.
+- **Ignored-field warnings (#938)**: `Warnings []string` on `StoreMemoryResponse`,
+  `BatchStoreMemoryResponse`, `RecallResponse` and `BatchRecallResponse` lists request fields the
+  server did not know (nil when it knew every field).
+- **Deduplicated memories (#930)**: `ListDeduplicated(ctx, agentID)`
+  (`GET /v1/memory/deduplicated`: `DeduplicatedListResponse` of `DeduplicatedMemory` with `Kind`,
+  `SurvivorID`, `DeletedAt`, `RestorableUntil`) and `RestoreDeduplicated(ctx, agentID, memoryID)`
+  (`POST /v1/memory/deduplicated/{id}/restore`, returns the `*Memory`; `*NotFoundError` when it has
+  no restorable copy, `*ConflictError` when the agent holds the id again).
+- **AutoPilot dedup modes (#930)**: `AutoPilotConfig` and `AutoPilotConfigRequest` gain `DedupMode`
+  (`DedupModeOff` / `DedupModeReport` / `DedupModeMerge`), `DedupCrossSession`,
+  `ConsolidateCrossSession` and `TrashRetentionHours` (request fields sent only when set);
+  `DedupResultSnapshot` and `AutoPilotDedupResult` gain `DuplicatesFound`, and the trigger's
+  `AutoPilotDedupResult` the `Mode` it ran in.
+- `GetMemory(ctx, "", id)` looks a memory up without its agent id (#938): the query parameter is
+  omitted, and the server answers the memory when one readable agent holds it, `404` when none
+  does, `400` when several do. Older servers need the agent id.
+- `RecalledMemory.RankScore` (#940): the recall's ranking field, non-increasing over `Memories`;
+  `Score` takes it when present.
+- `RerankReport.Capped` (#926): the server's candidate cap left part of the pool unscored or
+  lowered `RerankCandidates`.
+- `NamingCapabilities.SessionIDPattern` and `SessionIDMaxBytes` (session ids may contain `:`).
+- `AuditEvent.Reason` (`"absorbed into <id>"` / `"merged into <id>"`); audit and memory events
+  of types `deduplicated` and `restored`; `MemoryEvent.Reason` documented for them.
+- Error codes `ErrorCodeHostNotAllowed` (`421`, DNS rebinding protection with authentication
+  off), `ErrorCodeUnprocessableContent` (`422`) and `ErrorCodeExtractionTimeout` (`504`).
 
 - **Document import (#923)**: `ImportDocument` (`POST /v1/memory/documents`: text, Markdown or
   HTML), `ImportAttachmentDocument` (`POST /v1/namespaces/{ns}/attachments/{ref}/document`: PDF,
@@ -50,6 +88,14 @@ optional, so the SDK keeps working against v0.12.0 – v0.12.2 servers; the neig
 
 ### Fixed
 
+- **`StoreMemoryRequest.ValidFrom` takes effect**: it was sent as a top-level field the server
+  ignores; it is now sent as metadata `valid_from`, where the server reads it (a `valid_from`
+  already in `Metadata` wins; the caller's map is not changed).
+- `StoreMemoryRequest.Embedding` is deprecated and no longer sent: the memory store endpoint embeds
+  the content itself and ignored it.
+- Errors keep the server's message on `401` and `429` (a `429 RATE_LIMIT_EXCEEDED` is also the
+  server's admission-overload answer, whose `Details` names the queue), as they already did for
+  every other status, including the ones without a dedicated error type (`421`, `422`).
 - **Admin requests send only fields the server accepts** (the server now answers `422` for unknown
   fields on `POST /admin/keys`, `/v1/namespaces/{ns}/keys`, `/admin/backups`,
   `/admin/encryption/rotate-key`):
@@ -87,6 +133,8 @@ optional, so the SDK keeps working against v0.12.0 – v0.12.2 servers; the neig
   API key; tracked in Dakera-AI/dakera#924.
 - `Client` and `ClientOptions` redact the API key in `%v` / `%+v` / `%#v`;
   `RotateEncryptionKeyRequest` redacts `NewKey`.
+- Docs: recall, search and batch recall for an agent that has stored nothing answer `200` with no
+  memories on server v0.12.3 (older servers answered `404 NAMESPACE_NOT_FOUND`).
 - Docs: `OpsShutdown` needs a global `super_admin` key (`403` for `admin` from server v0.12.3);
   hybrid fusion default is `minmax`; the rerank pool on hybrid routing is 10x the ranking depth.
 
