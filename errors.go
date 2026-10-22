@@ -59,6 +59,17 @@ const (
 	ErrorCodeJobNotFound ErrorCode = "JOB_NOT_FOUND"
 	// ErrorCodeCrossOriginRequestRefused is a 403 for a state-changing request from another origin.
 	ErrorCodeCrossOriginRequestRefused ErrorCode = "CROSS_ORIGIN_REQUEST_REFUSED"
+	// ErrorCodeHostNotAllowed is a 421: authentication is disabled and the
+	// request's Host is not one the server answers for (DNS rebinding
+	// protection; allow it with DAKERA_ALLOWED_HOSTS on the server).
+	ErrorCodeHostNotAllowed ErrorCode = "HOST_NOT_ALLOWED"
+	// ErrorCodeUnprocessableContent is a 422: a document import whose
+	// content cannot be processed (a malformed PDF or DOCX, binary data sent
+	// as text, a document without text).
+	ErrorCodeUnprocessableContent ErrorCode = "UNPROCESSABLE_CONTENT"
+	// ErrorCodeExtractionTimeout is a 504: a document extraction ran past
+	// its time limit.
+	ErrorCodeExtractionTimeout ErrorCode = "EXTRACTION_TIMEOUT"
 )
 
 // DakeraError is the base error type for all Dakera errors.

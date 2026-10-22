@@ -831,7 +831,7 @@ func TestCreateKey(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
-	result, err := client.CreateKey(context.Background(), CreateKeyRequest{Name: "test-key", Permissions: []string{"read", "write"}})
+	result, err := client.CreateKey(context.Background(), CreateKeyRequest{Name: "test-key", Scope: KeyScopeWrite})
 	require.NoError(t, err)
 	assert.Equal(t, "key-001", result.ID)
 	assert.True(t, result.Active)
@@ -959,7 +959,50 @@ func TestStoreMemory_ValidFrom(t *testing.T) {
 		ValidFrom: &ts,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, float64(ts), capturedBody["valid_from"], "valid_from must be forwarded in request body")
+	// The server reads valid_from from the memory's metadata; a top-level
+	// field is unknown to it.
+	_, topLevel := capturedBody["valid_from"]
+	assert.False(t, topLevel, "valid_from must not be a top-level field")
+	meta, ok := capturedBody["metadata"].(map[string]interface{})
+	require.True(t, ok, "metadata must be sent: %v", capturedBody)
+	assert.Equal(t, float64(ts), meta["valid_from"], "valid_from must be forwarded in metadata")
+}
+
+func TestStoreMemory_ValidFrom_KeepsCallerMetadata(t *testing.T) {
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"memory": map[string]interface{}{"id": "mem-vf3", "content": "x", "memory_type": "episodic"},
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	ts := int64(1700000000)
+	callerMeta := map[string]interface{}{"source": "import", "valid_from": float64(1600000000)}
+	_, err := client.StoreMemory(context.Background(), "agent-1", StoreMemoryRequest{
+		Content:   "x",
+		Metadata:  callerMeta,
+		ValidFrom: &ts,
+	})
+	require.NoError(t, err)
+	meta := capturedBody["metadata"].(map[string]interface{})
+	assert.Equal(t, float64(1600000000), meta["valid_from"], "a valid_from in Metadata wins")
+	assert.Equal(t, "import", meta["source"])
+
+	// The caller's map is never changed.
+	plain := map[string]interface{}{"source": "import"}
+	_, err = client.StoreMemory(context.Background(), "agent-1", StoreMemoryRequest{
+		Content:   "x",
+		Metadata:  plain,
+		ValidFrom: &ts,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"source": "import"}, plain)
+	meta = capturedBody["metadata"].(map[string]interface{})
+	assert.Equal(t, float64(ts), meta["valid_from"])
+	assert.Equal(t, "import", meta["source"])
 }
 
 func TestStoreMemory_ValidFrom_Omitted(t *testing.T) {
@@ -981,6 +1024,8 @@ func TestStoreMemory_ValidFrom_Omitted(t *testing.T) {
 	require.NoError(t, err)
 	_, present := capturedBody["valid_from"]
 	assert.False(t, present, "valid_from must be omitted from request body when nil")
+	_, present = capturedBody["metadata"]
+	assert.False(t, present, "no metadata is sent when none is set")
 }
 
 // Error Tests

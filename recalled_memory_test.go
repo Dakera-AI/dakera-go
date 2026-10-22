@@ -29,6 +29,26 @@ func TestRecalledMemory_SmartScorePriority(t *testing.T) {
 	}
 }
 
+// #940: rank_score (server v0.12.3+) is the ranking field and wins over smart_score.
+func TestRecalledMemory_RankScorePriority(t *testing.T) {
+	data := []byte(`{
+		"memory": {"id": "m1", "content": "test", "memory_type": "episodic", "importance": 0.8},
+		"score": 0.0023,
+		"smart_score": 0.5,
+		"rank_score": 0.41
+	}`)
+	var m RecalledMemory
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if m.Score != 0.41 {
+		t.Errorf("Score = %v, want 0.41 (rank_score priority)", m.Score)
+	}
+	if m.RankScore == nil || *m.RankScore != 0.41 {
+		t.Errorf("RankScore = %v, want &0.41", m.RankScore)
+	}
+}
+
 func TestRecalledMemory_WeightedScoreFallback(t *testing.T) {
 	data := []byte(`{
 		"memory": {"id": "m2", "content": "test", "memory_type": "episodic", "importance": 0.8},

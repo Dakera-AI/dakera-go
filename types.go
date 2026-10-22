@@ -4,6 +4,10 @@ package dakera
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -493,8 +497,23 @@ type ClientOptions struct {
 	Preflight bool
 
 	// OdeURL is the base URL of the dakera-ode sidecar (e.g. "http://localhost:8080").
-	// Required to call Client.ExtractEntities.
+	// Required to call Client.ExtractEntities. Requests to the sidecar
+	// currently carry the Dakera API key; tracked in
+	// https://github.com/Dakera-AI/dakera/issues/924.
 	OdeURL string
+
+	// Transport replaces the HTTP transport (nil = the default). The default
+	// is a clone of http.DefaultTransport, so it honours the HTTPS_PROXY,
+	// HTTP_PROXY and NO_PROXY environment variables (http.ProxyFromEnvironment).
+	// To opt out of proxies, pass a transport with Proxy: nil, e.g.
+	//
+	//	t := http.DefaultTransport.(*http.Transport).Clone()
+	//	t.Proxy = nil
+	//	client := dakera.NewClientWithOptions(dakera.ClientOptions{BaseURL: url, Transport: t})
+	//
+	// A custom transport is used as is: ConnectTimeout does not apply to it
+	// (Timeout still bounds each request; event streams have none).
+	Transport http.RoundTripper
 }
 
 // Filter operators for metadata filtering.
@@ -756,13 +775,29 @@ type StoreMemoryRequest struct {
 	// ExpiresAt is an optional explicit expiry Unix timestamp (seconds). Takes
 	// precedence over TTLSeconds when both are set. The memory is hard-deleted
 	// by the decay engine on expiry (DECAY-3).
-	ExpiresAt *int64    `json:"expires_at,omitempty"`
-	SessionID string    `json:"session_id,omitempty"`
-	Embedding []float32 `json:"embedding,omitempty"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// Deprecated: the memory store endpoint embeds Content itself and has no
+	// field for a client embedding; the server ignored it. It is no longer
+	// sent.
+	Embedding []float32 `json:"-"`
 	// ValidFrom is an optional Unix timestamp (seconds) indicating when this
-	// memory becomes temporally valid. Defaults to ingest time when omitted.
-	// Used by temporal recall queries (server v0.11.98+, DAK-7424).
-	ValidFrom *int64 `json:"valid_from,omitempty"`
+	// memory becomes temporally valid (the bi-temporal validity window, DAK-7424).
+	// The server reads it from the memory's metadata, so StoreMemory sends it
+	// as metadata "valid_from" (a "valid_from" already in Metadata wins).
+	// Before, it was sent as a top-level field the server ignored.
+	ValidFrom *int64 `json:"-"`
+	// EventTime is when the memory's event happened, for a client that writes
+	// history (an import, a backfill, a replayed conversation): server
+	// v0.12.3+ (Dakera-AI/dakera#932). Build it with EventTimeUnix,
+	// EventTimeAt or EventTimeRFC3339. The server records it as metadata
+	// "_dakera_event_time" (integer Unix seconds; a client cannot set that
+	// key itself) and uses it instead of the ingest time for recency,
+	// Since/Until, the temporal windows and graph ordering; CreatedAt stays the
+	// ingest time (TTL and decay count from it). At most 24 h in the future
+	// and not before 1970, else a *ValidationError naming event_time. nil
+	// omits it (older servers ignore the field).
+	EventTime *EventTime `json:"event_time,omitempty"`
 	// ID is an optional custom memory id (generated when empty).
 	ID string `json:"id,omitempty"`
 	// Lang is the language of Content (server v0.12+): an ISO 639-1 code with a
@@ -796,6 +831,123 @@ type StoreMemoryResponse struct {
 	// timeout). Empty when the memory has no session, on older servers, and
 	// on the near-duplicate short-circuit.
 	SessionState string `json:"session_state,omitempty"`
+	// Truncation is set when Content is longer than the embedding model
+	// reads (server v0.12.3+, Dakera-AI/dakera#933): the vector covers its
+	// first EmbeddedTokens only. nil when the model read it whole, and on
+	// older servers. Read from the flattened "truncated", "content_tokens",
+	// ... fields of the answer.
+	Truncation *EmbedTruncation `json:"-"`
+	// Warnings lists the request fields the server ignored, e.g. "unknown
+	// field 'created_at' ignored" (server v0.12.3+, Dakera-AI/dakera#938).
+	// nil when it knew every field, and on older servers.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// UnmarshalJSON reads the answer of POST /v1/memory/store, including the
+// flattened truncation report.
+func (r *StoreMemoryResponse) UnmarshalJSON(data []byte) error {
+	type plain StoreMemoryResponse
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*r = StoreMemoryResponse(p)
+	r.Truncation = decodeTruncation(data)
+	return nil
+}
+
+// EmbedTruncation says how the embedding model cut a memory's text (server
+// v0.12.3+, Dakera-AI/dakera#933). Store, update and batch store report it
+// when the text is longer than the model reads.
+type EmbedTruncation struct {
+	// Truncated is always true in a report: the text is longer than the
+	// model reads.
+	Truncated bool `json:"truncated"`
+	// ContentTokens is the token count of the whole text.
+	ContentTokens int `json:"content_tokens"`
+	// EmbeddedTokens is how many tokens the model embedded: the vector
+	// covers this prefix of the text.
+	EmbeddedTokens int `json:"embedded_tokens"`
+	// MaxTokens is the model's token cap on this server
+	// (ServerCapabilities effective_max_seq_length).
+	MaxTokens int `json:"max_tokens"`
+	// TokensEstimated is true when the counts are a model-free estimate
+	// (the model is not loaded on that node), not the tokenizer's.
+	TokensEstimated bool `json:"tokens_estimated,omitempty"`
+	// Windows is how many overlapping windows of the text were stored as
+	// sub-memories so its tail is searchable (0 when the server does not
+	// derive them).
+	Windows int `json:"windows"`
+}
+
+// decodeTruncation reads the flattened truncation report of a store or
+// update answer: nil unless the answer says "truncated": true.
+func decodeTruncation(data []byte) *EmbedTruncation {
+	var t EmbedTruncation
+	if err := json.Unmarshal(data, &t); err != nil || !t.Truncated {
+		return nil
+	}
+	return &t
+}
+
+// EventTime is a memory's event time on a store request
+// (StoreMemoryRequest.EventTime, BatchStoreMemoryItem.EventTime; server
+// v0.12.3+): Unix seconds or an RFC 3339 timestamp, sent as a JSON number or
+// string. Build it with EventTimeUnix, EventTimeAt or EventTimeRFC3339.
+type EventTime struct {
+	unix    int64
+	rfc3339 string
+}
+
+// EventTimeUnix is an event time of secs Unix seconds.
+func EventTimeUnix(secs int64) *EventTime {
+	return &EventTime{unix: secs}
+}
+
+// EventTimeAt is the event time t, sent as an RFC 3339 timestamp (second
+// precision; the server drops a fractional part).
+func EventTimeAt(t time.Time) *EventTime {
+	return &EventTime{rfc3339: t.Format(time.RFC3339)}
+}
+
+// EventTimeRFC3339 is an RFC 3339 timestamp such as "2023-05-20T02:21:00Z",
+// sent as given (the server validates it and answers 400 for a malformed one).
+func EventTimeRFC3339(timestamp string) *EventTime {
+	return &EventTime{rfc3339: timestamp}
+}
+
+// String is the event time as it is sent: the RFC 3339 text, or the Unix
+// seconds in decimal.
+func (e EventTime) String() string {
+	if e.rfc3339 != "" {
+		return e.rfc3339
+	}
+	return strconv.FormatInt(e.unix, 10)
+}
+
+// MarshalJSON sends the Unix seconds as a number, an RFC 3339 timestamp as a
+// string.
+func (e EventTime) MarshalJSON() ([]byte, error) {
+	if e.rfc3339 != "" {
+		return json.Marshal(e.rfc3339)
+	}
+	return json.Marshal(e.unix)
+}
+
+// UnmarshalJSON reads a number (Unix seconds; a fractional part is dropped)
+// or a string.
+func (e *EventTime) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*e = EventTime{rfc3339: text}
+		return nil
+	}
+	var secs float64
+	if err := json.Unmarshal(data, &secs); err != nil {
+		return fmt.Errorf("event_time must be Unix seconds or an RFC 3339 string: %w", err)
+	}
+	*e = EventTime{unix: int64(math.Floor(secs))}
+	return nil
 }
 
 // Session states reported by StoreMemoryResponse.SessionState and
@@ -821,6 +973,8 @@ type Memory struct {
 	AccessCount    *int                   `json:"access_count,omitempty"`
 	// AttachmentRef is the attachment ("sha256:<hex>") the memory points at (server v0.12+).
 	AttachmentRef string `json:"attachment_ref,omitempty"`
+	// SessionID is the session the memory was stored in ("" when none).
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // RecalledMemory represents a recalled memory with similarity score.
@@ -830,15 +984,20 @@ type Memory struct {
 // UnmarshalJSON handles this nested wire format transparently so callers always
 // see populated ID, Content, and other fields.
 //
-// Score is set to SmartScore when present, then WeightedScore, then raw Score —
-// matching the server's ranking key so results appear in true rank order.
+// Score is set to RankScore when present (server v0.12.3+), then SmartScore, then
+// WeightedScore, then raw Score — the server's ranking field, so Score never rises
+// down a recall's results.
 type RecalledMemory struct {
 	ID         string  `json:"id"`
 	Content    string  `json:"content"`
 	MemoryType string  `json:"memory_type"`
 	Importance float32 `json:"importance"`
-	// Ranking score — equals SmartScore when present, then WeightedScore, then raw score.
-	Score         float32                `json:"score"`
+	// Ranking score — equals RankScore when present, then SmartScore, then WeightedScore,
+	// then raw score.
+	Score float32 `json:"score"`
+	// RankScore is the server's ranking field (recall, v0.12.3+, #940): non-increasing
+	// over Memories in response order. Nil from older servers and from search.
+	RankScore     *float32               `json:"rank_score,omitempty"`
 	SmartScore    *float32               `json:"smart_score,omitempty"`
 	WeightedScore *float32               `json:"weighted_score,omitempty"`
 	Tags          []string               `json:"tags,omitempty"`
@@ -857,7 +1016,60 @@ type RecalledMemory struct {
 	// a content preview; when true, read the whole memory with GetMemory
 	// before showing or editing it.
 	ContentTruncated *bool `json:"content_truncated,omitempty"`
+	// SessionID is the session the memory was stored in ("" when none).
+	SessionID string `json:"session_id,omitempty"`
+	// VectorScore and TextScore are the normalized dense-vector and BM25
+	// sub-scores of hybrid fusion (hybrid-routed results only).
+	VectorScore *float32 `json:"vector_score,omitempty"`
+	TextScore   *float32 `json:"text_score,omitempty"`
+	// MatchedText is set when the server collapses derived sentence
+	// sub-memories into their source (DAKERA_RECALL_COLLAPSE_DERIVED): the
+	// sentence that matched best, when it outranked the source's own text.
+	// The result itself is then the source memory. Empty otherwise and on
+	// older servers.
+	MatchedText string `json:"matched_text,omitempty"`
+	// MatchedIDs are the ids of the derived sentence sub-memories collapsed
+	// into this result, best first. nil when none matched.
+	MatchedIDs []string `json:"matched_ids,omitempty"`
+	// Retrieval says how a non-ranked item got into the response:
+	// RetrievalNeighborhood for neighbourhood context returned inline (its
+	// Score is the raw similarity of a different search and is NOT comparable
+	// with the ranked results' scores). Empty for ranked results.
+	Retrieval string `json:"retrieval,omitempty"`
+	// ContextOf is set on a RecallResponse.ContextMemories entry: the id of
+	// the ranked memory it is neighbourhood context for.
+	ContextOf string `json:"context_of,omitempty"`
 }
+
+// RetrievalNeighborhood is RecalledMemory.Retrieval of a neighbourhood
+// context item returned inline in RecallResponse.Memories.
+const RetrievalNeighborhood = "neighborhood"
+
+// IsNeighborhood reports whether this item is neighbourhood context rather
+// than a ranked result (Retrieval == RetrievalNeighborhood, or ContextOf set).
+func (r RecalledMemory) IsNeighborhood() bool {
+	return r.Retrieval == RetrievalNeighborhood || r.ContextOf != ""
+}
+
+// NeighborhoodMode says where a recall returns its neighbourhood context
+// (session-adjacent memories of the top results). The zero value omits the
+// field, so the server default applies (DAKERA_NEIGHBORHOOD_MODE, itself
+// "inline" by default). Needs server >= 0.12.3; older servers ignore the
+// field and answer inline.
+type NeighborhoodMode string
+
+const (
+	// NeighborhoodModeInline appends the context to Memories after the TopK
+	// ranked results, each marked Retrieval == RetrievalNeighborhood
+	// (the v0.11 behaviour; len(Memories) may exceed TopK).
+	NeighborhoodModeInline NeighborhoodMode = "inline"
+	// NeighborhoodModeSeparate returns the context in
+	// RecallResponse.ContextMemories, each with ContextOf set, so
+	// len(Memories) <= TopK. Use it when TopK means "at most TopK results".
+	NeighborhoodModeSeparate NeighborhoodMode = "separate"
+	// NeighborhoodModeOff fetches no neighbourhood context.
+	NeighborhoodModeOff NeighborhoodMode = "off"
+)
 
 // RoutingMode controls which retrieval index the server uses for recall and
 // search (CE-10). RoutingModeAuto (default) lets the server pick the best
@@ -871,7 +1083,7 @@ const (
 	RoutingModeVector RoutingMode = "vector"
 	// RoutingModeBM25 forces BM25 full-text search.
 	RoutingModeBM25 RoutingMode = "bm25"
-	// RoutingModeHybrid fuses ANN and BM25 scores (RRF).
+	// RoutingModeHybrid fuses ANN and BM25 scores (see FusionStrategy).
 	RoutingModeHybrid RoutingMode = "hybrid"
 )
 
@@ -894,6 +1106,13 @@ type RecallRequest struct {
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// SessionID restricts the recall to one session ("" = every session).
+	SessionID string `json:"session_id,omitempty"`
+	// Tags restricts the recall to memories carrying these tags.
+	Tags []string `json:"tags,omitempty"`
+	// ImportanceWeighted toggles importance-weighted re-ranking. nil uses the
+	// server default (true).
+	ImportanceWeighted *bool `json:"importance_weighted,omitempty"`
 	// COG-2: traverse KG from recalled memories and include
 	// associatively linked memories in the response (default: false)
 	IncludeAssociated bool `json:"include_associated,omitempty"`
@@ -910,8 +1129,14 @@ type RecallRequest struct {
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
 	// CE-13: cross-encoder reranking. nil uses server default (true for recall).
-	// Set to pointer-to-false to disable on latency-sensitive paths.
+	// Set to pointer-to-false to disable on latency-sensitive paths. On hybrid
+	// routing the candidate pool is 10x the ranking depth (max(TopK, 10)).
 	Rerank *bool `json:"rerank,omitempty"`
+	// RerankCandidates bounds how many retrieved candidates the cross-encoder
+	// scores (the best by retrieval score). nil = the whole candidate pool.
+	// It must be positive (0 is a 400); a value above the server's cap is
+	// lowered to it and reported as RerankReport.Capped.
+	RerankCandidates *int `json:"rerank_candidates,omitempty"`
 	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyMinMax since v0.11.2).
 	Fusion *FusionStrategy `json:"fusion,omitempty"`
 	// CE-17: explicit vector/BM25 weight for Hybrid routing (0.0–1.0).
@@ -923,8 +1148,18 @@ type RecallRequest struct {
 	// Only effective when Routing = RoutingModeBm25.
 	Iterations *uint8 `json:"iterations,omitempty"`
 	// v0.11.0: session-adjacent memory enrichment (±5 min). nil uses server default (true).
-	// Set to pointer-to-false to disable on latency-sensitive paths.
+	// Set to pointer-to-false to disable on latency-sensitive paths. false
+	// means NeighborhoodModeOff and wins over NeighborhoodMode.
 	Neighborhood *bool `json:"neighborhood,omitempty"`
+	// NeighborhoodMode says where the neighbourhood context goes (inline,
+	// separate or off). Empty uses the server default. Request
+	// NeighborhoodModeSeparate to get at most TopK ranked results in Memories
+	// and the context in RecallResponse.ContextMemories.
+	NeighborhoodMode NeighborhoodMode `json:"neighborhood_mode,omitempty"`
+	// IncludeSummaries says whether session-summary memories may be recalled.
+	// nil uses the server default (DAKERA_RECALL_EXCLUDE_SUMMARIES; they may
+	// unless the server excludes them).
+	IncludeSummaries *bool `json:"include_summaries,omitempty"`
 	// Lang is the language of Query (server v0.12+); it selects the temporal
 	// expressions and routing patterns that classify the query. It does not
 	// translate or filter anything. Empty uses the server default; an
@@ -935,9 +1170,71 @@ type RecallRequest struct {
 // RecallResponse is the response from the recall endpoint.
 // Use associated_memories (COG-2 / KG-3) by setting IncludeAssociated on the request.
 // Each associated memory includes a Depth field (KG-3).
+//
+// The first k Memories of a TopK=k recall are the first k of a TopK=10 recall
+// for k <= 10 (server DAKERA_RECALL_RANK_DEPTH, default 10). Under
+// NeighborhoodModeInline, neighbourhood context follows the ranked results
+// in Memories (RecalledMemory.IsNeighborhood); under NeighborhoodModeSeparate
+// it is in ContextMemories instead. Fields a server does not send stay zero.
 type RecallResponse struct {
 	Memories           []RecalledMemory `json:"memories"`
 	AssociatedMemories []RecalledMemory `json:"associated_memories,omitempty"`
+	// ContextMemories is the neighbourhood context under
+	// NeighborhoodModeSeparate, each entry with ContextOf set. nil otherwise.
+	ContextMemories []RecalledMemory `json:"context_memories,omitempty"`
+	// QueryEmbeddingTimeMs and SearchTimeMs are the server-side timings.
+	QueryEmbeddingTimeMs uint64 `json:"query_embedding_time_ms,omitempty"`
+	SearchTimeMs         uint64 `json:"search_time_ms,omitempty"`
+	// RerankReport is what the cross-encoder did for this recall (the
+	// server's rerank_report, or rerank from v0.12 pre-releases). nil from
+	// older servers.
+	RerankReport *RerankReport `json:"rerank_report,omitempty"`
+	// LateInteractionFirstStage names the first stage that served the recall
+	// under the late-interaction strategy. Empty otherwise.
+	LateInteractionFirstStage string `json:"late_interaction_first_stage,omitempty"`
+	// Warnings lists the request fields the server ignored (server v0.12.3+,
+	// Dakera-AI/dakera#938). nil when it knew every field.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// RerankReport says what the cross-encoder did for one recall or search.
+type RerankReport struct {
+	// Applied is true when the cross-encoder rescored candidates and its
+	// order was used.
+	Applied bool `json:"applied"`
+	// Candidates is how many candidates it scored.
+	Candidates int `json:"candidates"`
+	// Skipped says why it did not run (disabled, bm25_routing, no_query, ...)
+	// or why its order was not used (low_confidence). Empty when applied.
+	Skipped string `json:"skipped,omitempty"`
+	// Capped is true when the server's candidate cap
+	// (DAKERA_RERANK_MAX_CANDIDATES) left part of the pool unscored, or
+	// lowered RecallRequest.RerankCandidates to it (server v0.12.3+,
+	// Dakera-AI/dakera#926). The rest stayed below the scored candidates in
+	// retrieval order.
+	Capped bool `json:"capped,omitempty"`
+}
+
+// UnmarshalJSON accepts the v0.12 pre-release name "rerank" for
+// rerank_report (the request's rerank is a bool; the response's is the
+// report) and ignores fields it does not know.
+func (r *RecallResponse) UnmarshalJSON(data []byte) error {
+	type plain RecallResponse
+	var wire struct {
+		plain
+		Rerank json.RawMessage `json:"rerank,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*r = RecallResponse(wire.plain)
+	if r.RerankReport == nil && len(wire.Rerank) > 0 && wire.Rerank[0] == '{' {
+		var report RerankReport
+		if err := json.Unmarshal(wire.Rerank, &report); err == nil {
+			r.RerankReport = &report
+		}
+	}
+	return nil
 }
 
 // UpdateMemoryRequest represents a request to update a memory.
@@ -952,11 +1249,24 @@ type UpdateMemoryRequest struct {
 
 // SearchMemoriesRequest represents a request to search memories.
 type SearchMemoriesRequest struct {
-	AgentID       string   `json:"agent_id,omitempty"`
-	Query         string   `json:"query"`
+	AgentID string `json:"agent_id,omitempty"`
+	// Query ranks the results. Empty omits it: a filter-only search.
+	Query         string   `json:"query,omitempty"`
 	TopK          int      `json:"top_k,omitempty"`
 	MemoryType    string   `json:"memory_type,omitempty"`
 	MinImportance *float32 `json:"min_importance,omitempty"`
+	// MaxImportance excludes memories above this importance.
+	MaxImportance *float32 `json:"max_importance,omitempty"`
+	// SessionID restricts the search to one session.
+	SessionID string `json:"session_id,omitempty"`
+	// Tags restricts the search to memories carrying these tags.
+	Tags []string `json:"tags,omitempty"`
+	// CreatedAfter / CreatedBefore bound created_at (Unix seconds).
+	CreatedAfter  *uint64 `json:"created_after,omitempty"`
+	CreatedBefore *uint64 `json:"created_before,omitempty"`
+	// SortBy orders a filter-only search: created_at, last_accessed_at,
+	// importance or access_count. Empty uses the server default.
+	SortBy string `json:"sort_by,omitempty"`
 	// CE-10: retrieval routing mode. nil uses the server default ("auto").
 	Routing *RoutingMode `json:"routing,omitempty"`
 	// CE-13: cross-encoder reranking. nil uses server default (false for search).
@@ -964,6 +1274,21 @@ type SearchMemoriesRequest struct {
 	Rerank *bool `json:"rerank,omitempty"`
 	// Lang is the language of Query (server v0.12+), as on RecallRequest.
 	Lang string `json:"lang,omitempty"`
+}
+
+// SearchMemoriesResponse is the full answer of POST /v1/memory/search
+// (SearchMemoriesDetailed). Results carry the same optional fields as recall
+// results (MatchedText, MatchedIDs, ...). Fields a server does not send stay
+// zero.
+type SearchMemoriesResponse struct {
+	Memories []RecalledMemory `json:"memories"`
+	// TotalCount is the number of matches before TopK was applied.
+	TotalCount int `json:"total_count"`
+	// RerankReport is what the cross-encoder did (nil from older servers).
+	RerankReport *RerankReport `json:"rerank_report,omitempty"`
+	// EffectiveTopK is the TopK the search could honour (a search with a
+	// query ranks at most 500 candidates). 0 from older servers.
+	EffectiveTopK int `json:"effective_top_k,omitempty"`
 }
 
 // UpdateImportanceRequest represents a request to update memory importance.
@@ -1774,13 +2099,44 @@ type AutoPilotConfig struct {
 	DedupThreshold             float32 `json:"dedup_threshold"`
 	DedupIntervalHours         uint64  `json:"dedup_interval_hours"`
 	ConsolidationIntervalHours uint64  `json:"consolidation_interval_hours"`
+	// DedupMode is what deduplication does: DedupModeOff (the default),
+	// DedupModeReport or DedupModeMerge (server v0.12.3+,
+	// Dakera-AI/dakera#930). Empty on older servers.
+	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// DedupCrossSession says whether deduplication may fold memories of
+	// different sessions (server v0.12.3+).
+	DedupCrossSession bool `json:"dedup_cross_session"`
+	// ConsolidateCrossSession says whether consolidation may merge memories
+	// of different sessions (server v0.12.3+).
+	ConsolidateCrossSession bool `json:"consolidate_cross_session"`
+	// TrashRetentionHours is how long a memory deleted by deduplication or
+	// consolidation stays restorable (ListDeduplicated,
+	// RestoreDeduplicated); 0 = not kept (server v0.12.3+).
+	TrashRetentionHours uint64 `json:"trash_retention_hours"`
 }
+
+// DedupMode is what AutoPilot deduplication does (server v0.12.3+).
+type DedupMode string
+
+const (
+	// DedupModeOff runs no deduplication (the server default).
+	DedupModeOff DedupMode = "off"
+	// DedupModeReport finds duplicates and removes none
+	// (DedupResultSnapshot.DuplicatesFound).
+	DedupModeReport DedupMode = "report"
+	// DedupModeMerge folds each duplicate into the memory it duplicates; the
+	// deleted one stays restorable for TrashRetentionHours.
+	DedupModeMerge DedupMode = "merge"
+)
 
 // DedupResultSnapshot is the result from a deduplication cycle.
 type DedupResultSnapshot struct {
 	NamespacesProcessed int `json:"namespaces_processed"`
 	MemoriesScanned     int `json:"memories_scanned"`
 	DuplicatesRemoved   int `json:"duplicates_removed"`
+	// DuplicatesFound is how many duplicates the pass found; in
+	// DedupModeReport none is removed (server v0.12.3+; 0 before).
+	DuplicatesFound int `json:"duplicates_found"`
 }
 
 // ConsolidationResultSnapshot is the result from a consolidation cycle.
@@ -1809,6 +2165,18 @@ type AutoPilotConfigRequest struct {
 	DedupThreshold             *float32 `json:"dedup_threshold,omitempty"`
 	DedupIntervalHours         *uint64  `json:"dedup_interval_hours,omitempty"`
 	ConsolidationIntervalHours *uint64  `json:"consolidation_interval_hours,omitempty"`
+	// DedupMode sets what deduplication does (server v0.12.3+). Empty keeps
+	// the current mode.
+	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// DedupCrossSession lets deduplication fold memories of different
+	// sessions (server v0.12.3+).
+	DedupCrossSession *bool `json:"dedup_cross_session,omitempty"`
+	// ConsolidateCrossSession lets consolidation merge memories of different
+	// sessions (server v0.12.3+).
+	ConsolidateCrossSession *bool `json:"consolidate_cross_session,omitempty"`
+	// TrashRetentionHours is how long a deleted duplicate stays restorable,
+	// 0..8760 (0 = not kept; server v0.12.3+).
+	TrashRetentionHours *uint64 `json:"trash_retention_hours,omitempty"`
 }
 
 // AutoPilotConfigResponse is returned by PUT /v1/admin/autopilot/config (PILOT-2).
@@ -1823,6 +2191,12 @@ type AutoPilotDedupResult struct {
 	NamespacesProcessed int `json:"namespaces_processed"`
 	MemoriesScanned     int `json:"memories_scanned"`
 	DuplicatesRemoved   int `json:"duplicates_removed"`
+	// DuplicatesFound is how many duplicates the pass found (server
+	// v0.12.3+; in DedupModeReport none is removed).
+	DuplicatesFound int `json:"duplicates_found"`
+	// Mode is the mode the pass ran in, DedupModeReport or DedupModeMerge
+	// (server v0.12.3+; empty before).
+	Mode DedupMode `json:"mode,omitempty"`
 }
 
 // AutoPilotConsolidationResult is the consolidation result from a manual trigger.
@@ -1998,10 +2372,18 @@ func rawTimestamp(raw json.RawMessage) string {
 }
 
 // CreateKeyRequest represents a request to create an API key (POST /admin/keys).
+//
+// The server refuses unknown fields on this route with 422, so only name,
+// scope, namespaces and expires_in_days are ever sent.
 type CreateKeyRequest struct {
-	Name        string   `json:"name"`
-	Permissions []string `json:"permissions,omitempty"`
-	ExpiresAt   string   `json:"expires_at,omitempty"`
+	Name string `json:"name"`
+	// Deprecated: the server has no permissions field (the Scope is the
+	// permission level). It is never sent; CreateKey returns an error when
+	// it is set instead of silently dropping it.
+	Permissions []string `json:"-"`
+	// Deprecated: the server has no expires_at field; use ExpiresInDays. It
+	// is never sent; CreateKey returns an error when it is set.
+	ExpiresAt string `json:"-"`
 	// Scope is the key's scope: read, write, admin or super_admin. The
 	// server requires it.
 	Scope string `json:"scope,omitempty"`
@@ -2222,6 +2604,10 @@ type BatchRecallResponse struct {
 	Filtered int `json:"filtered"`
 	// Truncated is true when the result set was capped by Limit and more matching memories exist.
 	Truncated bool `json:"truncated"`
+	// Warnings lists the request fields the server ignored, filter fields
+	// included (server v0.12.3+, Dakera-AI/dakera#938). nil when it knew
+	// every field.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // BatchForgetRequest is the request body for DELETE /v1/memories/forget/batch.
@@ -2266,6 +2652,9 @@ type BatchStoreMemoryItem struct {
 	// AttachmentRef references an attachment ("sha256:<hex>") uploaded to this
 	// agent's memory namespace (server v0.12+, DAKERA_ATTACHMENTS).
 	AttachmentRef string `json:"attachment_ref,omitempty"`
+	// EventTime is when the memory's event happened (server v0.12.3+); see
+	// StoreMemoryRequest.EventTime. nil omits it.
+	EventTime *EventTime `json:"event_time,omitempty"`
 }
 
 // BatchStoreMemoryRequest is the request body for POST /v1/memories/store/batch (DAK-5508).
@@ -2305,6 +2694,63 @@ type BatchStoreMemoryResponse struct {
 	// (server v0.12.2+; the memories were stored all the same). Empty when
 	// none, and on older servers.
 	EndedSessions []string `json:"ended_sessions,omitempty"`
+	// Truncated lists the stored memories whose text is longer than the
+	// embedding model reads, each with its EmbedTruncation (server v0.12.3+,
+	// Dakera-AI/dakera#933). nil when there are none, and on older servers.
+	Truncated []TruncatedMemory `json:"truncated,omitempty"`
+	// Warnings lists the request fields the server ignored, item fields as
+	// "memories[].<name>" (server v0.12.3+, Dakera-AI/dakera#938). nil when
+	// it knew every field.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// TruncatedMemory is a memory of a batch store whose text the embedding
+// model cut (BatchStoreMemoryResponse.Truncated).
+type TruncatedMemory struct {
+	// ID is the memory's id.
+	ID string `json:"id"`
+	EmbedTruncation
+}
+
+// ---------------------------------------------------------------------------
+// Deduplicated memories (server v0.12.3+, Dakera-AI/dakera#930)
+// ---------------------------------------------------------------------------
+
+// Kinds of DeduplicatedMemory.Kind: which pass deleted the memory.
+const (
+	// DeduplicatedKindDeduplication: folded into a duplicate of it
+	// (SurvivorID) by deduplication.
+	DeduplicatedKindDeduplication = "deduplication"
+	// DeduplicatedKindConsolidation: merged with others into a new memory
+	// (SurvivorID) by consolidation.
+	DeduplicatedKindConsolidation = "consolidation"
+)
+
+// DeduplicatedMemory is a memory that deduplication or consolidation deleted
+// and that can still be restored (ListDeduplicated).
+type DeduplicatedMemory struct {
+	// ID is the deleted memory's id; RestoreDeduplicated puts it back under
+	// this id.
+	ID string `json:"id"`
+	// Kind is DeduplicatedKindDeduplication or DeduplicatedKindConsolidation.
+	Kind string `json:"kind"`
+	// SurvivorID is the memory it was folded or merged into.
+	SurvivorID string `json:"survivor_id"`
+	// SessionID is its session ("" when none).
+	SessionID string `json:"session_id,omitempty"`
+	// DeletedAt is when it was deleted (Unix seconds).
+	DeletedAt int64 `json:"deleted_at"`
+	// RestorableUntil is until when it can be restored (Unix seconds); the
+	// server purges it after.
+	RestorableUntil int64 `json:"restorable_until"`
+}
+
+// DeduplicatedListResponse is the answer of GET /v1/memory/deduplicated.
+type DeduplicatedListResponse struct {
+	AgentID string `json:"agent_id"`
+	// Memories are the restorable memories, newest first.
+	Memories []DeduplicatedMemory `json:"memories"`
+	Count    int                  `json:"count"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2828,6 +3274,8 @@ type KeySuccessResponse struct {
 }
 
 // CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts.
 type CreateNamespaceKeyRequest struct {
 	Name          string `json:"name"`
 	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
@@ -2916,8 +3364,11 @@ type MemoryExportResponse struct {
 // AuditEvent is a single business-event entry from the audit log (OBS-1).
 //
 // The server's rows are {id (integer), event_type, agent_id, memory_id,
-// session_id, importance, timestamp (Unix milliseconds)}. ID carries the
-// integer as text; a string id decodes too.
+// session_id, importance, timestamp (Unix milliseconds), reason}. ID carries
+// the integer as text; a string id decodes too. EventType is, for example,
+// stored, recalled, forgotten, consolidated, importance_updated,
+// session_started, session_ended and (server v0.12.3+) deduplicated and
+// restored. Namespace and Details are never sent by current servers.
 type AuditEvent struct {
 	ID         string                 `json:"id"`
 	EventType  string                 `json:"event_type"`
@@ -2928,6 +3379,11 @@ type AuditEvent struct {
 	Namespace  string                 `json:"namespace,omitempty"`
 	Timestamp  int64                  `json:"timestamp"`
 	Details    map[string]interface{} `json:"details,omitempty"`
+	// Reason is why the event happened, when the server says (server
+	// v0.12.3+, Dakera-AI/dakera#930): "absorbed into <survivor id>" on a
+	// deduplicated memory, "merged into <id>" on a consolidated one. Empty
+	// on older rows.
+	Reason string `json:"reason,omitempty"`
 }
 
 // UnmarshalJSON accepts the server's integer id as well as a string id.
@@ -2972,10 +3428,15 @@ type AuditExportResponse struct {
 type AuditQuery struct {
 	AgentID   string
 	EventType string
-	FromTs    int64
-	ToTs      int64
-	Limit     int
-	Cursor    string
+	// FromTs and ToTs bound the events' timestamps, in Unix milliseconds,
+	// both inclusive (0 = unbounded).
+	FromTs int64
+	ToTs   int64
+	// Limit is the most events returned (server default 100).
+	Limit int
+	// Cursor is sent as the "cursor" query parameter; current servers do not
+	// page the audit log and ignore it.
+	Cursor string
 }
 
 // ===========================================================================
@@ -3007,19 +3468,73 @@ type extractProvidersResponse struct {
 // ===========================================================================
 
 // RotateEncryptionKeyRequest is the body for POST /v1/admin/encryption/rotate-key (SEC-3).
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts, and unset ones are omitted. String and GoString redact
+// NewKey.
 type RotateEncryptionKeyRequest struct {
-	// NewKey is the new passphrase or 64-char hex key to rotate to.
-	NewKey string `json:"new_key"`
-	// Namespace, if set, restricts rotation to memories in that namespace.
-	// Omit (empty string) to rotate all namespaces.
+	// NewKey is the passphrase or 64-char hex key the new data key is derived
+	// from. Empty omits it: the server generates a random 256-bit key.
+	NewKey string `json:"new_key,omitempty"`
+	// Namespace, if set, rotates only that namespace's key. Empty rotates the
+	// global key (every namespace moves to it).
 	Namespace string `json:"namespace,omitempty"`
+	// WaitSecs is how long the server waits for the re-seal before answering
+	// (server default 10, at most 300; 0 = answer at once). nil omits it.
+	WaitSecs *int `json:"wait_secs,omitempty"`
 }
 
+// String redacts NewKey.
+func (r RotateEncryptionKeyRequest) String() string {
+	key := ""
+	if r.NewKey != "" {
+		key = redacted
+	}
+	wait := "<default>"
+	if r.WaitSecs != nil {
+		wait = strconv.Itoa(*r.WaitSecs)
+	}
+	return fmt.Sprintf("RotateEncryptionKeyRequest{NewKey:%q Namespace:%q WaitSecs:%s}", key, r.Namespace, wait)
+}
+
+// GoString redacts NewKey (for %#v).
+func (r RotateEncryptionKeyRequest) GoString() string { return r.String() }
+
 // RotateEncryptionKeyResponse is returned by POST /v1/admin/encryption/rotate-key (SEC-3).
+// It carries key ids only, never key material. Fields an older server does
+// not send stay zero.
 type RotateEncryptionKeyResponse struct {
+	// KeyID is the id of the new active key.
+	KeyID string `json:"key_id,omitempty"`
+	// PreviousKeyID is the id of the key it replaces for this scope.
+	PreviousKeyID string `json:"previous_key_id,omitempty"`
+	// Scope is "global" or "namespace".
+	Scope     string `json:"scope,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	// Reseal is "completed", "running" or "partial".
+	Reseal string `json:"reseal,omitempty"`
+	// Rotated / Skipped count the values re-sealed / not re-sealed by the
+	// time of the answer.
 	Rotated    int      `json:"rotated"`
 	Skipped    int      `json:"skipped"`
 	Namespaces []string `json:"namespaces"`
+	// FulltextIndicesRotated counts the BM25 index blobs re-sealed.
+	FulltextIndicesRotated int `json:"fulltext_indices_rotated,omitempty"`
+	// FailedNamespaces could not be processed (retried in the background).
+	FailedNamespaces []string `json:"failed_namespaces,omitempty"`
+	// ActionRequired is set when the operator must act (for example set
+	// DAKERA_ENCRYPTION_KEY before the next restart).
+	ActionRequired string `json:"action_required,omitempty"`
+	// StatusURL is where the re-seal progress is reported.
+	StatusURL string `json:"status_url,omitempty"`
+}
+
+// ResealEncryptionRequest is the body of POST /v1/admin/encryption/reseal.
+type ResealEncryptionRequest struct {
+	// Namespace re-seals only that namespace. Empty re-seals everything.
+	Namespace string `json:"namespace,omitempty"`
+	// WaitSecs is how long to wait for the pass (server default 0: start it
+	// and answer at once). nil omits it.
+	WaitSecs *int `json:"wait_secs,omitempty"`
 }
 
 // ===========================================================================
@@ -3624,6 +4139,10 @@ type BackupListResponse struct {
 }
 
 // CreateBackupRequest is the request body for POST /admin/backups.
+// The server refuses unknown fields on this route with 422; these are the
+// fields it accepts. BackupType is full, incremental or snapshot;
+// Compression is none, zstd or lz4; Encrypt seals the backup (needs
+// encryption at rest configured).
 type CreateBackupRequest struct {
 	Name        string   `json:"name"`
 	BackupType  string   `json:"backup_type,omitempty"`

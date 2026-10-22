@@ -137,6 +137,141 @@ defer cancel()
 resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "preferences", TopK: 3})
 ```
 
+## What's new in v0.12.3
+
+SDK v0.12.3 targets **Dakera server v0.12.3** (Dakera-AI/dakera#917, #920, #921, #923, #926, #930,
+#932, #933, #938, #940) and stays **compatible with v0.12.0 – v0.12.2 servers**: new request fields are
+omitted unless you set them and new response fields are optional (zero on an older server). The
+neighbourhood modes, `IncludeSummaries`, `MatchedText` / `MatchedIDs`, `Retrieval`, `ContextOf`,
+`ContextMemories`, `RankScore`, `EventTime`, the truncation report, `Warnings`, the deduplicated-memory
+routes and `GetMemory` without an agent id need **server >= 0.12.3** (an older server ignores the new
+request fields and answers inline). The `super_admin` requirement of `OpsShutdown` and the `422` on
+unknown admin-request fields are server 0.12.3 behaviour.
+
+Also server 0.12.3 behaviour: recall, search and batch recall for an agent that has stored nothing
+answer **`200` with no memories** (older servers answered `404 NAMESPACE_NOT_FOUND`), and session ids
+may contain `:` (`Capabilities(ctx)` reports `Naming.SessionIDPattern`).
+
+### Event time: memories that happened earlier
+
+A client that writes history (an import, a backfill, a replayed conversation) can say when each
+memory's event happened. The server records it as metadata `_dakera_event_time` and uses it, not the
+ingest time, for recency, `Since` / `Until`, the temporal windows and graph ordering (`CreatedAt`
+stays the ingest time; TTL and decay count from it):
+
+```go
+_, err := client.StoreMemory(ctx, "my-agent", dakera.StoreMemoryRequest{
+    Content:   "Alice moved to Paris.",
+    EventTime: dakera.EventTimeAt(time.Date(2023, 5, 20, 2, 21, 0, 0, time.UTC)), // or EventTimeUnix(1684549260)
+})
+batch, err := client.StoreMemoriesBatch(ctx, dakera.BatchStoreMemoryRequest{
+    AgentID:  "my-agent",
+    Memories: []dakera.BatchStoreMemoryItem{{Content: "Bob joined.", EventTime: dakera.EventTimeRFC3339("2023-06-02T10:00:00Z")}},
+})
+```
+
+More than 24 hours ahead or before 1970 is a `*ValidationError` naming `event_time`.
+`StoreMemoryRequest.ValidFrom` is now sent as metadata `valid_from`, where the server reads it.
+
+### Truncation report and ignored-field warnings
+
+Content longer than the embedding model reads is stored whole, but its vector covers only the first
+`EmbeddedTokens`. `StoreMemory` and `UpdateMemory` then return `resp.Truncation`
+(`ContentTokens`, `EmbeddedTokens`, `MaxTokens`, `Windows`), and `StoreMemoriesBatch` lists such
+memories in `resp.Truncated`. Store, batch store, recall and batch recall answers carry `Warnings`
+naming request fields the server ignored (`"unknown field 'created_at' ignored"`); every field the SDK
+sends is one the server knows, so `Warnings` stays nil unless the server is older than the SDK.
+
+### Deduplicated memories
+
+With AutoPilot deduplication in `merge` mode (`AutopilotUpdateConfig` with `DedupMode:
+dakera.DedupModeMerge`; `DedupModeReport` only counts duplicates), a memory folded into a duplicate,
+or merged by consolidation, stays restorable for `TrashRetentionHours`:
+
+```go
+list, err := client.ListDeduplicated(ctx, "my-agent")
+for _, m := range list.Memories {
+    fmt.Println(m.ID, m.Kind, "->", m.SurvivorID, "restorable until", m.RestorableUntil)
+}
+mem, err := client.RestoreDeduplicated(ctx, "my-agent", list.Memories[0].ID) // 404: no copy, 409: id taken again
+```
+
+The audit log records `deduplicated` and `restored` events with a `Reason`. `GetMemory(ctx, "", id)`
+finds a memory without its agent id when exactly one agent your key can read holds it.
+
+### Recall: at most `TopK` results, context apart
+
+A recall also returns *neighbourhood context*: memories written in the same session within a few
+minutes of the top results. By default (server `DAKERA_NEIGHBORHOOD_MODE=inline`) they follow the
+ranked results in `Memories`, so `len(resp.Memories)` can exceed `TopK`; each one has
+`IsNeighborhood()` true and a `Score` that is not comparable with the ranked results'. Ask for
+`NeighborhoodModeSeparate` to keep `Memories` to at most `TopK` ranked results and get the context
+in `ContextMemories` (each with `ContextOf`, the id of the ranked memory it belongs to):
+
+```go
+resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{
+    Query:            "where does Alice live?",
+    TopK:             3,
+    NeighborhoodMode: dakera.NeighborhoodModeSeparate, // or NeighborhoodModeInline / NeighborhoodModeOff
+})
+for _, m := range resp.Memories { // at most 3
+    fmt.Println(m.ID, m.Score, m.MatchedText) // MatchedText / MatchedIDs: see below
+}
+for _, c := range resp.ContextMemories {
+    fmt.Println("context of", c.ContextOf, ":", c.Content)
+}
+```
+
+`IncludeSummaries` (`*bool`) says whether session summaries may be recalled (unset: the server's
+choice). When the server collapses derived sentence sub-memories into their source
+(`DAKERA_RECALL_COLLAPSE_DERIVED`), a result is the source memory with `MatchedIDs` (the sentences
+that matched, best first) and `MatchedText` (the best sentence, when it outranked the source's own
+text); search results carry the same fields (`SearchMemoriesDetailed` also returns `TotalCount`,
+`RerankReport` and `EffectiveTopK`). Every new field is omitted from requests unless set and is
+optional in answers, so older servers keep working (they ignore `NeighborhoodMode` and answer
+inline).
+
+### Document import (server v0.12.3+)
+
+A PDF, DOCX, HTML, Markdown or text document becomes a set of *chunk memories* of an agent:
+ordinary memories, each sized for the embedding model, carrying its heading breadcrumb and its
+provenance (`_dakera_document`: document id, title, pages, heading path). Recall, search and
+filters treat them as memories; a result can cite the document, page and section.
+
+```go
+// Text, Markdown or HTML given inline
+acc, err := client.ImportDocument(ctx, dakera.ImportDocumentRequest{
+    AgentID:   "docs-bot",
+    Content:   markdown,
+    MediaType: dakera.MediaTypeMarkdown,
+    DocumentImportOptions: dakera.DocumentImportOptions{
+        Tags:     []string{"manual"},
+        Chunking: &dakera.ChunkingOptions{Strategy: dakera.ChunkStrategyStructure},
+    },
+})
+// A PDF / DOCX: upload it as an attachment, then import it
+up, _ := client.UploadAttachment(ctx, "library", pdfBytes, dakera.MediaTypePDF)
+acc, err = client.ImportAttachmentDocument(ctx, "library", up.AttachmentRef,
+    dakera.ImportAttachmentDocumentRequest{AgentID: "docs-bot", DocumentID: "manual-v3"})
+
+// The import is a job
+job, err := client.WaitForDocumentJob(ctx, "docs-bot", acc.JobID, dakera.JobWaitOptions{Timeout: 5 * time.Minute})
+
+// Cite where a recalled chunk comes from
+for _, m := range resp.Memories {
+    if doc := m.DocumentChunk(); doc != nil {
+        fmt.Println(doc.Title, doc.HeadingPath, doc.PageStart)
+    }
+}
+```
+
+`ListDocuments` (cursor paging), `GetDocument` (a document and its chunks) and `DeleteDocument`
+complete the surface. `Capabilities(ctx)` reports `Documents` (`SupportsDocuments()`, limits,
+media types). A server with `DAKERA_DOCUMENTS` off answers `501` (`*FeatureDisabledError`); a
+server older than v0.12.3 answers `404` (`*NotFoundError`, whose message says so). A failed job
+(`*JobFailedError`) carries the status and code: `413` (too big / too many chunks), `422`
+(`UNPROCESSABLE_CONTENT`), `504` (`EXTRACTION_TIMEOUT`).
+
 ### Text auto-embedding
 
 Send raw text without pre-computing embeddings — Dakera embeds server-side:
@@ -192,6 +327,32 @@ client := dakera.NewClientWithOptions(dakera.ClientOptions{
     RetryBackoff: &dakera.RetryConfig{MaxRetries: 5, BaseDelay: 200 * time.Millisecond, MaxDelay: 30 * time.Second, Jitter: true},
 })
 ```
+
+Defaults: a 30 s request timeout (`Timeout`, also the connect and response-header timeout unless
+`ConnectTimeout` is set) and Go's TLS defaults (TLS 1.2+, system roots, verification on). Event
+streams have no overall timeout (cancel their `ctx`).
+
+**Proxies (since v0.12.3)**: the default transport is a clone of `http.DefaultTransport`, so the
+client honours the `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables like any Go HTTP
+client (before v0.12.3 it ignored them). To opt out, set `NO_PROXY` for the Dakera host, or pass your
+own transport with `Proxy: nil`:
+
+```go
+t := http.DefaultTransport.(*http.Transport).Clone()
+t.Proxy = nil // never use a proxy
+client := dakera.NewClientWithOptions(dakera.ClientOptions{BaseURL: "http://localhost:3000", Transport: t})
+```
+
+Retries: `MaxRetries` is the number of attempts. `429` and `503` (honouring
+`Retry-After`) and connection failures before the request was sent are retried for every request;
+other `5xx` answers and dropped connections are retried only for requests that cannot apply a write
+twice (`GET`, `PUT`, `DELETE`, recall, search and the query routes), never for a write `POST` such
+as `StoreMemory`. The API key is never printed: `Client` and `ClientOptions` redact it in `%v`,
+`%+v` and `%#v`. `OdeExtractEntities` requests to the ODE sidecar (`OdeURL`) currently carry the
+Dakera API key; tracked in [Dakera-AI/dakera#924](https://github.com/Dakera-AI/dakera/issues/924).
+
+`OpsShutdown` (`POST /ops/shutdown`) needs a global **`super_admin`** key; an `admin` key gets a
+`403` (`*AuthorizationError`) from servers v0.12.3 and later.
 
 ---
 
