@@ -942,8 +942,14 @@ func (c *Client) Compact(ctx context.Context, namespace string) (*StatusResponse
 // ===========================================================================
 
 // StoreMemory stores a memory for an agent.
+//
+// Set req.EventTime to date the memory's event (server v0.12.3+). When the
+// content is longer than the embedding model reads the response carries
+// Truncation (server v0.12.3+), and Warnings lists request fields the server
+// ignored.
 func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemoryRequest) (*StoreMemoryResponse, error) {
 	req.AgentID = agentID
+	req.Metadata = withValidFrom(req.Metadata, req.ValidFrom)
 	respBody, err := c.request(ctx, "POST", "/v1/memory/store", req)
 	if err != nil {
 		return nil, err
@@ -967,6 +973,11 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 // (RecalledMemory.IsNeighborhood). Set req.NeighborhoodMode to
 // NeighborhoodModeSeparate for at most TopK ranked results, with the context
 // in RecallResponse.ContextMemories.
+//
+// Recall for an agent that has stored nothing answers with no memories
+// (server v0.12.3+; older servers answer a *NotFoundError,
+// NAMESPACE_NOT_FOUND). RecallResponse.Warnings lists request fields the
+// server ignored.
 func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) (*RecallResponse, error) {
 	req.AgentID = agentID
 	respBody, err := c.request(ctx, "POST", "/v1/memory/recall", req)
@@ -986,9 +997,36 @@ func (c *Client) Recall(ctx context.Context, agentID string, req RecallRequest) 
 	return &result, nil
 }
 
+// withValidFrom returns metadata with "valid_from" set to *validFrom — a
+// copy, so the caller's map is never changed — unless validFrom is nil or
+// metadata already names a "valid_from" (the caller's value wins).
+func withValidFrom(metadata map[string]interface{}, validFrom *int64) map[string]interface{} {
+	if validFrom == nil {
+		return metadata
+	}
+	if _, set := metadata["valid_from"]; set {
+		return metadata
+	}
+	out := make(map[string]interface{}, len(metadata)+1)
+	for k, v := range metadata {
+		out[k] = v
+	}
+	out["valid_from"] = *validFrom
+	return out
+}
+
 // GetMemory gets a specific memory.
+//
+// agentID may be empty (server v0.12.3+): the server then looks the id up
+// among the agents the API key can read — one holder answers the memory,
+// none is a *NotFoundError, several a *ValidationError (pass the agent id).
+// Older servers need agentID.
 func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memory, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memory/get/%s?agent_id=%s", url.PathEscape(memoryID), url.QueryEscape(agentID)), nil)
+	path := "/v1/memory/get/" + url.PathEscape(memoryID)
+	if agentID != "" {
+		path += "?agent_id=" + url.QueryEscape(agentID)
+	}
+	respBody, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1004,7 +1042,9 @@ func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memo
 //
 // PUT /v1/memory/update/{id}?agent_id=... — the server reads agent_id from the
 // query string and answers with the updated memory object, which is returned
-// in StoreMemoryResponse.Memory.
+// in StoreMemoryResponse.Memory. When new content is longer than the
+// embedding model reads, StoreMemoryResponse.Truncation reports the cut
+// (server v0.12.3+).
 func (c *Client) UpdateMemory(ctx context.Context, agentID, memoryID string, req UpdateMemoryRequest) (*StoreMemoryResponse, error) {
 	path := fmt.Sprintf("/v1/memory/update/%s?agent_id=%s", url.PathEscape(memoryID), url.QueryEscape(agentID))
 	respBody, err := c.request(ctx, "PUT", path, req)
@@ -1032,7 +1072,42 @@ func parseUpdatedMemory(respBody []byte) (*StoreMemoryResponse, error) {
 	if err := json.Unmarshal(respBody, &memory); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &StoreMemoryResponse{Memory: &memory}, nil
+	return &StoreMemoryResponse{Memory: &memory, Truncation: decodeTruncation(respBody)}, nil
+}
+
+// ListDeduplicated lists the memories of agentID that deduplication or
+// consolidation deleted and that can still be restored, newest first —
+// GET /v1/memory/deduplicated (server v0.12.3+, Dakera-AI/dakera#930; an
+// older server answers 404). How long they stay restorable is
+// AutoPilotConfig.TrashRetentionHours.
+func (c *Client) ListDeduplicated(ctx context.Context, agentID string) (*DeduplicatedListResponse, error) {
+	respBody, err := c.request(ctx, "GET", "/v1/memory/deduplicated?agent_id="+url.QueryEscape(agentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DeduplicatedListResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse deduplicated list: %w", err)
+	}
+	return &result, nil
+}
+
+// RestoreDeduplicated puts back memory memoryID of agentID that
+// deduplication or consolidation deleted, exactly as it was stored, and
+// returns it — POST /v1/memory/deduplicated/{id}/restore (server v0.12.3+).
+// A *NotFoundError means it has no restorable copy; a *ConflictError that
+// the agent holds a memory with that id again.
+func (c *Client) RestoreDeduplicated(ctx context.Context, agentID, memoryID string) (*Memory, error) {
+	path := fmt.Sprintf("/v1/memory/deduplicated/%s/restore?agent_id=%s", url.PathEscape(memoryID), url.QueryEscape(agentID))
+	respBody, err := c.request(ctx, "POST", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result Memory
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse restored memory: %w", err)
+	}
+	return &result, nil
 }
 
 // Forget deletes a memory.
@@ -1053,6 +1128,9 @@ func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
 //	    Filter:  BatchMemoryFilter{MinImportance: &minImp},
 //	    Limit:   50,
 //	})
+//
+// An agent that has stored nothing answers with no memories (server
+// v0.12.3+; older servers answer a *NotFoundError).
 func (c *Client) BatchRecall(ctx context.Context, req BatchRecallRequest) (*BatchRecallResponse, error) {
 	respBody, err := c.request(ctx, "POST", "/v1/memories/recall/batch", req)
 	if err != nil {
@@ -1096,6 +1174,10 @@ func (c *Client) BatchForget(ctx context.Context, req BatchForgetRequest) (*Batc
 // Uses POST /v1/memories/store/batch. The server embeds all contents in a
 // single ONNX inference pass, yielding ≥100× throughput vs. N sequential
 // single-store calls. Accepts up to 1 000 memories per call.
+//
+// Each item may carry EventTime (server v0.12.3+). The response lists the
+// memories whose text the embedding model cut in Truncated, and request
+// fields the server ignored in Warnings (server v0.12.3+).
 func (c *Client) StoreMemoriesBatch(ctx context.Context, req BatchStoreMemoryRequest) (*BatchStoreMemoryResponse, error) {
 	respBody, err := c.request(ctx, "POST", "/v1/memories/store/batch", req)
 	if err != nil {
@@ -1110,6 +1192,9 @@ func (c *Client) StoreMemoriesBatch(ctx context.Context, req BatchStoreMemoryReq
 }
 
 // SearchMemories searches memories for an agent.
+//
+// An agent that has stored nothing answers with no memories (server
+// v0.12.3+; older servers answer a *NotFoundError).
 func (c *Client) SearchMemories(ctx context.Context, agentID string, req SearchMemoriesRequest) ([]RecalledMemory, error) {
 	req.AgentID = agentID
 	respBody, err := c.request(ctx, "POST", "/v1/memory/search", req)

@@ -24,6 +24,8 @@ type EventResult struct {
 //   - "recalled"            — memory recalled
 //   - "forgotten"           — memory deleted
 //   - "consolidated"        — memories merged
+//   - "deduplicated"        — memory deleted by deduplication (server v0.12.3+; Reason names the survivor)
+//   - "restored"            — a deduplicated memory put back (server v0.12.3+)
 //   - "importance_updated"  — importance changed
 //   - "session_started" / "session_ended" — agent session lifecycle
 //   - "stream_lagged"       — consumer fell behind; some events were dropped
@@ -36,8 +38,10 @@ type MemoryEvent struct {
 	Importance *float32 `json:"importance,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	SessionID  *string  `json:"session_id,omitempty"`
-	// Reason is why a session_ended event's session ended: SessionEndedByClient
-	// or SessionEndedIdle (server v0.12.2+). nil on every other event type.
+	// Reason is why the event happened, where that is part of it: on
+	// session_ended, SessionEndedByClient or SessionEndedIdle (server
+	// v0.12.2+); on deduplicated / consolidated, "absorbed into <id>" /
+	// "merged into <id>" (server v0.12.3+). nil otherwise.
 	Reason *string `json:"reason,omitempty"`
 }
 

@@ -130,6 +130,9 @@ func parseRetryAfter(value string) int {
 //	404 NotFoundError            409 ConflictError         413 PayloadTooLargeError
 //	429 RateLimitError           501 FeatureDisabledError / NotImplementedError
 //	other 5xx ServerError (503 carries RetryAfter)
+//	any other status (421 HOST_NOT_ALLOWED, 422, ...) a *DakeraError
+//
+// Every error keeps the server's message, code and details.
 func newAPIError(status int, header http.Header, respBody []byte) error {
 	var body ErrorBody
 	_ = json.Unmarshal(respBody, &body)
@@ -158,7 +161,9 @@ func newAPIError(status int, header http.Header, respBody []byte) error {
 	case status == 400:
 		return &ValidationError{DakeraError: base}
 	case status == 401:
-		base.Message = "Authentication failed"
+		if body.Error == "" {
+			base.Message = "Authentication failed"
+		}
 		return &AuthenticationError{DakeraError: base}
 	case status == 403:
 		return &AuthorizationError{DakeraError: base}
@@ -169,7 +174,11 @@ func newAPIError(status int, header http.Header, respBody []byte) error {
 	case status == 413:
 		return &PayloadTooLargeError{DakeraError: base}
 	case status == 429:
-		base.Message = "Rate limit exceeded"
+		// Keep the server's text: since v0.12.3 a 429 RATE_LIMIT_EXCEEDED is
+		// also the admission-overload answer, whose Details names the queue.
+		if body.Error == "" {
+			base.Message = "Rate limit exceeded"
+		}
 		return &RateLimitError{DakeraError: base, RetryAfter: retryAfter}
 	case status == 501:
 		if code == ErrorCodeFeatureDisabled {

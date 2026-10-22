@@ -270,6 +270,12 @@ type NamingCapabilities struct {
 	AgentIDPattern string `json:"agent_id_pattern"`
 	// AgentIDMaxBytes is the longest agent id (241 bytes in v0.12.2).
 	AgentIDMaxBytes int `json:"agent_id_max_bytes"`
+	// SessionIDPattern is the regular expression a session id must match:
+	// the agent-id alphabet plus ':' (server v0.12.3+; empty before).
+	SessionIDPattern string `json:"session_id_pattern,omitempty"`
+	// SessionIDMaxBytes is the longest session id (server v0.12.3+; 0
+	// before).
+	SessionIDMaxBytes int `json:"session_id_max_bytes,omitempty"`
 	// AgentNamespacePrefix is the prefix of an agent's memory namespace.
 	AgentNamespacePrefix string `json:"agent_namespace_prefix"`
 	// AgentNamespaceMaxBytes is the longest agent namespace.

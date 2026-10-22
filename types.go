@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -774,13 +775,29 @@ type StoreMemoryRequest struct {
 	// ExpiresAt is an optional explicit expiry Unix timestamp (seconds). Takes
 	// precedence over TTLSeconds when both are set. The memory is hard-deleted
 	// by the decay engine on expiry (DECAY-3).
-	ExpiresAt *int64    `json:"expires_at,omitempty"`
-	SessionID string    `json:"session_id,omitempty"`
-	Embedding []float32 `json:"embedding,omitempty"`
+	ExpiresAt *int64 `json:"expires_at,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// Deprecated: the memory store endpoint embeds Content itself and has no
+	// field for a client embedding; the server ignored it. It is no longer
+	// sent.
+	Embedding []float32 `json:"-"`
 	// ValidFrom is an optional Unix timestamp (seconds) indicating when this
-	// memory becomes temporally valid. Defaults to ingest time when omitted.
-	// Used by temporal recall queries (server v0.11.98+, DAK-7424).
-	ValidFrom *int64 `json:"valid_from,omitempty"`
+	// memory becomes temporally valid (the bi-temporal validity window, DAK-7424).
+	// The server reads it from the memory's metadata, so StoreMemory sends it
+	// as metadata "valid_from" (a "valid_from" already in Metadata wins).
+	// Before, it was sent as a top-level field the server ignored.
+	ValidFrom *int64 `json:"-"`
+	// EventTime is when the memory's event happened, for a client that writes
+	// history (an import, a backfill, a replayed conversation): server
+	// v0.12.3+ (Dakera-AI/dakera#932). Build it with EventTimeUnix,
+	// EventTimeAt or EventTimeRFC3339. The server records it as metadata
+	// "_dakera_event_time" (integer Unix seconds; a client cannot set that
+	// key itself) and uses it instead of the ingest time for recency,
+	// Since/Until, the temporal windows and graph ordering; CreatedAt stays the
+	// ingest time (TTL and decay count from it). At most 24 h in the future
+	// and not before 1970, else a *ValidationError naming event_time. nil
+	// omits it (older servers ignore the field).
+	EventTime *EventTime `json:"event_time,omitempty"`
 	// ID is an optional custom memory id (generated when empty).
 	ID string `json:"id,omitempty"`
 	// Lang is the language of Content (server v0.12+): an ISO 639-1 code with a
@@ -814,6 +831,123 @@ type StoreMemoryResponse struct {
 	// timeout). Empty when the memory has no session, on older servers, and
 	// on the near-duplicate short-circuit.
 	SessionState string `json:"session_state,omitempty"`
+	// Truncation is set when Content is longer than the embedding model
+	// reads (server v0.12.3+, Dakera-AI/dakera#933): the vector covers its
+	// first EmbeddedTokens only. nil when the model read it whole, and on
+	// older servers. Read from the flattened "truncated", "content_tokens",
+	// ... fields of the answer.
+	Truncation *EmbedTruncation `json:"-"`
+	// Warnings lists the request fields the server ignored, e.g. "unknown
+	// field 'created_at' ignored" (server v0.12.3+, Dakera-AI/dakera#938).
+	// nil when it knew every field, and on older servers.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// UnmarshalJSON reads the answer of POST /v1/memory/store, including the
+// flattened truncation report.
+func (r *StoreMemoryResponse) UnmarshalJSON(data []byte) error {
+	type plain StoreMemoryResponse
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*r = StoreMemoryResponse(p)
+	r.Truncation = decodeTruncation(data)
+	return nil
+}
+
+// EmbedTruncation says how the embedding model cut a memory's text (server
+// v0.12.3+, Dakera-AI/dakera#933). Store, update and batch store report it
+// when the text is longer than the model reads.
+type EmbedTruncation struct {
+	// Truncated is always true in a report: the text is longer than the
+	// model reads.
+	Truncated bool `json:"truncated"`
+	// ContentTokens is the token count of the whole text.
+	ContentTokens int `json:"content_tokens"`
+	// EmbeddedTokens is how many tokens the model embedded: the vector
+	// covers this prefix of the text.
+	EmbeddedTokens int `json:"embedded_tokens"`
+	// MaxTokens is the model's token cap on this server
+	// (ServerCapabilities effective_max_seq_length).
+	MaxTokens int `json:"max_tokens"`
+	// TokensEstimated is true when the counts are a model-free estimate
+	// (the model is not loaded on that node), not the tokenizer's.
+	TokensEstimated bool `json:"tokens_estimated,omitempty"`
+	// Windows is how many overlapping windows of the text were stored as
+	// sub-memories so its tail is searchable (0 when the server does not
+	// derive them).
+	Windows int `json:"windows"`
+}
+
+// decodeTruncation reads the flattened truncation report of a store or
+// update answer: nil unless the answer says "truncated": true.
+func decodeTruncation(data []byte) *EmbedTruncation {
+	var t EmbedTruncation
+	if err := json.Unmarshal(data, &t); err != nil || !t.Truncated {
+		return nil
+	}
+	return &t
+}
+
+// EventTime is a memory's event time on a store request
+// (StoreMemoryRequest.EventTime, BatchStoreMemoryItem.EventTime; server
+// v0.12.3+): Unix seconds or an RFC 3339 timestamp, sent as a JSON number or
+// string. Build it with EventTimeUnix, EventTimeAt or EventTimeRFC3339.
+type EventTime struct {
+	unix    int64
+	rfc3339 string
+}
+
+// EventTimeUnix is an event time of secs Unix seconds.
+func EventTimeUnix(secs int64) *EventTime {
+	return &EventTime{unix: secs}
+}
+
+// EventTimeAt is the event time t, sent as an RFC 3339 timestamp (second
+// precision; the server drops a fractional part).
+func EventTimeAt(t time.Time) *EventTime {
+	return &EventTime{rfc3339: t.Format(time.RFC3339)}
+}
+
+// EventTimeRFC3339 is an RFC 3339 timestamp such as "2023-05-20T02:21:00Z",
+// sent as given (the server validates it and answers 400 for a malformed one).
+func EventTimeRFC3339(timestamp string) *EventTime {
+	return &EventTime{rfc3339: timestamp}
+}
+
+// String is the event time as it is sent: the RFC 3339 text, or the Unix
+// seconds in decimal.
+func (e EventTime) String() string {
+	if e.rfc3339 != "" {
+		return e.rfc3339
+	}
+	return strconv.FormatInt(e.unix, 10)
+}
+
+// MarshalJSON sends the Unix seconds as a number, an RFC 3339 timestamp as a
+// string.
+func (e EventTime) MarshalJSON() ([]byte, error) {
+	if e.rfc3339 != "" {
+		return json.Marshal(e.rfc3339)
+	}
+	return json.Marshal(e.unix)
+}
+
+// UnmarshalJSON reads a number (Unix seconds; a fractional part is dropped)
+// or a string.
+func (e *EventTime) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*e = EventTime{rfc3339: text}
+		return nil
+	}
+	var secs float64
+	if err := json.Unmarshal(data, &secs); err != nil {
+		return fmt.Errorf("event_time must be Unix seconds or an RFC 3339 string: %w", err)
+	}
+	*e = EventTime{unix: int64(math.Floor(secs))}
+	return nil
 }
 
 // Session states reported by StoreMemoryResponse.SessionState and
@@ -1000,6 +1134,8 @@ type RecallRequest struct {
 	Rerank *bool `json:"rerank,omitempty"`
 	// RerankCandidates bounds how many retrieved candidates the cross-encoder
 	// scores (the best by retrieval score). nil = the whole candidate pool.
+	// It must be positive (0 is a 400); a value above the server's cap is
+	// lowered to it and reported as RerankReport.Capped.
 	RerankCandidates *int `json:"rerank_candidates,omitempty"`
 	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyMinMax since v0.11.2).
 	Fusion *FusionStrategy `json:"fusion,omitempty"`
@@ -1056,6 +1192,9 @@ type RecallResponse struct {
 	// LateInteractionFirstStage names the first stage that served the recall
 	// under the late-interaction strategy. Empty otherwise.
 	LateInteractionFirstStage string `json:"late_interaction_first_stage,omitempty"`
+	// Warnings lists the request fields the server ignored (server v0.12.3+,
+	// Dakera-AI/dakera#938). nil when it knew every field.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // RerankReport says what the cross-encoder did for one recall or search.
@@ -1068,6 +1207,12 @@ type RerankReport struct {
 	// Skipped says why it did not run (disabled, bm25_routing, no_query, ...)
 	// or why its order was not used (low_confidence). Empty when applied.
 	Skipped string `json:"skipped,omitempty"`
+	// Capped is true when the server's candidate cap
+	// (DAKERA_RERANK_MAX_CANDIDATES) left part of the pool unscored, or
+	// lowered RecallRequest.RerankCandidates to it (server v0.12.3+,
+	// Dakera-AI/dakera#926). The rest stayed below the scored candidates in
+	// retrieval order.
+	Capped bool `json:"capped,omitempty"`
 }
 
 // UnmarshalJSON accepts the v0.12 pre-release name "rerank" for
@@ -1954,13 +2099,44 @@ type AutoPilotConfig struct {
 	DedupThreshold             float32 `json:"dedup_threshold"`
 	DedupIntervalHours         uint64  `json:"dedup_interval_hours"`
 	ConsolidationIntervalHours uint64  `json:"consolidation_interval_hours"`
+	// DedupMode is what deduplication does: DedupModeOff (the default),
+	// DedupModeReport or DedupModeMerge (server v0.12.3+,
+	// Dakera-AI/dakera#930). Empty on older servers.
+	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// DedupCrossSession says whether deduplication may fold memories of
+	// different sessions (server v0.12.3+).
+	DedupCrossSession bool `json:"dedup_cross_session"`
+	// ConsolidateCrossSession says whether consolidation may merge memories
+	// of different sessions (server v0.12.3+).
+	ConsolidateCrossSession bool `json:"consolidate_cross_session"`
+	// TrashRetentionHours is how long a memory deleted by deduplication or
+	// consolidation stays restorable (ListDeduplicated,
+	// RestoreDeduplicated); 0 = not kept (server v0.12.3+).
+	TrashRetentionHours uint64 `json:"trash_retention_hours"`
 }
+
+// DedupMode is what AutoPilot deduplication does (server v0.12.3+).
+type DedupMode string
+
+const (
+	// DedupModeOff runs no deduplication (the server default).
+	DedupModeOff DedupMode = "off"
+	// DedupModeReport finds duplicates and removes none
+	// (DedupResultSnapshot.DuplicatesFound).
+	DedupModeReport DedupMode = "report"
+	// DedupModeMerge folds each duplicate into the memory it duplicates; the
+	// deleted one stays restorable for TrashRetentionHours.
+	DedupModeMerge DedupMode = "merge"
+)
 
 // DedupResultSnapshot is the result from a deduplication cycle.
 type DedupResultSnapshot struct {
 	NamespacesProcessed int `json:"namespaces_processed"`
 	MemoriesScanned     int `json:"memories_scanned"`
 	DuplicatesRemoved   int `json:"duplicates_removed"`
+	// DuplicatesFound is how many duplicates the pass found; in
+	// DedupModeReport none is removed (server v0.12.3+; 0 before).
+	DuplicatesFound int `json:"duplicates_found"`
 }
 
 // ConsolidationResultSnapshot is the result from a consolidation cycle.
@@ -1989,6 +2165,18 @@ type AutoPilotConfigRequest struct {
 	DedupThreshold             *float32 `json:"dedup_threshold,omitempty"`
 	DedupIntervalHours         *uint64  `json:"dedup_interval_hours,omitempty"`
 	ConsolidationIntervalHours *uint64  `json:"consolidation_interval_hours,omitempty"`
+	// DedupMode sets what deduplication does (server v0.12.3+). Empty keeps
+	// the current mode.
+	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// DedupCrossSession lets deduplication fold memories of different
+	// sessions (server v0.12.3+).
+	DedupCrossSession *bool `json:"dedup_cross_session,omitempty"`
+	// ConsolidateCrossSession lets consolidation merge memories of different
+	// sessions (server v0.12.3+).
+	ConsolidateCrossSession *bool `json:"consolidate_cross_session,omitempty"`
+	// TrashRetentionHours is how long a deleted duplicate stays restorable,
+	// 0..8760 (0 = not kept; server v0.12.3+).
+	TrashRetentionHours *uint64 `json:"trash_retention_hours,omitempty"`
 }
 
 // AutoPilotConfigResponse is returned by PUT /v1/admin/autopilot/config (PILOT-2).
@@ -2003,6 +2191,12 @@ type AutoPilotDedupResult struct {
 	NamespacesProcessed int `json:"namespaces_processed"`
 	MemoriesScanned     int `json:"memories_scanned"`
 	DuplicatesRemoved   int `json:"duplicates_removed"`
+	// DuplicatesFound is how many duplicates the pass found (server
+	// v0.12.3+; in DedupModeReport none is removed).
+	DuplicatesFound int `json:"duplicates_found"`
+	// Mode is the mode the pass ran in, DedupModeReport or DedupModeMerge
+	// (server v0.12.3+; empty before).
+	Mode DedupMode `json:"mode,omitempty"`
 }
 
 // AutoPilotConsolidationResult is the consolidation result from a manual trigger.
@@ -2410,6 +2604,10 @@ type BatchRecallResponse struct {
 	Filtered int `json:"filtered"`
 	// Truncated is true when the result set was capped by Limit and more matching memories exist.
 	Truncated bool `json:"truncated"`
+	// Warnings lists the request fields the server ignored, filter fields
+	// included (server v0.12.3+, Dakera-AI/dakera#938). nil when it knew
+	// every field.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // BatchForgetRequest is the request body for DELETE /v1/memories/forget/batch.
@@ -2454,6 +2652,9 @@ type BatchStoreMemoryItem struct {
 	// AttachmentRef references an attachment ("sha256:<hex>") uploaded to this
 	// agent's memory namespace (server v0.12+, DAKERA_ATTACHMENTS).
 	AttachmentRef string `json:"attachment_ref,omitempty"`
+	// EventTime is when the memory's event happened (server v0.12.3+); see
+	// StoreMemoryRequest.EventTime. nil omits it.
+	EventTime *EventTime `json:"event_time,omitempty"`
 }
 
 // BatchStoreMemoryRequest is the request body for POST /v1/memories/store/batch (DAK-5508).
@@ -2493,6 +2694,63 @@ type BatchStoreMemoryResponse struct {
 	// (server v0.12.2+; the memories were stored all the same). Empty when
 	// none, and on older servers.
 	EndedSessions []string `json:"ended_sessions,omitempty"`
+	// Truncated lists the stored memories whose text is longer than the
+	// embedding model reads, each with its EmbedTruncation (server v0.12.3+,
+	// Dakera-AI/dakera#933). nil when there are none, and on older servers.
+	Truncated []TruncatedMemory `json:"truncated,omitempty"`
+	// Warnings lists the request fields the server ignored, item fields as
+	// "memories[].<name>" (server v0.12.3+, Dakera-AI/dakera#938). nil when
+	// it knew every field.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// TruncatedMemory is a memory of a batch store whose text the embedding
+// model cut (BatchStoreMemoryResponse.Truncated).
+type TruncatedMemory struct {
+	// ID is the memory's id.
+	ID string `json:"id"`
+	EmbedTruncation
+}
+
+// ---------------------------------------------------------------------------
+// Deduplicated memories (server v0.12.3+, Dakera-AI/dakera#930)
+// ---------------------------------------------------------------------------
+
+// Kinds of DeduplicatedMemory.Kind: which pass deleted the memory.
+const (
+	// DeduplicatedKindDeduplication: folded into a duplicate of it
+	// (SurvivorID) by deduplication.
+	DeduplicatedKindDeduplication = "deduplication"
+	// DeduplicatedKindConsolidation: merged with others into a new memory
+	// (SurvivorID) by consolidation.
+	DeduplicatedKindConsolidation = "consolidation"
+)
+
+// DeduplicatedMemory is a memory that deduplication or consolidation deleted
+// and that can still be restored (ListDeduplicated).
+type DeduplicatedMemory struct {
+	// ID is the deleted memory's id; RestoreDeduplicated puts it back under
+	// this id.
+	ID string `json:"id"`
+	// Kind is DeduplicatedKindDeduplication or DeduplicatedKindConsolidation.
+	Kind string `json:"kind"`
+	// SurvivorID is the memory it was folded or merged into.
+	SurvivorID string `json:"survivor_id"`
+	// SessionID is its session ("" when none).
+	SessionID string `json:"session_id,omitempty"`
+	// DeletedAt is when it was deleted (Unix seconds).
+	DeletedAt int64 `json:"deleted_at"`
+	// RestorableUntil is until when it can be restored (Unix seconds); the
+	// server purges it after.
+	RestorableUntil int64 `json:"restorable_until"`
+}
+
+// DeduplicatedListResponse is the answer of GET /v1/memory/deduplicated.
+type DeduplicatedListResponse struct {
+	AgentID string `json:"agent_id"`
+	// Memories are the restorable memories, newest first.
+	Memories []DeduplicatedMemory `json:"memories"`
+	Count    int                  `json:"count"`
 }
 
 // ---------------------------------------------------------------------------
@@ -3106,8 +3364,11 @@ type MemoryExportResponse struct {
 // AuditEvent is a single business-event entry from the audit log (OBS-1).
 //
 // The server's rows are {id (integer), event_type, agent_id, memory_id,
-// session_id, importance, timestamp (Unix milliseconds)}. ID carries the
-// integer as text; a string id decodes too.
+// session_id, importance, timestamp (Unix milliseconds), reason}. ID carries
+// the integer as text; a string id decodes too. EventType is, for example,
+// stored, recalled, forgotten, consolidated, importance_updated,
+// session_started, session_ended and (server v0.12.3+) deduplicated and
+// restored. Namespace and Details are never sent by current servers.
 type AuditEvent struct {
 	ID         string                 `json:"id"`
 	EventType  string                 `json:"event_type"`
@@ -3118,6 +3379,11 @@ type AuditEvent struct {
 	Namespace  string                 `json:"namespace,omitempty"`
 	Timestamp  int64                  `json:"timestamp"`
 	Details    map[string]interface{} `json:"details,omitempty"`
+	// Reason is why the event happened, when the server says (server
+	// v0.12.3+, Dakera-AI/dakera#930): "absorbed into <survivor id>" on a
+	// deduplicated memory, "merged into <id>" on a consolidated one. Empty
+	// on older rows.
+	Reason string `json:"reason,omitempty"`
 }
 
 // UnmarshalJSON accepts the server's integer id as well as a string id.
@@ -3162,10 +3428,15 @@ type AuditExportResponse struct {
 type AuditQuery struct {
 	AgentID   string
 	EventType string
-	FromTs    int64
-	ToTs      int64
-	Limit     int
-	Cursor    string
+	// FromTs and ToTs bound the events' timestamps, in Unix milliseconds,
+	// both inclusive (0 = unbounded).
+	FromTs int64
+	ToTs   int64
+	// Limit is the most events returned (server default 100).
+	Limit int
+	// Cursor is sent as the "cursor" query parameter; current servers do not
+	// page the audit log and ignore it.
+	Cursor string
 }
 
 // ===========================================================================
