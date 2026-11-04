@@ -248,7 +248,7 @@ func TestV0123_Recall_AllFieldsAreServerFields(t *testing.T) {
 	_, err := v12Client(server.URL).Recall(context.Background(), "go-wire", RecallRequest{
 		Query: "where did Alice move", TopK: 5, MemoryType: "episodic", MinImportance: f32Ptr(0.1),
 		SessionID: "chat:2023-05-20", Tags: []string{"move"}, ImportanceWeighted: boolPtrRH(true),
-		IncludeAssociated: true, AssociatedMemoriesCap: intPtr(5), AssociatedMemoriesDepth: intPtr(2),
+		IncludeAssociated: boolPtrRH(true), AssociatedMemoriesCap: intPtr(5), AssociatedMemoriesDepth: intPtr(2),
 		AssociatedMemoriesMinWeight: f32Ptr(0.1), Since: &since, Until: &until, Routing: &routing,
 		Rerank: boolPtrRH(true), RerankCandidates: intPtr(50), Fusion: &fusion, VectorWeight: f32Ptr(0.6),
 		Iterations: &iterations, Neighborhood: boolPtrRH(true), NeighborhoodMode: NeighborhoodModeSeparate,

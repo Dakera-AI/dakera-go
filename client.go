@@ -33,7 +33,7 @@ import (
 
 // Version is the dakera-go client version, sent in the User-Agent header so the
 // Dakera engine can attribute Go SDK usage.
-const Version = "0.12.3"
+const Version = "0.12.4"
 
 const defaultTimeout = 30 * time.Second
 
@@ -315,8 +315,15 @@ func (c *Client) Query(ctx context.Context, namespace string, vector []float32, 
 		if opts.Filter != nil {
 			body["filter"] = opts.Filter
 		}
-		body["include_values"] = opts.IncludeValues
+		// The server's field is include_vectors; include_values was ignored.
+		body["include_vectors"] = opts.IncludeValues
 		body["include_metadata"] = opts.IncludeMetadata
+		if opts.Consistency != "" {
+			body["consistency"] = opts.Consistency
+		}
+		if opts.StalenessConfig != nil {
+			body["staleness_config"] = opts.StalenessConfig
+		}
 	} else {
 		body["top_k"] = 10
 		body["include_metadata"] = true
@@ -424,8 +431,14 @@ func (c *Client) BatchQuery(ctx context.Context, namespace string, queries []Bat
 		if q.Filter != nil {
 			reqQuery["filter"] = q.Filter
 		}
-		reqQuery["include_values"] = q.IncludeValues
+		reqQuery["include_vectors"] = q.IncludeValues
 		reqQuery["include_metadata"] = q.IncludeMetadata
+		if q.Consistency != "" {
+			reqQuery["consistency"] = q.Consistency
+		}
+		if q.StalenessConfig != nil {
+			reqQuery["staleness_config"] = q.StalenessConfig
+		}
 		reqQueries[i] = reqQuery
 	}
 
@@ -964,9 +977,11 @@ func (c *Client) StoreMemory(ctx context.Context, agentID string, req StoreMemor
 
 // Recall recalls memories for an agent.
 //
-// Set req.IncludeAssociated = true to enable COG-2 associative recall —
-// the response will include AssociatedMemories surfaced via KG depth-1
-// traversal from the primary results.
+// The response includes AssociatedMemories, the knowledge-graph neighbours of
+// the results, by default since server v0.12.4 (set req.IncludeAssociated to a
+// pointer to false to turn them off, or to true on older servers). Since
+// v0.12.4 it may also carry the agent's standing Instructions and, when part
+// of the recall could not be served, Degraded.
 //
 // Under the server's default neighbourhood mode (inline) Memories may hold
 // more than TopK items: the ranked results followed by neighbourhood context
@@ -1032,6 +1047,32 @@ func (c *Client) GetMemory(ctx context.Context, agentID, memoryID string) (*Memo
 	}
 
 	var result Memory
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetMemoryWithProjection is GetMemory with the memory's projected strength:
+// its importance today and for each of the next days (1-365) if nothing
+// touches it, under its namespace's decay policy —
+// GET /v1/memory/get/{id}?projection_days=N (server v0.12.4+; an older server
+// answers the memory without a projection, so StrengthProjection is nil).
+// agentID may be empty as for GetMemory.
+func (c *Client) GetMemoryWithProjection(ctx context.Context, agentID, memoryID string, days int) (*MemoryWithProjection, error) {
+	if days < 1 || days > 365 {
+		return nil, NewValidationError("GetMemoryWithProjection: days must be between 1 and 365", 0, nil, ErrorCodeInvalidRequest)
+	}
+	params := url.Values{}
+	if agentID != "" {
+		params.Set("agent_id", agentID)
+	}
+	params.Set("projection_days", strconv.Itoa(days))
+	respBody, err := c.request(ctx, "GET", "/v1/memory/get/"+url.PathEscape(memoryID)+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result MemoryWithProjection
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -1114,6 +1155,53 @@ func (c *Client) RestoreDeduplicated(ctx context.Context, agentID, memoryID stri
 func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
 	_, err := c.request(ctx, "POST", "/v1/memory/forget", map[string]interface{}{"agent_id": agentID, "memory_ids": []string{memoryID}})
 	return err
+}
+
+// ForgetMemories forgets the memories req selects — POST /v1/memory/forget.
+//
+// Besides ids and filters, server v0.12.4+ forgets by meaning: req.About (a
+// description of what was said) or req.Request (a user's request to forget,
+// as said, in any language; ForgetMemoriesResponse.Intent says how it was
+// read). req.DryRun reports the ids without forgetting, and req.Restorable
+// keeps restorable copies (ListDeduplicated, RestoreDeduplicated). About and
+// Request together are a *ValidationError, refused before any request is
+// sent. When the model either needs is unavailable the server answers 503
+// (*ServerError).
+func (c *Client) ForgetMemories(ctx context.Context, req ForgetMemoriesRequest) (*ForgetMemoriesResponse, error) {
+	if req.About != "" && req.Request != "" {
+		return nil, NewValidationError("ForgetMemoriesRequest: set About or Request, not both", 0, nil, ErrorCodeInvalidRequest)
+	}
+	respBody, err := c.request(ctx, "POST", "/v1/memory/forget", req)
+	if err != nil {
+		return nil, err
+	}
+	var result ForgetMemoriesResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse forget response: %w", err)
+	}
+	return &result, nil
+}
+
+// DetectForgetRequests says whether each message asks to forget something
+// said, in any language — POST /v1/memory/forget/detect (server v0.12.4+;
+// read scope). It reads no memory: send a user's messages here and forget
+// the ones that are requests with ForgetMemories and
+// ForgetMemoriesRequest.Request. The server takes 1-64 messages of at most
+// 8,000 characters each (*ValidationError otherwise); an older server answers
+// *NotFoundError.
+func (c *Client) DetectForgetRequests(ctx context.Context, texts []string) (*ForgetDetectResponse, error) {
+	if len(texts) == 0 {
+		return nil, NewValidationError("DetectForgetRequests: texts must hold at least one message", 0, nil, ErrorCodeInvalidRequest)
+	}
+	respBody, err := c.request(ctx, "POST", "/v1/memory/forget/detect", map[string]interface{}{"texts": texts})
+	if err != nil {
+		return nil, err
+	}
+	var result ForgetDetectResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse forget detection response: %w", err)
+	}
+	return &result, nil
 }
 
 // BatchRecall bulk-recalls memories using filter predicates (CE-2).
@@ -1256,7 +1344,15 @@ func (c *Client) UpdateImportance(ctx context.Context, agentID string, req Updat
 }
 
 // Consolidate consolidates memories for an agent.
+//
+// See ConsolidateRequest for how the server chooses the memories; the server
+// merges them and deletes the sources (they stay restorable with
+// RestoreDeduplicated). It has no dry run: a request with DryRun set is a
+// *ValidationError and nothing is sent.
 func (c *Client) Consolidate(ctx context.Context, agentID string, req ConsolidateRequest) (*ConsolidateResponse, error) {
+	if req.DryRun {
+		return nil, NewValidationError("ConsolidateRequest.DryRun: POST /v1/memory/consolidate has no dry run and always merges", 0, nil, ErrorCodeInvalidRequest)
+	}
 	req.AgentID = agentID
 	respBody, err := c.request(ctx, "POST", "/v1/memory/consolidate", req)
 	if err != nil {
@@ -1375,8 +1471,21 @@ func (c *Client) FeedbackMemory(ctx context.Context, memoryID string, agentID st
 }
 
 // GetMemoryFeedbackHistory returns the full feedback history for a memory (INT-1).
+//
+// Deprecated: the server requires the agent id and answers this call with a
+// *ValidationError; use GetMemoryFeedbackHistoryForAgent.
 func (c *Client) GetMemoryFeedbackHistory(ctx context.Context, memoryID string) (*FeedbackHistoryResponse, error) {
-	respBody, err := c.request(ctx, "GET", fmt.Sprintf("/v1/memories/%s/feedback", url.PathEscape(memoryID)), nil)
+	return c.GetMemoryFeedbackHistoryForAgent(ctx, "", memoryID)
+}
+
+// GetMemoryFeedbackHistoryForAgent returns the full feedback history of
+// memory memoryID of agent agentID — GET /v1/memories/{id}/feedback?agent_id=.
+func (c *Client) GetMemoryFeedbackHistoryForAgent(ctx context.Context, agentID, memoryID string) (*FeedbackHistoryResponse, error) {
+	path := fmt.Sprintf("/v1/memories/%s/feedback", url.PathEscape(memoryID))
+	if agentID != "" {
+		path += "?agent_id=" + url.QueryEscape(agentID)
+	}
+	respBody, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1391,8 +1500,16 @@ func (c *Client) GetMemoryFeedbackHistory(ctx context.Context, memoryID string) 
 //
 // It fetches the memory's full feedback history and reduces it to a TifScore
 // with Truth/Indeterminacy/Falsity proportions and a Classification label.
+//
+// Deprecated: the server requires the agent id for the feedback history; use
+// EvaluateTifForAgent.
 func (c *Client) EvaluateTif(ctx context.Context, memoryID string) (TifScore, error) {
-	history, err := c.GetMemoryFeedbackHistory(ctx, memoryID)
+	return c.EvaluateTifForAgent(ctx, "", memoryID)
+}
+
+// EvaluateTifForAgent is EvaluateTif for memory memoryID of agent agentID.
+func (c *Client) EvaluateTifForAgent(ctx context.Context, agentID, memoryID string) (TifScore, error) {
+	history, err := c.GetMemoryFeedbackHistoryForAgent(ctx, agentID, memoryID)
 	if err != nil {
 		return TifScore{}, err
 	}
@@ -1627,8 +1744,19 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*Se
 // returns its persisted state (EndedReason "idle"); an unknown session, or one
 // of an agent the key cannot reach, returns the same idempotent 200 with an
 // empty AgentID and nothing written.
+//
+// Since server v0.12.4 SessionEndResponse.SummaryPending is set when the
+// session's summary memory could not be stored yet (the server stores it
+// later). Use EndSessionWithOptions to send a summary or AutoSummarize.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*SessionEndResponse, error) {
-	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", url.PathEscape(sessionID)), map[string]interface{}{})
+	return c.EndSessionWithOptions(ctx, sessionID, EndSessionRequest{})
+}
+
+// EndSessionWithOptions ends a session with an optional summary and
+// AutoSummarize choice (honoured since server v0.12.4) —
+// POST /v1/sessions/{id}/end.
+func (c *Client) EndSessionWithOptions(ctx context.Context, sessionID string, req EndSessionRequest) (*SessionEndResponse, error) {
+	respBody, err := c.request(ctx, "POST", fmt.Sprintf("/v1/sessions/%s/end", url.PathEscape(sessionID)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -1976,7 +2104,14 @@ func (c *Client) FullKnowledgeGraph(ctx context.Context, req FullKnowledgeGraphR
 }
 
 // Summarize summarizes memories.
+//
+// The server stores the summary memory (SummarizeResponse.SummaryMemory). It
+// has no dry run: a request with DryRun set is a *ValidationError and nothing
+// is sent.
 func (c *Client) Summarize(ctx context.Context, req SummarizeRequest) (*SummarizeResponse, error) {
+	if req.DryRun {
+		return nil, NewValidationError("SummarizeRequest.DryRun: POST /v1/knowledge/summarize has no dry run and always stores the summary", 0, nil, ErrorCodeInvalidRequest)
+	}
 	data, err := c.request(ctx, "POST", "/v1/knowledge/summarize", req)
 	if err != nil {
 		return nil, err
@@ -2756,6 +2891,12 @@ func (c *Client) GetKey(ctx context.Context, keyID string) (*ApiKey, error) {
 }
 
 // DeleteKey deletes an API key.
+//
+// Since server v0.12.4 a revocation applies on every node at once and is
+// answered as stored: nil for 200 (stored) and for 202 (logged; the server
+// retries until stored, after a restart too); a *ConflictError when a later
+// change of the key took over first; a *ServerError (503) when it could not
+// even be logged, after the client's retries.
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 	_, err := c.request(ctx, "DELETE", fmt.Sprintf("/admin/keys/%s", url.PathEscape(keyID)), nil)
 	return err
@@ -3104,8 +3245,13 @@ func (c *Client) ListNamespaceKeys(ctx context.Context, namespace string) (*List
 
 // DeleteNamespaceKey revokes a namespace-scoped API key (SEC-1).
 // DELETE /v1/namespaces/{namespace}/keys/{keyID}
+//
+// Since server v0.12.4 the revocation is answered as stored:
+// KeySuccessResponse.Pending is true for a 202 (applied on every node, logged
+// and retried until stored, after a restart too); a later change of the key
+// that took over first is a *ConflictError.
 func (c *Client) DeleteNamespaceKey(ctx context.Context, namespace string, keyID string) (*KeySuccessResponse, error) {
-	data, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s/keys/%s", url.PathEscape(namespace), url.PathEscape(keyID)), nil)
+	data, status, err := c.requestStatus(ctx, "DELETE", fmt.Sprintf("/v1/namespaces/%s/keys/%s", url.PathEscape(namespace), url.PathEscape(keyID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3113,6 +3259,7 @@ func (c *Client) DeleteNamespaceKey(ctx context.Context, namespace string, keyID
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal delete namespace key response: %w", err)
 	}
+	result.Pending = status == 202
 	return &result, nil
 }
 
@@ -3126,58 +3273,6 @@ func (c *Client) NamespaceKeyUsage(ctx context.Context, namespace string, keyID 
 	var result NamespaceKeyUsageResponse
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal namespace key usage response: %w", err)
-	}
-	return &result, nil
-}
-
-// ImportMemories imports memories from an external format (DX-1).
-// POST /v1/import
-// format: "mem0", "zep", "jsonl", or "csv". agentID and namespace are optional.
-func (c *Client) ImportMemories(ctx context.Context, data interface{}, format string, agentID string, namespace string) (*MemoryImportResponse, error) {
-	body := map[string]interface{}{
-		"data":   data,
-		"format": format,
-	}
-	if agentID != "" {
-		body["agent_id"] = agentID
-	}
-	if namespace != "" {
-		body["namespace"] = namespace
-	}
-	resp, err := c.request(ctx, "POST", "/v1/import", body)
-	if err != nil {
-		return nil, err
-	}
-	var result MemoryImportResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal import memories response: %w", err)
-	}
-	return &result, nil
-}
-
-// ExportMemories exports memories in a portable format (DX-1).
-// GET /v1/export
-// format: "mem0", "zep", "jsonl", or "csv". agentID, namespace, and limit are optional (zero/empty = omitted).
-func (c *Client) ExportMemories(ctx context.Context, format string, agentID string, namespace string, limit int) (*MemoryExportResponse, error) {
-	params := url.Values{}
-	params.Set("format", format)
-	if agentID != "" {
-		params.Set("agent_id", agentID)
-	}
-	if namespace != "" {
-		params.Set("namespace", namespace)
-	}
-	if limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", limit))
-	}
-	path := "/v1/export?" + params.Encode()
-	resp, err := c.request(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var result MemoryExportResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal export memories response: %w", err)
 	}
 	return &result, nil
 }
@@ -3219,6 +3314,10 @@ func (c *Client) ListAuditEvents(ctx context.Context, query AuditQuery) (*AuditL
 	if result.Total == 0 {
 		result.Total = result.Count
 	}
+	if result.NextCursor == "" {
+		result.NextCursor = result.Cursor
+	}
+	result.Cursor = result.NextCursor
 	return &result, nil
 }
 
@@ -3535,9 +3634,11 @@ func (c *Client) AdminFulltextReindex(ctx context.Context, namespace string) (*F
 //
 // Sends GET /v1/namespaces/{namespace}/memory_policy.
 //
-// When no explicit policy has been configured the server returns the COG-1
-// defaults: working=4 h, episodic=30 d, semantic=365 d, procedural=730 d;
-// exponential/power_law/logarithmic/flat decay curves; SR factor 1.0.
+// Since server v0.12.4 the answer says what applies, with Stored: without a
+// stored policy it is what the namespace's memories get (no TTL by type, the
+// server's decay curve for every type, nothing else on), not the policy
+// defaults. Older servers answered the defaults (4 h / 30 d / 365 d / 730 d
+// TTLs by type) although none applied.
 func (c *Client) GetMemoryPolicy(ctx context.Context, namespace string) (*MemoryPolicy, error) {
 	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/namespaces/%s/memory_policy", url.PathEscape(namespace)), nil)
 	if err != nil {
@@ -3557,7 +3658,12 @@ func (c *Client) GetMemoryPolicy(ctx context.Context, namespace string) (*Memory
 // The policy is persisted in namespace config and applied immediately to the
 // decay engine background task.  Only populate the fields you want to
 // override — all have safe server-side defaults.
+//
+// A TTL left nil means no TTL for that type (server v0.12.4+; older servers
+// applied their default TTLs). Stored is never sent (the server refuses
+// unknown fields).
 func (c *Client) SetMemoryPolicy(ctx context.Context, namespace string, policy MemoryPolicy) (*MemoryPolicy, error) {
+	policy.Stored = nil
 	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/namespaces/%s/memory_policy", url.PathEscape(namespace)), policy)
 	if err != nil {
 		return nil, err
@@ -3682,8 +3788,12 @@ func (c *Client) AdminGetDefaultQuota(ctx context.Context) (*DefaultQuotaRespons
 }
 
 // AdminSetDefaultQuota sets the default quota configuration.
+//
+// Since server v0.12.4 SetQuotaResponse.Pending says the change applies but
+// is not stored yet (202); a later change that took over first is a
+// *ConflictError.
 func (c *Client) AdminSetDefaultQuota(ctx context.Context, req SetDefaultQuotaRequest) (*SetQuotaResponse, error) {
-	resp, err := c.request(ctx, "PUT", "/v1/admin/quotas/default", req)
+	resp, status, err := c.requestStatus(ctx, "PUT", "/v1/admin/quotas/default", req)
 	if err != nil {
 		return nil, err
 	}
@@ -3691,6 +3801,7 @@ func (c *Client) AdminSetDefaultQuota(ctx context.Context, req SetDefaultQuotaRe
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal set quota response: %w", err)
 	}
+	result.Pending = status == 202
 	return &result, nil
 }
 
@@ -3708,8 +3819,12 @@ func (c *Client) AdminGetQuota(ctx context.Context, namespace string) (*QuotaSta
 }
 
 // AdminSetQuota sets the quota for a specific namespace.
+//
+// Since server v0.12.4 SetQuotaResponse.Pending says the change applies but
+// is not stored yet (202); a later change that took over first is a
+// *ConflictError.
 func (c *Client) AdminSetQuota(ctx context.Context, namespace string, req SetQuotaRequest) (*SetQuotaResponse, error) {
-	resp, err := c.request(ctx, "PUT", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), req)
+	resp, status, err := c.requestStatus(ctx, "PUT", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -3717,10 +3832,15 @@ func (c *Client) AdminSetQuota(ctx context.Context, namespace string, req SetQuo
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal set quota response: %w", err)
 	}
+	result.Pending = status == 202
 	return &result, nil
 }
 
 // AdminDeleteQuota removes the quota for a specific namespace.
+//
+// Since server v0.12.4 the removal applies on every node at once: a 202 answer
+// (success true) means it is not stored yet and the server retries; a later
+// change that took over first is a *ConflictError.
 func (c *Client) AdminDeleteQuota(ctx context.Context, namespace string) (map[string]interface{}, error) {
 	resp, err := c.request(ctx, "DELETE", fmt.Sprintf("/v1/admin/quotas/%s", url.PathEscape(namespace)), nil)
 	if err != nil {
@@ -4080,23 +4200,6 @@ func (c *Client) RouteQuery(ctx context.Context, req RouteRequest) (*RouteRespon
 	var result RouteResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal route response: %w", err)
-	}
-	return &result, nil
-}
-
-// ===========================================================================
-// Import Operations
-// ===========================================================================
-
-// ImportJobStatus returns the status of an import job.
-func (c *Client) ImportJobStatus(ctx context.Context, jobID string) (*ImportJobStatus, error) {
-	resp, err := c.request(ctx, "GET", fmt.Sprintf("/v1/import/%s/status", url.PathEscape(jobID)), nil)
-	if err != nil {
-		return nil, err
-	}
-	var result ImportJobStatus
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal import job status: %w", err)
 	}
 	return &result, nil
 }

@@ -155,6 +155,7 @@ func main() {
 
 	summary, err := client.Summarize(ctx, dakera.SummarizeRequest{
 		AgentID:    agentID,
+		MemoryIDs:  []string{mem1.Memory.ID, mem2.Memory.ID},
 		TargetType: "semantic",
 	})
 	if err != nil {

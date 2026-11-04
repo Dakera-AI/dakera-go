@@ -348,6 +348,24 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	return resp.Body, nil
 }
 
+// requestStatus is request that also returns the 2xx status (200, or 202
+// for a change the server applied but has not stored yet).
+func (c *Client) requestStatus(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
+	var payload []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		payload = encoded
+	}
+	resp, err := c.send(ctx, method, path, "application/json", payload, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	return resp.Body, resp.Status, nil
+}
+
 // requestRaw sends an HTTP request with a raw byte body and a custom content type.
 // It reuses the same retry and error-handling logic as request but skips JSON marshaling.
 func (c *Client) requestRaw(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {

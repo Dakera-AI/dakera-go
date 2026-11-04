@@ -137,6 +137,71 @@ defer cancel()
 resp, err := client.Recall(ctx, "my-agent", dakera.RecallRequest{Query: "preferences", TopK: 3})
 ```
 
+## What's new in v0.12.4
+
+SDK v0.12.4 targets **Dakera server v0.12.4** and stays **compatible with v0.12.0 – v0.12.3
+servers**: new request fields are omitted unless you set them and new response fields are optional
+(zero on an older server).
+
+### Forget by meaning
+
+`ForgetMemories` takes every field of `POST /v1/memory/forget`. Besides ids and filters, a v0.12.4
+server forgets by description (`About`: what was said) or by a user's request to forget, as said, in
+any language (`Request`; `Intent` says how the server read it). `DryRun` reports the ids without
+forgetting and `Restorable` keeps restorable copies (`ListDeduplicated` lists them with their
+`Content`, `RestoreDeduplicated` puts one back):
+
+```go
+resp, err := client.ForgetMemories(ctx, dakera.ForgetMemoriesRequest{
+    AgentID: "my-agent",
+    Request: "Oublie ce que je t'ai dit sur mon travail",
+    DryRun:  true,
+})
+// resp.Intent.IsRequest, resp.ForgottenIDs
+```
+
+`DetectForgetRequests(ctx, texts)` checks up to 64 messages without reading any memory, and a store
+whose text reads as a request to forget says so in `StoreMemoryResponse.ForgetRequest`
+(`BatchStoreMemoryResponse.ForgetRequests` for a batch). Without the model it needs, the server
+answers `503` (`*ServerError`).
+
+### Recall
+
+- The server defaults changed: `ImportanceWeighted` is `false` and `IncludeAssociated` is `true`
+  unless you set them. The SDK sends neither unless set; `IncludeAssociated` is now a `*bool`, so
+  pass a pointer to `false` to turn associated memories off.
+- `RerankHead` (default 10, `0` = the reranked list alone) shapes a reranked recall with a `TopK`
+  above it.
+- `RecallResponse.Instructions` holds the agent's standing instructions that fit the query (memories
+  tagged `dakera.InstructionTag`), and `Degraded` names any part of the recall the server could not
+  serve.
+
+### Also new
+
+- `EndSessionWithOptions` sends `AutoSummarize` (honoured since v0.12.4) and a summary;
+  `SessionEndResponse.SummaryPending` says when the summary memory is stored later.
+- `ListAuditEvents` pages by cursor: pass `AuditListResponse.NextCursor` as `AuditQuery.Cursor`.
+- `GetMemoryWithProjection(ctx, agentID, id, days)` adds the memory's projected importance per day.
+- `ImportMemoryFile` uploads an export file the way the server reads it (multipart) and can import
+  asynchronously (`Async`, then `WaitForImportJob`); `ExportMemoryFile` returns the exported file.
+  `ImportMemories` / `ExportMemories` now speak the server's format too.
+- `QueryOptions.Consistency` / `BatchQuerySpec.Consistency` (`strong`, `bounded_staleness`) act on a
+  cluster.
+- New response fields: `NamespaceEntityConfig.Source`, `MemoryPolicy.Stored`, link and edge `Label`,
+  `EntityExtractionResponse.Extractor` / `Warnings`, `DeduplicateResponse.GroupsFailed`,
+  `CrossAgentNetworkResponse.Unavailable`, `CompressResponse.DeprecationSkipped` /
+  `DeprecationError`, `AnalyticsOverview.Period` / `Namespace`, and on the admin side AutoPilot
+  `ConsolidationMode` and `Failures`, `DecayStatsResponse.CyclesFailed`, `TtlCleanupResponse.Failed`,
+  `HealthResponse.Degraded` / `ConfigWarnings`, `DerivationStatus.EntityTagging`.
+- Admin changes are answered as stored: `SetQuotaResponse.Pending` and
+  `KeySuccessResponse.Pending` are `true` for a `202` (applied, stored later by the server); a later
+  change that took over first is a `*ConflictError`.
+- A namespace whose deletion is still being cleaned up answers `503` with `Retry-After`, which the
+  client's retry policy honours.
+
+See the [CHANGELOG](CHANGELOG.md) for every change, including fixes for calls that did not match the
+server.
+
 ## What's new in v0.12.3
 
 SDK v0.12.3 targets **Dakera server v0.12.3** (Dakera-AI/dakera#917, #920, #921, #923, #926, #930,
@@ -295,7 +360,7 @@ client.UpsertText(ctx, "my-namespace", []dakera.TextInput{
 - **Text Auto-Embedding** — server-side embedding generation (no local model needed)
 - **Namespaces** — isolated vector stores per project, tenant, or use case
 - **Feedback Loop** — upvote/downvote/flag memories to improve recall quality
-- **T-I-F Reliability** — `TifScore` struct and `EvaluateTif()` for Truth-Indeterminacy-Falsity scoring of memory reliability
+- **T-I-F Reliability** — `TifScore` struct and `EvaluateTifForAgent()` for Truth-Indeterminacy-Falsity scoring of memory reliability
 - **Entity Extraction** — GLiNER NER for automatic entity detection
 - **SSE Streaming** — Server-sent event subscriptions for real-time memory updates
 - **Typed Filters** — `Eq()`, `Gt()`, `Contains()`, `ArrayContains()` and more

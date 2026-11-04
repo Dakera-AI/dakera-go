@@ -188,11 +188,11 @@ func TestIntegration_V0123_NoWarningsWithEveryOptionalField(t *testing.T) {
 	iterations := uint8(2)
 	cap5, depth, candidates := 5, 2, 50
 	since, until := "2023-01-01T00:00:00Z", "2030-01-01T00:00:00Z"
-	weighted, rerank, neighborhood, summaries := true, true, true, false
+	weighted, associated, rerank, neighborhood, summaries := true, true, true, true, false
 	recall, err := client.Recall(ctx, agent, dakera.RecallRequest{
 		Query: "where did Alice move", TopK: 5, MemoryType: "episodic", MinImportance: floatPtr(0.1),
 		SessionID: session, Tags: []string{"move"}, ImportanceWeighted: &weighted,
-		IncludeAssociated: true, AssociatedMemoriesCap: &cap5, AssociatedMemoriesDepth: &depth,
+		IncludeAssociated: &associated, AssociatedMemoriesCap: &cap5, AssociatedMemoriesDepth: &depth,
 		AssociatedMemoriesMinWeight: floatPtr(0.1), Since: &since, Until: &until, Routing: &routing,
 		Rerank: &rerank, RerankCandidates: &candidates, Fusion: &fusion, VectorWeight: floatPtr(0.6),
 		Iterations: &iterations, Neighborhood: &neighborhood, NeighborhoodMode: dakera.NeighborhoodModeSeparate,

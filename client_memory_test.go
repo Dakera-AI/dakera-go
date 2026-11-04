@@ -3,6 +3,7 @@ package dakera
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -592,39 +593,52 @@ func TestImportMemories(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/v1/import", r.URL.Path)
+		assert.Equal(t, "agent-1", r.URL.Query().Get("agent_id"))
+		assert.Equal(t, "jsonl", r.URL.Query().Get("format"))
+		file, header, err := r.FormFile("file")
+		require.NoError(t, err)
+		assert.Equal(t, "memories.jsonl", header.Filename)
+		body, _ := io.ReadAll(file)
+		assert.Equal(t, `{"content":"memory1"}`+"\n"+`{"content":"memory2"}`, string(body))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"imported_count": 10,
-			"skipped_count":  2,
-			"errors":         []string{},
+			"job_id": "job-1", "status": "done", "format": "jsonl", "total": 12,
+			"imported": 10, "skipped": 2, "errors": []string{"line 3: no content"},
+			"started_at": 1, "finished_at": 2,
 		})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
 	result, err := client.ImportMemories(context.Background(), []map[string]interface{}{
-		{"content": "memory1"},
+		{"content": "memory1"}, {"content": "memory2"},
 	}, "jsonl", "agent-1", "")
 	require.NoError(t, err)
 	assert.Equal(t, 10, result.ImportedCount)
+	assert.Equal(t, 2, result.SkippedCount)
+	assert.Equal(t, []string{"line 3: no content"}, result.Errors)
+	require.NotNil(t, result.Job)
+	assert.Equal(t, ImportStatusDone, result.Job.Status)
 }
 
 func TestExportMemories(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Contains(t, r.URL.Path, "/v1/export")
+		assert.Equal(t, "/v1/export", r.URL.Path)
 		assert.Equal(t, "jsonl", r.URL.Query().Get("format"))
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"data":   []map[string]interface{}{{"id": "mem-1", "content": "hello"}},
-			"format": "jsonl",
-			"count":  1,
-		})
+		assert.Equal(t, "agent-1", r.URL.Query().Get("agent_id"))
+		assert.Empty(t, r.URL.Query().Get("limit"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("X-Dakera-Export-Skipped", "1")
+		_, _ = w.Write([]byte(`{"id":"mem-1","content":"hello"}` + "\n" + `{"id":"mem-2","content":"world"}`))
 	}))
 	defer server.Close()
 	client := NewClient(server.URL)
 	result, err := client.ExportMemories(context.Background(), "jsonl", "agent-1", "", 100)
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Count)
+	assert.Equal(t, 2, result.Count)
+	assert.Equal(t, "mem-2", result.Data[1]["id"])
+	assert.Equal(t, 1, result.Skipped)
+	assert.NotEmpty(t, result.Raw)
 }
 
 // ===========================================================================
