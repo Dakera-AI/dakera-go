@@ -34,7 +34,7 @@ type QueryResult struct {
 }
 
 // UnmarshalJSON fills Values from the server's "vector" field (what the
-// server sends when include_values is set) as well as the legacy "values".
+// server sends when include_vectors is set) as well as the legacy "values".
 func (q *QueryResult) UnmarshalJSON(data []byte) error {
 	type plain QueryResult
 	aux := struct {
@@ -244,6 +244,24 @@ type HealthResponse struct {
 	Version string `json:"version,omitempty"`
 	// BuildSha is the git commit SHA baked into the binary at build time. Present since server v0.11.84.
 	BuildSha string `json:"build_sha,omitempty"`
+	// Degraded lists the components that are not fully working, each with
+	// why (server v0.12+). Since v0.12.4 it includes "pending_writes"
+	// (changes logged and waiting to be stored) among others. nil when none.
+	Degraded []HealthComponent `json:"degraded,omitempty"`
+	// ConfigWarnings is configuration the node started with although it is
+	// not what it should be (server v0.12+; v0.12.4 adds setup advice such as
+	// "sizing" and "storage_in_memory"). Informational: it never makes the
+	// node degraded. nil when none.
+	ConfigWarnings []HealthComponent `json:"config_warnings,omitempty"`
+}
+
+// HealthComponent is an entry of HealthResponse.Degraded or ConfigWarnings.
+type HealthComponent struct {
+	// Component is a stable name (e.g. "reranker", "pending_writes", or a
+	// warning's category).
+	Component string `json:"component"`
+	// Reason says what failed and what the server does instead.
+	Reason string `json:"reason"`
 }
 
 // UpsertResponse represents the response from an upsert operation.
@@ -335,10 +353,41 @@ type StatusResponse struct {
 
 // QueryOptions represents options for vector queries.
 type QueryOptions struct {
-	TopK            int                    `json:"top_k,omitempty"`
-	Filter          map[string]interface{} `json:"filter,omitempty"`
-	IncludeValues   bool                   `json:"include_values,omitempty"`
-	IncludeMetadata bool                   `json:"include_metadata,omitempty"`
+	TopK   int                    `json:"top_k,omitempty"`
+	Filter map[string]interface{} `json:"filter,omitempty"`
+	// IncludeValues returns each result's vector (sent as the server's
+	// include_vectors).
+	IncludeValues   bool `json:"include_values,omitempty"`
+	IncludeMetadata bool `json:"include_metadata,omitempty"`
+	// Consistency is the read consistency level (empty = the server default,
+	// ReadConsistencyEventual). Acted on since server v0.12.4; older servers
+	// accepted and ignored it.
+	Consistency ReadConsistency `json:"consistency,omitempty"`
+	// StalenessConfig bounds ReadConsistencyBoundedStaleness.
+	StalenessConfig *StalenessConfig `json:"staleness_config,omitempty"`
+}
+
+// ReadConsistency is the read consistency level of a vector query (server
+// v0.12.4+ acts on it). On a standalone node every level reads at once.
+type ReadConsistency string
+
+const (
+	// ReadConsistencyEventual reads what this node holds (the default).
+	ReadConsistencyEventual ReadConsistency = "eventual"
+	// ReadConsistencyStrong has every live peer deliver what it still holds
+	// for this node first; a peer that cannot be asked or does not deliver
+	// in time makes the read a *ServerError with status 503.
+	ReadConsistencyStrong ReadConsistency = "strong"
+	// ReadConsistencyBoundedStaleness is as strong, but changes younger
+	// than StalenessConfig.MaxStalenessMs (default 5000) may still be
+	// pending, so it keeps working while a peer is down.
+	ReadConsistencyBoundedStaleness ReadConsistency = "bounded_staleness"
+)
+
+// StalenessConfig bounds ReadConsistencyBoundedStaleness.
+type StalenessConfig struct {
+	// MaxStalenessMs is how old a pending change may be (server default 5000).
+	MaxStalenessMs uint64 `json:"max_staleness_ms"`
 }
 
 // DeleteOptions represents options for delete operations.
@@ -356,11 +405,16 @@ type FetchOptions struct {
 
 // BatchQuerySpec represents a single query in a batch query request.
 type BatchQuerySpec struct {
-	Vector          []float32              `json:"vector"`
-	TopK            int                    `json:"top_k,omitempty"`
-	Filter          map[string]interface{} `json:"filter,omitempty"`
-	IncludeValues   bool                   `json:"include_values,omitempty"`
-	IncludeMetadata bool                   `json:"include_metadata,omitempty"`
+	Vector []float32              `json:"vector"`
+	TopK   int                    `json:"top_k,omitempty"`
+	Filter map[string]interface{} `json:"filter,omitempty"`
+	// IncludeValues returns each result's vector (sent as include_vectors).
+	IncludeValues   bool `json:"include_values,omitempty"`
+	IncludeMetadata bool `json:"include_metadata,omitempty"`
+	// Consistency and StalenessConfig are as on QueryOptions; a batch reads
+	// once, at its strictest query's level (server v0.12.4+).
+	Consistency     ReadConsistency  `json:"consistency,omitempty"`
+	StalenessConfig *StalenessConfig `json:"staleness_config,omitempty"`
 }
 
 // FullTextSearchOptions represents options for full-text search.
@@ -841,6 +895,12 @@ type StoreMemoryResponse struct {
 	// field 'created_at' ignored" (server v0.12.3+, Dakera-AI/dakera#938).
 	// nil when it knew every field, and on older servers.
 	Warnings []string `json:"warnings,omitempty"`
+	// ForgetRequest is set when the stored text reads as a request to
+	// forget something said (server v0.12.4+, DAKERA_FORGET_REQUESTS
+	// "detect", the default): act on it with ForgetMemories, sending the
+	// text as ForgetMemoriesRequest.Request. With "apply" the server forgets
+	// what it means itself, restorably. nil otherwise, and on older servers.
+	ForgetRequest *ForgetIntent `json:"forget_request,omitempty"`
 }
 
 // UnmarshalJSON reads the answer of POST /v1/memory/store, including the
@@ -1110,12 +1170,17 @@ type RecallRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	// Tags restricts the recall to memories carrying these tags.
 	Tags []string `json:"tags,omitempty"`
-	// ImportanceWeighted toggles importance-weighted re-ranking. nil uses the
-	// server default (true).
+	// ImportanceWeighted toggles importance-weighted re-ranking (the flat
+	// relevance / importance weights). nil uses the server default: false
+	// since server v0.12.4 (DAKERA_RECALL_IMPORTANCE_WEIGHTED), so the
+	// query-type weights apply; true before. Sent only when set.
 	ImportanceWeighted *bool `json:"importance_weighted,omitempty"`
-	// COG-2: traverse KG from recalled memories and include
-	// associatively linked memories in the response (default: false)
-	IncludeAssociated bool `json:"include_associated,omitempty"`
+	// IncludeAssociated returns the knowledge-graph neighbours of the
+	// recalled memories in RecallResponse.AssociatedMemories (ranking is
+	// unchanged). nil uses the server default: on since server v0.12.4
+	// (DAKERA_RECALL_INCLUDE_ASSOCIATED), off before. Set it to a pointer to
+	// false to turn associated memories off. Sent only when set.
+	IncludeAssociated *bool `json:"include_associated,omitempty"`
 	// COG-2: max associated memories to return (default: 10, max: 10)
 	AssociatedMemoriesCap *int `json:"associated_memories_cap,omitempty"`
 	// KG-3: traversal depth 1–3 (default: 1); requires IncludeAssociated
@@ -1137,6 +1202,13 @@ type RecallRequest struct {
 	// It must be positive (0 is a 400); a value above the server's cap is
 	// lowered to it and reported as RerankReport.Capped.
 	RerankCandidates *int `json:"rerank_candidates,omitempty"`
+	// RerankHead is the reranked head of a reranked recall whose TopK is
+	// above it (server v0.12.4+): the cross-encoder's first RerankHead
+	// results, then the same recall without the cross-encoder, then the
+	// reranked remainder, each memory once. nil uses the server default
+	// (DAKERA_RERANK_HEAD, 10); a pointer to 0 returns the reranked list
+	// alone. A TopK at or below the head is unchanged. Older servers ignore it.
+	RerankHead *int `json:"rerank_head,omitempty"`
 	// CE-14: fusion strategy for hybrid recall. nil uses server default (FusionStrategyMinMax since v0.11.2).
 	Fusion *FusionStrategy `json:"fusion,omitempty"`
 	// CE-17: explicit vector/BM25 weight for Hybrid routing (0.0–1.0).
@@ -1168,8 +1240,9 @@ type RecallRequest struct {
 }
 
 // RecallResponse is the response from the recall endpoint.
-// Use associated_memories (COG-2 / KG-3) by setting IncludeAssociated on the request.
-// Each associated memory includes a Depth field (KG-3).
+// AssociatedMemories holds the knowledge-graph neighbours of the results
+// (on by default since server v0.12.4; see RecallRequest.IncludeAssociated).
+// Each associated memory includes a Depth field.
 //
 // The first k Memories of a TopK=k recall are the first k of a TopK=10 recall
 // for k <= 10 (server DAKERA_RECALL_RANK_DEPTH, default 10). Under
@@ -1195,7 +1268,30 @@ type RecallResponse struct {
 	// Warnings lists the request fields the server ignored (server v0.12.3+,
 	// Dakera-AI/dakera#938). nil when it knew every field.
 	Warnings []string `json:"warnings,omitempty"`
+	// Instructions are the agent's standing instructions that best fit the
+	// query (server v0.12.4+): at most 3 memories tagged InstructionTag,
+	// best first, each with Retrieval RetrievalInstruction. A recall that
+	// narrows its results (tags, memory type, session, time window or
+	// minimum importance) gets none. nil when there are none, and on older
+	// servers.
+	Instructions []RecalledMemory `json:"instructions,omitempty"`
+	// Degraded names each part of the recall that could not be served
+	// because a read failed, with why (server v0.12.4+), e.g. "graph: ..."
+	// (scored without the knowledge-graph signal) or
+	// "associated_memories: ...". The results are still the best the server
+	// could rank. nil when the recall is complete, and on older servers.
+	Degraded []string `json:"degraded,omitempty"`
 }
+
+// InstructionTag is the tag of a standing instruction: a stored text that
+// sets a rule for later answers ("From now on, answer in French"). The server
+// tags such texts at store time (server v0.12.4+) and returns the best-fitting
+// ones in RecallResponse.Instructions; a client may set the tag itself.
+const InstructionTag = "dakera-instruction"
+
+// RetrievalInstruction is RecalledMemory.Retrieval for an entry of
+// RecallResponse.Instructions (server v0.12.4+).
+const RetrievalInstruction = "instruction"
 
 // RerankReport says what the cross-encoder did for one recall or search.
 type RerankReport struct {
@@ -1316,12 +1412,36 @@ type ConsolidationLogEntry struct {
 }
 
 // ConsolidateRequest represents a request to consolidate memories.
+//
+// With MemoryIDs the server merges those memories. Without them (or with an
+// empty list) it takes the most important memory that has neighbours of the
+// same type and session at cosine >= Threshold (default 0.85) and merges it
+// with up to 4 of them; when none is that similar the answer is a
+// *ValidationError (server v0.12.4+; older servers ignored Threshold and
+// merged the five most important memories of the commonest type).
 type ConsolidateRequest struct {
-	AgentID    string   `json:"agent_id,omitempty"`
-	MemoryType string   `json:"memory_type,omitempty"`
-	Threshold  *float32 `json:"threshold,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
-	// Config selects the DBSCAN clustering algorithm and tunes its parameters (CE-6).
+	AgentID string `json:"agent_id,omitempty"`
+	// MemoryIDs are the memories to merge. Empty: the server chooses (above).
+	MemoryIDs []string `json:"memory_ids,omitempty"`
+	// TargetType is the memory type of the consolidated memory. Empty keeps
+	// the server's choice.
+	TargetType string `json:"target_type,omitempty"`
+	// Threshold is the cosine similarity the automatic selection needs (0-1).
+	Threshold *float32 `json:"threshold,omitempty"`
+	// MemoryType is not read by the server.
+	//
+	// Deprecated: the server ignores it; use MemoryIDs or TargetType.
+	MemoryType string `json:"memory_type,omitempty"`
+	// DryRun is not supported: the server has no dry run and always merges,
+	// so Consolidate refuses a request with DryRun set (*ValidationError)
+	// instead of merging.
+	//
+	// Deprecated: the server has no dry run.
+	DryRun bool `json:"dry_run,omitempty"`
+	// Config is not read by POST /v1/memory/consolidate (use
+	// ConsolidateAgent for DBSCAN consolidation).
+	//
+	// Deprecated: the server ignores it.
 	Config *ConsolidationConfig `json:"config,omitempty"`
 }
 
@@ -1460,6 +1580,24 @@ type SessionStartResponse struct {
 type SessionEndResponse struct {
 	Session     Session `json:"session"`
 	MemoryCount int     `json:"memory_count"`
+	// SummaryPending says why the session's summary memory is not stored
+	// yet and what happens next (server v0.12.4+): the store refused it, and
+	// the server stores it once the store recovers, rebuilt from the
+	// session's memories. The session is ended either way. Empty when the
+	// summary was stored or not asked for, and on older servers.
+	SummaryPending string `json:"summary_pending,omitempty"`
+}
+
+// EndSessionRequest is the optional body of POST /v1/sessions/{id}/end
+// (EndSessionWithOptions).
+type EndSessionRequest struct {
+	// Summary is a summary of the session to record. Empty sends none.
+	Summary string `json:"summary,omitempty"`
+	// AutoSummarize says whether the server stores the session's summary
+	// memory (an extract of its memories). nil: stored when the session has
+	// more than 3 memories; true: when it has any; false: never. Honoured
+	// since server v0.12.4 (older servers ignore it).
+	AutoSummarize *bool `json:"auto_summarize,omitempty"`
 }
 
 // ListSessionsOptions represents options for listing sessions.
@@ -1540,6 +1678,9 @@ func (a *AgentStats) UnmarshalJSON(data []byte) error {
 
 // AgentMemoriesOptions represents options for listing agent memories.
 type AgentMemoriesOptions struct {
+	// MemoryType lists only memories of this type (episodic, semantic,
+	// procedural, working). Servers before v0.12.4 ignored it and listed
+	// every type.
 	MemoryType string `json:"memory_type,omitempty"`
 	Limit      *int   `json:"limit,omitempty"`
 	// Offset is the number of memories to skip.
@@ -1557,6 +1698,8 @@ type AgentMemoriesOptions struct {
 
 // AgentSessionsOptions represents options for listing agent sessions.
 type AgentSessionsOptions struct {
+	// ActiveOnly lists only sessions not yet ended. Servers before v0.12.4
+	// ignored it and listed every session.
 	ActiveOnly *bool `json:"active_only,omitempty"`
 	Limit      *int  `json:"limit,omitempty"`
 }
@@ -1702,17 +1845,50 @@ type FullKnowledgeGraphRequest struct {
 
 // SummarizeRequest represents a request to summarize memories.
 type SummarizeRequest struct {
-	AgentID    string   `json:"agent_id"`
-	MemoryIDs  []string `json:"memory_ids,omitempty"`
+	AgentID string `json:"agent_id"`
+	// MemoryIDs are the memories to summarize (the server requires them).
+	MemoryIDs  []string `json:"memory_ids"`
 	TargetType string   `json:"target_type,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
+	// DryRun is not supported: the server has no dry run and always stores
+	// the summary, so Summarize refuses a request with DryRun set
+	// (*ValidationError) instead of storing one.
+	//
+	// Deprecated: the server has no dry run.
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // SummarizeResponse represents the response from summarization.
+//
+// The server answers {summary_memory, source_count}; Summary and NewMemoryID
+// are filled from SummaryMemory.
 type SummarizeResponse struct {
-	Summary     string `json:"summary"`
-	SourceCount int    `json:"source_count"`
+	// SummaryMemory is the summary memory the server stored.
+	SummaryMemory *Memory `json:"summary_memory,omitempty"`
+	SourceCount   int     `json:"source_count"`
+	// Summary is SummaryMemory.Content.
+	Summary string `json:"summary"`
+	// NewMemoryID is SummaryMemory.ID.
 	NewMemoryID string `json:"new_memory_id,omitempty"`
+}
+
+// UnmarshalJSON reads the server's {summary_memory, source_count} answer and
+// fills Summary and NewMemoryID from the memory.
+func (r *SummarizeResponse) UnmarshalJSON(data []byte) error {
+	type plain SummarizeResponse
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*r = SummarizeResponse(p)
+	if r.SummaryMemory != nil {
+		if r.Summary == "" {
+			r.Summary = r.SummaryMemory.Content
+		}
+		if r.NewMemoryID == "" {
+			r.NewMemoryID = r.SummaryMemory.ID
+		}
+	}
+	return nil
 }
 
 // DeduplicateRequest represents a request to deduplicate memories.
@@ -1750,6 +1926,17 @@ type DeduplicateResponse struct {
 	// between the scan and the write (server v0.12.2+; 0 on a dry run and on
 	// older servers).
 	DuplicatesSkippedChanged int `json:"duplicates_skipped_changed,omitempty"`
+	// GroupsFailed are the groups whose merge failed; their duplicates are
+	// still stored (server v0.12.4+; they used to be logged only). nil when
+	// none.
+	GroupsFailed []DuplicateGroupFailure `json:"groups_failed,omitempty"`
+}
+
+// DuplicateGroupFailure is a group of DeduplicateResponse.GroupsFailed.
+type DuplicateGroupFailure struct {
+	CanonicalID  string   `json:"canonical_id"`
+	DuplicateIDs []string `json:"duplicate_ids"`
+	Reason       string   `json:"reason"`
 }
 
 // UnmarshalJSON decodes both group shapes (see DeduplicateResponse).
@@ -1810,6 +1997,14 @@ type AnalyticsOverview struct {
 	UptimeSeconds    uint64  `json:"uptime_seconds"`
 	// Unavailable lists namespaces left out of the totals (server v0.12.2+).
 	Unavailable []UnavailableNamespace `json:"unavailable,omitempty"`
+	// Period is the latency window the figures cover (server v0.12.4+:
+	// AnalyticsOptions.Period, "5m" when not given). Empty from older
+	// servers, which ignored the period.
+	Period string `json:"period,omitempty"`
+	// Namespace is the namespace the figures are restricted to (server
+	// v0.12.4+: AnalyticsOptions.Namespace; ErrorRate, CacheHitRate and
+	// UptimeSeconds stay node-wide). Empty for the whole server.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // LatencyAnalytics represents latency analytics response.
@@ -1855,6 +2050,12 @@ type NamespaceStorage struct {
 }
 
 // AnalyticsOptions represents options for analytics queries.
+//
+// Period ("5m", "15m", "1h", "6h", "24h", "7d", "30d") and Namespace are
+// honoured by the overview, latency and throughput routes since server
+// v0.12.4 (AnalyticsStorage honours its namespace too; an unknown namespace
+// is a *NotFoundError on the overview and storage routes); older servers
+// ignored them.
 type AnalyticsOptions struct {
 	Period    string `json:"period,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
@@ -2002,6 +2203,14 @@ type ColumnUpsertRequest struct {
 }
 
 // WarmCacheRequest represents a request to warm the cache.
+//
+// Since server v0.12.4 every field acts: the records are read past the caches
+// into exactly TargetTier ("l1", "l2" or "both"); AccessPattern
+// ("sequential", "random", "temporal", "spatial") chooses and orders them;
+// Priority ("critical" ... "background") paces the reads; Background runs the
+// warm as a job (WarmCacheResponse.JobID, followed with OpsGetJob) and
+// TTLHintSeconds (at most 7 days) keeps the set warm that long. A warm fills
+// at most 100,000 records.
 type WarmCacheRequest struct {
 	VectorIDs      []string `json:"vector_ids,omitempty"`
 	Priority       string   `json:"priority,omitempty"`
@@ -2010,13 +2219,41 @@ type WarmCacheRequest struct {
 	TTLHintSeconds *int     `json:"ttl_hint_seconds,omitempty"`
 	AccessPattern  string   `json:"access_pattern,omitempty"`
 	MaxVectors     *int     `json:"max_vectors,omitempty"`
+	// QueryVector warms the records nearest this vector (server v0.12.4+).
+	QueryVector []float32 `json:"query_vector,omitempty"`
+	// MinScoreThreshold keeps the records at or above this similarity to
+	// QueryVector (it needs QueryVector).
+	MinScoreThreshold *float32 `json:"min_score_threshold,omitempty"`
+	// RecentlyAccessedWithin keeps memories used within this many seconds.
+	RecentlyAccessedWithin *int64 `json:"recently_accessed_within,omitempty"`
 }
 
 // WarmCacheResponse represents the response from cache warming.
+//
+// The server answers {success, entries_warmed, entries_skipped, job_id,
+// message, estimated_completion, target_tier, priority, bytes_warmed}.
 type WarmCacheResponse struct {
-	Status        string `json:"status"`
-	EntriesWarmed int    `json:"entries_warmed"`
-	TimeTakenMs   *int64 `json:"time_taken_ms,omitempty"`
+	// Success is true when the warm ran (or, with Background, started).
+	Success       bool `json:"success"`
+	EntriesWarmed int  `json:"entries_warmed"`
+	// EntriesSkipped are records that were not warmed.
+	EntriesSkipped int `json:"entries_skipped,omitempty"`
+	// JobID is the background job (WarmCacheRequest.Background); follow it
+	// with OpsGetJob (server v0.12.4+; older servers returned an id nothing
+	// knew).
+	JobID   string `json:"job_id,omitempty"`
+	Message string `json:"message,omitempty"`
+	// EstimatedCompletion is when a background warm should end.
+	EstimatedCompletion string `json:"estimated_completion,omitempty"`
+	// TargetTier and Priority are what the warm used.
+	TargetTier string `json:"target_tier,omitempty"`
+	Priority   string `json:"priority,omitempty"`
+	// BytesWarmed is an estimate of the bytes warmed.
+	BytesWarmed *int64 `json:"bytes_warmed,omitempty"`
+	// Status is not sent by current servers.
+	Status string `json:"status,omitempty"`
+	// TimeTakenMs is not sent by current servers.
+	TimeTakenMs *int64 `json:"time_taken_ms,omitempty"`
 }
 
 // ===========================================================================
@@ -2103,6 +2340,10 @@ type AutoPilotConfig struct {
 	// DedupModeReport or DedupModeMerge (server v0.12.3+,
 	// Dakera-AI/dakera#930). Empty on older servers.
 	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// ConsolidationMode is what scheduled consolidation does:
+	// ConsolidationModeOff, ConsolidationModeReport (the default) or
+	// ConsolidationModeMerge (server v0.12.4+). Empty on older servers.
+	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"`
 	// DedupCrossSession says whether deduplication may fold memories of
 	// different sessions (server v0.12.3+).
 	DedupCrossSession bool `json:"dedup_cross_session"`
@@ -2119,14 +2360,30 @@ type AutoPilotConfig struct {
 type DedupMode string
 
 const (
-	// DedupModeOff runs no deduplication (the server default).
+	// DedupModeOff runs no deduplication (the server default up to v0.12.3).
 	DedupModeOff DedupMode = "off"
 	// DedupModeReport finds duplicates and removes none
-	// (DedupResultSnapshot.DuplicatesFound).
+	// (DedupResultSnapshot.DuplicatesFound); the server default since v0.12.4.
 	DedupModeReport DedupMode = "report"
 	// DedupModeMerge folds each duplicate into the memory it duplicates; the
 	// deleted one stays restorable for TrashRetentionHours.
 	DedupModeMerge DedupMode = "merge"
+)
+
+// ConsolidationMode is what AutoPilot's scheduled consolidation does (server
+// v0.12.4+). An explicit POST /v1/memory/consolidate always merges.
+type ConsolidationMode string
+
+const (
+	// ConsolidationModeOff runs no scheduled consolidation.
+	ConsolidationModeOff ConsolidationMode = "off"
+	// ConsolidationModeReport finds the groups consolidation would merge
+	// (ConsolidationResultSnapshot.ClustersFound, MemoriesInClusters) and
+	// changes nothing: the server default.
+	ConsolidationModeReport ConsolidationMode = "report"
+	// ConsolidationModeMerge merges them (what every release before v0.12.4
+	// did).
+	ConsolidationModeMerge ConsolidationMode = "merge"
 )
 
 // DedupResultSnapshot is the result from a deduplication cycle.
@@ -2137,6 +2394,12 @@ type DedupResultSnapshot struct {
 	// DuplicatesFound is how many duplicates the pass found; in
 	// DedupModeReport none is removed (server v0.12.3+; 0 before).
 	DuplicatesFound int `json:"duplicates_found"`
+	// Failures is what the cycle could not do (a namespace or content it
+	// could not read, a search or merge that failed), each with its
+	// namespace and why; at most 20 (server v0.12.4+). The counts are then
+	// partial and the server runs the pass again after 5 minutes. nil when
+	// the cycle did everything.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // ConsolidationResultSnapshot is the result from a consolidation cycle.
@@ -2145,6 +2408,12 @@ type ConsolidationResultSnapshot struct {
 	MemoriesScanned      int `json:"memories_scanned"`
 	ClustersMerged       int `json:"clusters_merged"`
 	MemoriesConsolidated int `json:"memories_consolidated"`
+	// ClustersFound and MemoriesInClusters are what the pass found to merge
+	// (server v0.12.4+); under ConsolidationModeReport nothing is merged.
+	ClustersFound      int `json:"clusters_found,omitempty"`
+	MemoriesInClusters int `json:"memories_in_clusters,omitempty"`
+	// Failures is what the cycle could not do, as DedupResultSnapshot.Failures.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // AutoPilotStatusResponse is returned by GET /v1/admin/autopilot/status (PILOT-1).
@@ -2168,6 +2437,10 @@ type AutoPilotConfigRequest struct {
 	// DedupMode sets what deduplication does (server v0.12.3+). Empty keeps
 	// the current mode.
 	DedupMode DedupMode `json:"dedup_mode,omitempty"`
+	// ConsolidationMode sets what scheduled consolidation does (server
+	// v0.12.4+; an older server refuses the unknown field). Empty keeps the
+	// current mode.
+	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"`
 	// DedupCrossSession lets deduplication fold memories of different
 	// sessions (server v0.12.3+).
 	DedupCrossSession *bool `json:"dedup_cross_session,omitempty"`
@@ -2197,6 +2470,9 @@ type AutoPilotDedupResult struct {
 	// Mode is the mode the pass ran in, DedupModeReport or DedupModeMerge
 	// (server v0.12.3+; empty before).
 	Mode DedupMode `json:"mode,omitempty"`
+	// Failures is what the pass could not do (server v0.12.4+); the
+	// trigger's Success is then false. nil when it did everything.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // AutoPilotConsolidationResult is the consolidation result from a manual trigger.
@@ -2205,9 +2481,21 @@ type AutoPilotConsolidationResult struct {
 	MemoriesScanned      int `json:"memories_scanned"`
 	ClustersMerged       int `json:"clusters_merged"`
 	MemoriesConsolidated int `json:"memories_consolidated"`
+	// ClustersFound and MemoriesInClusters are what the pass found to merge
+	// (server v0.12.4+).
+	ClustersFound      int `json:"clusters_found,omitempty"`
+	MemoriesInClusters int `json:"memories_in_clusters,omitempty"`
+	// Mode is the mode the pass ran in (server v0.12.4+): report while
+	// scheduled consolidation is off.
+	Mode ConsolidationMode `json:"mode,omitempty"`
+	// Failures is what the pass could not do (server v0.12.4+); the
+	// trigger's Success is then false.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // AutoPilotTriggerResponse is returned by POST /v1/admin/autopilot/trigger (PILOT-3).
+// Since server v0.12.4 Success is false when a pass could not do everything
+// (see the results' Failures).
 type AutoPilotTriggerResponse struct {
 	Success       bool                          `json:"success"`
 	Action        string                        `json:"action"`
@@ -2255,6 +2543,10 @@ type LastDecayCycleStats struct {
 	MemoriesProcessed   int `json:"memories_processed"`
 	MemoriesDecayed     int `json:"memories_decayed"`
 	MemoriesDeleted     int `json:"memories_deleted"`
+	// Failures is what this cycle could not do (a listing, page read,
+	// delete or rewrite), with why (server v0.12.4+). nil when it did
+	// everything.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // DecayStatsResponse is returned by GET /v1/admin/decay/stats (DECAY-2).
@@ -2267,6 +2559,9 @@ type DecayStatsResponse struct {
 	LastRunAt *uint64 `json:"last_run_at,omitempty"`
 	// CyclesRun is the number of decay cycles completed since startup.
 	CyclesRun uint64 `json:"cycles_run"`
+	// CyclesFailed counts the cycles that could not do everything (server
+	// v0.12.4+; see LastCycle.Failures).
+	CyclesFailed uint64 `json:"cycles_failed,omitempty"`
 	// LastCycle holds stats from the most recent decay cycle (nil if never run).
 	LastCycle *LastDecayCycleStats `json:"last_cycle,omitempty"`
 }
@@ -2476,6 +2771,16 @@ type CrossAgentNetworkResponse struct {
 	Edges     []AgentNetworkEdge `json:"edges"`
 	Stats     AgentNetworkStats  `json:"stats"`
 	NodeCount int                `json:"node_count"` // Total memory nodes in the network (server v0.6.2+).
+	// Unavailable lists the agents left out because their memories could
+	// not be read, with why (server v0.12.4+; they used to be dropped
+	// silently). nil when the network is complete.
+	Unavailable []AgentUnavailable `json:"unavailable,omitempty"`
+}
+
+// AgentUnavailable is an agent a cross-agent view could not read.
+type AgentUnavailable struct {
+	AgentID string `json:"agent_id"`
+	Reason  string `json:"reason"`
 }
 
 // ===========================================================================
@@ -2702,6 +3007,33 @@ type BatchStoreMemoryResponse struct {
 	// "memories[].<name>" (server v0.12.3+, Dakera-AI/dakera#938). nil when
 	// it knew every field.
 	Warnings []string `json:"warnings,omitempty"`
+	// ForgetRequests lists the stored memories whose text reads as a
+	// request to forget something said (server v0.12.4+). nil when none,
+	// and on older servers.
+	ForgetRequests []StoredForgetRequest `json:"forget_requests,omitempty"`
+	// Duplicates lists the items not stored because the namespace's memory
+	// policy deduplicates on store (DedupOnStore): each item's index in the
+	// request and the stored memory it duplicates (server v0.12.4+; older
+	// servers did not deduplicate batch stores). nil when none.
+	Duplicates []BatchDuplicate `json:"duplicates,omitempty"`
+}
+
+// StoredForgetRequest is a memory of a batch store whose text reads as a
+// request to forget (BatchStoreMemoryResponse.ForgetRequests).
+type StoredForgetRequest struct {
+	// ID is the stored memory's id.
+	ID string `json:"id"`
+	ForgetIntent
+}
+
+// BatchDuplicate is an item of a batch store that was not stored because
+// it duplicates a stored memory, or an earlier item of the same batch
+// (BatchStoreMemoryResponse.Duplicates).
+type BatchDuplicate struct {
+	// Index is the item's position in the request.
+	Index int `json:"index"`
+	// ExistingID is the memory it duplicates.
+	ExistingID string `json:"existing_id"`
 }
 
 // TruncatedMemory is a memory of a batch store whose text the embedding
@@ -2724,6 +3056,9 @@ const (
 	// DeduplicatedKindConsolidation: merged with others into a new memory
 	// (SurvivorID) by consolidation.
 	DeduplicatedKindConsolidation = "consolidation"
+	// DeduplicatedKindDeletion: forgotten with ForgetMemoriesRequest.Restorable
+	// (server v0.12.4+). SurvivorID is empty: nothing absorbed it.
+	DeduplicatedKindDeletion = "deletion"
 )
 
 // DeduplicatedMemory is a memory that deduplication or consolidation deleted
@@ -2743,6 +3078,9 @@ type DeduplicatedMemory struct {
 	// RestorableUntil is until when it can be restored (Unix seconds); the
 	// server purges it after.
 	RestorableUntil int64 `json:"restorable_until"`
+	// Content is what the memory said (server v0.12.4+), so a list of
+	// restorable memories can show each one. Empty from older servers.
+	Content string `json:"content,omitempty"`
 }
 
 // DeduplicatedListResponse is the answer of GET /v1/memory/deduplicated.
@@ -2751,6 +3089,143 @@ type DeduplicatedListResponse struct {
 	// Memories are the restorable memories, newest first.
 	Memories []DeduplicatedMemory `json:"memories"`
 	Count    int                  `json:"count"`
+}
+
+// ---------------------------------------------------------------------------
+// Forget (POST /v1/memory/forget, POST /v1/memory/forget/detect)
+// ---------------------------------------------------------------------------
+
+// ForgetMemoriesRequest is the body of POST /v1/memory/forget
+// (ForgetMemories). AgentID is required; the other fields select what is
+// forgotten.
+//
+// Without About or Request the filters (MemoryIDs, MemoryType, SessionID,
+// Tags, BelowImportance) select the memories; the server refuses a request
+// with none. About and Request (server v0.12.4+) choose by meaning instead and
+// may not be combined (400); with either, MemoryIDs and the filters narrow the
+// candidates before Limit. An older server refuses About or Request alone
+// (no filter) with a *ValidationError.
+type ForgetMemoriesRequest struct {
+	AgentID string `json:"agent_id"`
+	// MemoryIDs forgets these memories.
+	MemoryIDs []string `json:"memory_ids,omitempty"`
+	// MemoryType forgets memories of this type.
+	MemoryType string `json:"memory_type,omitempty"`
+	// SessionID forgets the memories of this session.
+	SessionID string `json:"session_id,omitempty"`
+	// Tags forgets memories carrying these tags.
+	Tags []string `json:"tags,omitempty"`
+	// BelowImportance forgets memories below this importance.
+	BelowImportance *float32 `json:"below_importance,omitempty"`
+	// About forgets by description (server v0.12.4+; at most 8,000
+	// characters): what was said, not the request to forget it ("I love
+	// sushi", not "Please forget that I told you I love sushi"). The
+	// cross-encoder scores candidates against it and those scored at least
+	// MinScore are forgotten, most relevant first, at most Limit. Needs the
+	// reranker: a *ServerError with status 503 when it is unavailable.
+	About string `json:"about,omitempty"`
+	// Request is a user's request to forget, as said, in any language
+	// (server v0.12.4+; at most 8,000 characters). The server reads it with
+	// its own detector (ForgetMemoriesResponse.Intent) and, when it is one,
+	// forgets the memories it means, at most Limit; a message that is not a
+	// request forgets nothing. A *ServerError with status 503 when the
+	// detector or the reranker is unavailable.
+	Request string `json:"request,omitempty"`
+	// Until keeps memories stored after this instant (Unix seconds, compared
+	// with when a memory was stored, not its event time) out of reach of
+	// About / Request, so what was said after a request to forget is kept.
+	Until *int64 `json:"until,omitempty"`
+	// MinScore is the least cross-encoder relevance (0-1) a memory needs
+	// with About. nil = the server default, 0.5.
+	MinScore *float32 `json:"min_score,omitempty"`
+	// Limit is the most memories About / Request forget, 1-50. nil = the
+	// server default, 10.
+	Limit *int `json:"limit,omitempty"`
+	// Restorable keeps a restorable copy of each forgotten memory in the
+	// agent's trash (DeduplicatedKindDeletion; see ListDeduplicated and
+	// RestoreDeduplicated). Server v0.12.4+; sent only when true.
+	Restorable bool `json:"restorable,omitempty"`
+	// DryRun reports what would be forgotten in
+	// ForgetMemoriesResponse.ForgottenIDs and forgets nothing (server
+	// v0.12.4+). Combined with ids or a filter, ForgetMemories first checks
+	// that the server is v0.12.4+ (an older one would carry the request
+	// out) and refuses it otherwise. Sent only when true.
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// ForgetMemoriesResponse is the answer of POST /v1/memory/forget.
+type ForgetMemoriesResponse struct {
+	// DeletedCount is how many memories were forgotten (0 on a dry run).
+	DeletedCount int `json:"deleted_count"`
+	// ForgottenIDs are the ids forgotten, or that would be on a dry run,
+	// with About (most relevant first), Request or DryRun (server
+	// v0.12.4+). nil otherwise.
+	ForgottenIDs []string `json:"forgotten_ids,omitempty"`
+	// Intent is how a Request was read; only Intent.IsRequest forgets
+	// anything. nil without Request.
+	Intent *ForgetIntent `json:"intent,omitempty"`
+}
+
+// ForgetIntent is how the server read a message as a request to forget
+// (server v0.12.4+).
+type ForgetIntent struct {
+	// Probability is the detector's probability that the message asks to
+	// forget something said.
+	Probability float32 `json:"probability"`
+	// Threshold is the probability at or above which a message is a request.
+	Threshold float32 `json:"threshold"`
+	// IsRequest is true when the message, or one of its sentences, reads as
+	// a request to forget.
+	IsRequest bool `json:"is_request"`
+	// Sentence is the sentence of a long message that read as the request,
+	// when one sentence decided. Empty otherwise.
+	Sentence string `json:"sentence,omitempty"`
+}
+
+// ForgetDetectResponse is the answer of POST /v1/memory/forget/detect
+// (DetectForgetRequests, server v0.12.4+).
+type ForgetDetectResponse struct {
+	// Model is the detector's encoder.
+	Model string `json:"model"`
+	// Threshold is the probability at or above which a message is a request
+	// to forget.
+	Threshold float32 `json:"threshold"`
+	// SentenceThreshold is the probability at or above which one sentence of
+	// a long message makes it a request.
+	SentenceThreshold float32 `json:"sentence_threshold"`
+	// Results has one verdict per message, in order.
+	Results []ForgetDetectResult `json:"results"`
+}
+
+// ForgetDetectResult is the verdict on one message of DetectForgetRequests.
+type ForgetDetectResult struct {
+	// Probability is the probability that the message asks to forget
+	// something said.
+	Probability float32 `json:"probability"`
+	// IsRequest is true when the message, or one of its sentences, reads as
+	// a request to forget.
+	IsRequest bool `json:"is_request"`
+	// Sentence is the sentence that read as the request, when it is one
+	// sentence of a long message. Empty otherwise.
+	Sentence string `json:"sentence,omitempty"`
+}
+
+// MemoryWithProjection is the answer of GetMemoryWithProjection: the memory
+// and its projected importance (server v0.12.4+).
+type MemoryWithProjection struct {
+	Memory
+	// StrengthProjection is the memory's importance for today (Day 0) and
+	// each of the next N days if nothing touches it, under its namespace's
+	// decay policy.
+	StrengthProjection []StrengthPoint `json:"strength_projection"`
+}
+
+// StrengthPoint is one day of a MemoryWithProjection.StrengthProjection.
+type StrengthPoint struct {
+	// Day is the number of days from now (0 = today).
+	Day int `json:"day"`
+	// Importance is the projected importance that day.
+	Importance float32 `json:"importance"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2795,6 +3270,9 @@ type GraphEdge struct {
 	Weight float64 `json:"weight"`
 	// CreatedAt is the Unix timestamp of edge creation.
 	CreatedAt int64 `json:"created_at"`
+	// Label is the label a client gave the link (EdgeTypeLinkedBy edges),
+	// when it has one (server v0.12.4+; older servers dropped it).
+	Label string `json:"label,omitempty"`
 }
 
 // UnmarshalJSON reads the server's {from_id, to_id, ...} edge as well as the
@@ -2902,7 +3380,9 @@ type GraphLinkRequest struct {
 	TargetID string `json:"target_id"`
 	// AgentID is the agent that owns both memories (required by the server).
 	AgentID string `json:"agent_id"`
-	// Label is an optional human-readable label for the link.
+	// Label is what the link means (at most 256 bytes, no control
+	// characters). Stored with the edge since server v0.12.4 and returned in
+	// traversals and exports; linking the same pair again replaces it.
 	Label string `json:"label,omitempty"`
 	// EdgeType is ignored by the server, which always records an explicit
 	// link as linked_by; Client.MemoryLink does not set it.
@@ -2922,6 +3402,9 @@ type GraphLinkResponse struct {
 	ToID string `json:"to_id,omitempty"`
 	// EdgeType is the recorded edge type (linked_by).
 	EdgeType EdgeType `json:"edge_type,omitempty"`
+	// Label is the stored label (server v0.12.4+). Empty when the link has
+	// none, and on older servers.
+	Label string `json:"label,omitempty"`
 }
 
 // UnmarshalJSON accepts both the server's flat {from_id, to_id, edge_type}
@@ -2932,13 +3415,17 @@ func (r *GraphLinkResponse) UnmarshalJSON(data []byte) error {
 		FromID   string     `json:"from_id"`
 		ToID     string     `json:"to_id"`
 		EdgeType EdgeType   `json:"edge_type"`
+		Label    string     `json:"label"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	r.FromID, r.ToID, r.EdgeType = aux.FromID, aux.ToID, aux.EdgeType
+	r.FromID, r.ToID, r.EdgeType, r.Label = aux.FromID, aux.ToID, aux.EdgeType, aux.Label
 	if aux.Edge != nil {
 		r.Edge = *aux.Edge
+		if r.Label == "" {
+			r.Label = r.Edge.Label
+		}
 		if r.FromID == "" {
 			r.FromID = r.Edge.SourceID
 		}
@@ -2955,6 +3442,7 @@ func (r *GraphLinkResponse) UnmarshalJSON(data []byte) error {
 		TargetID: aux.ToID,
 		EdgeType: aux.EdgeType,
 		Weight:   1.0,
+		Label:    aux.Label,
 	}
 	return nil
 }
@@ -3037,7 +3525,25 @@ type ExtractedEntity struct {
 // EntityExtractionResponse is returned by ExtractEntities.
 type EntityExtractionResponse struct {
 	Entities []ExtractedEntity `json:"entities"`
+	// Count is the number of entities.
+	Count int `json:"count,omitempty"`
+	// Extractor is what produced Entities (server v0.12.4+):
+	// ExtractorGliner (the neural pass ran, on top of the rules) or
+	// ExtractorRuleBased. Empty from older servers.
+	Extractor string `json:"extractor,omitempty"`
+	// Warnings says what the caller must know about the result (server
+	// v0.12.4+): the neural pass failed (rule-based entities only) or
+	// covered part of the text. nil when there is nothing to say.
+	Warnings []string `json:"warnings,omitempty"`
 }
+
+// Values of EntityExtractionResponse.Extractor (server v0.12.4+).
+const (
+	// ExtractorGliner: the neural (GLiNER) pass ran, on top of the rules.
+	ExtractorGliner = "gliner"
+	// ExtractorRuleBased: the rule-based pass alone (dates, URLs, emails, ...).
+	ExtractorRuleBased = "rule_based"
+)
 
 // MemoryEntitiesResponse is returned by MemoryEntities. The server answers
 // {entities, count}; MemoryID is the requested memory id.
@@ -3271,6 +3777,10 @@ func toUint64(v interface{}) (uint64, bool) {
 type KeySuccessResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+	// Pending is true when the server answered 202 Accepted: the revocation
+	// applies on every node but is not stored yet; the server retries until
+	// it is, after a restart too (server v0.12.4+).
+	Pending bool `json:"-"`
 }
 
 // CreateNamespaceKeyRequest is the request body for POST /v1/namespaces/:ns/keys (SEC-1).
@@ -3343,18 +3853,40 @@ type NamespaceKeyUsageResponse struct {
 // DX-1: Memory Import / Export
 // ===========================================================================
 
-// MemoryImportResponse is returned by POST /v1/import (DX-1).
+// MemoryImportResponse is returned by ImportMemories: the counts of the
+// import job the server answered.
 type MemoryImportResponse struct {
 	ImportedCount int      `json:"imported_count"`
 	SkippedCount  int      `json:"skipped_count"`
 	Errors        []string `json:"errors,omitempty"`
+	// Job is the server's answer.
+	Job *ImportJobStatus `json:"-"`
 }
 
-// MemoryExportResponse is returned by GET /v1/export (DX-1).
+// MemoryExportResponse is returned by ExportMemories (see there).
 type MemoryExportResponse struct {
 	Data   []map[string]interface{} `json:"data"`
 	Format string                   `json:"format"`
 	Count  int                      `json:"count"`
+	// Raw is the exported file as the server sent it.
+	Raw []byte `json:"-"`
+	// Skipped is how many memories the server left out because their stored
+	// content cannot be opened.
+	Skipped int `json:"-"`
+}
+
+// MemoryExportFile is returned by ExportMemoryFile.
+type MemoryExportFile struct {
+	// Data is the exported file.
+	Data []byte
+	// ContentType is its media type (application/x-ndjson, text/csv or
+	// application/json).
+	ContentType string
+	// Format is the export format.
+	Format string
+	// Skipped is how many memories the server left out because their stored
+	// content cannot be opened (the X-Dakera-Export-Skipped header).
+	Skipped int
 }
 
 // ===========================================================================
@@ -3412,8 +3944,14 @@ func (e *AuditEvent) UnmarshalJSON(data []byte) error {
 type AuditListResponse struct {
 	Events []AuditEvent `json:"events"`
 	// Count is the number of events returned (the server's field); Total mirrors it.
-	Count  int    `json:"count"`
-	Total  int    `json:"total"`
+	Count int `json:"count"`
+	Total int `json:"total"`
+	// NextCursor is passed as AuditQuery.Cursor for the next (older) page
+	// (server v0.12.4+). Empty on the last page, and on older servers.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Cursor mirrors NextCursor.
+	//
+	// Deprecated: use NextCursor.
 	Cursor string `json:"cursor,omitempty"`
 }
 
@@ -3434,8 +3972,11 @@ type AuditQuery struct {
 	ToTs   int64
 	// Limit is the most events returned (server default 100).
 	Limit int
-	// Cursor is sent as the "cursor" query parameter; current servers do not
-	// page the audit log and ignore it.
+	// Cursor is the previous page's AuditListResponse.NextCursor: the events
+	// after it (older), newest first, ties by id, so pages neither repeat nor
+	// skip an event (server v0.12.4+; older servers ignore it and answer the
+	// first page again). Empty for the first page. A cursor the server did
+	// not return is a *ValidationError.
 	Cursor string
 }
 
@@ -3636,17 +4177,20 @@ type KgExportResponse struct {
 type MemoryPolicy struct {
 	// Differential TTLs -------------------------------------------------------
 
-	// WorkingTTLSeconds is the default TTL for working memories in seconds
-	// (server default: 14 400 = 4 h).
+	// WorkingTTLSeconds is the TTL given to working memories stored without
+	// one, in seconds. nil = no TTL by type (the server default since
+	// v0.12.4: a policy stored without a TTL no longer expires memories of
+	// that type; older servers defaulted to 4 h and read a stored "never"
+	// back as that default after a restart).
 	WorkingTTLSeconds *int64 `json:"working_ttl_seconds,omitempty"`
-	// EpisodicTTLSeconds is the default TTL for episodic memories in seconds
-	// (server default: 2 592 000 = 30 d).
+	// EpisodicTTLSeconds is the TTL for episodic memories, as
+	// WorkingTTLSeconds (nil = none; servers before v0.12.4: 30 d).
 	EpisodicTTLSeconds *int64 `json:"episodic_ttl_seconds,omitempty"`
-	// SemanticTTLSeconds is the default TTL for semantic memories in seconds
-	// (server default: 31 536 000 = 365 d).
+	// SemanticTTLSeconds is the TTL for semantic memories, as
+	// WorkingTTLSeconds (nil = none; servers before v0.12.4: 365 d).
 	SemanticTTLSeconds *int64 `json:"semantic_ttl_seconds,omitempty"`
-	// ProceduralTTLSeconds is the default TTL for procedural memories in
-	// seconds (server default: 63 072 000 = 730 d).
+	// ProceduralTTLSeconds is the TTL for procedural memories, as
+	// WorkingTTLSeconds (nil = none; servers before v0.12.4: 730 d).
 	ProceduralTTLSeconds *int64 `json:"procedural_ttl_seconds,omitempty"`
 
 	// Decay curves ------------------------------------------------------------
@@ -3712,10 +4256,18 @@ type MemoryPolicy struct {
 	// controlled by DedupThreshold). (server default: false)
 	DedupOnStore *bool `json:"dedup_on_store,omitempty"`
 	// DedupThreshold is the cosine-similarity threshold for store-time
-	// deduplication (server default: 0.92). Memories with similarity ≥ this
-	// value are considered duplicates and the incoming memory is dropped. Only
-	// active when DedupOnStore is true.
+	// deduplication (server default: 0.95). Memories with similarity ≥ this
+	// value are considered duplicates and the incoming memory is dropped
+	// (batch stores report them in BatchStoreMemoryResponse.Duplicates since
+	// server v0.12.4). Only active when DedupOnStore is true.
 	DedupThreshold *float32 `json:"dedup_threshold,omitempty"`
+
+	// Stored is set by GetMemoryPolicy (server v0.12.4+): true when the
+	// namespace stored a policy, false when it did not and the answer is what
+	// its memories get (no TTL by type, the server's decay curve for every
+	// type, nothing else on). nil from older servers. SetMemoryPolicy never
+	// sends it.
+	Stored *bool `json:"stored,omitempty"`
 }
 
 // ===========================================================================
@@ -3820,6 +4372,14 @@ type CompressResponse struct {
 	// SummariesSkipped are summaries the server refused or could not store
 	// (server v0.12.2+); the originals of their clusters are NOT deprecated.
 	SummariesSkipped []CompressSkippedSummary `json:"summaries_skipped,omitempty"`
+	// DeprecationSkipped are originals left as they were because they
+	// changed since the pass read them (server v0.12.4+; DeprecatedIDs lists
+	// only what was written since then).
+	DeprecationSkipped []string `json:"deprecation_skipped,omitempty"`
+	// DeprecationError is a deprecation write that failed (server v0.12.4+):
+	// the summaries then stand beside their originals until the next
+	// compression. Empty when every deprecation was written.
+	DeprecationError string `json:"deprecation_error,omitempty"`
 }
 
 // CompressSkippedSummary is a summary CompressAgent did not write, and why.
@@ -3948,7 +4508,22 @@ type NamespaceEntityConfig struct {
 	Namespace       string   `json:"namespace"`
 	ExtractEntities bool     `json:"extract_entities"`
 	EntityTypes     []string `json:"entity_types"`
+	// Source says where the configuration in effect comes from (server
+	// v0.12.4+): EntityConfigSourceNamespace (the namespace set it) or
+	// EntityConfigSourceServerDefault (it never did, and runs the server's
+	// default entity types). Empty from older servers.
+	Source string `json:"source,omitempty"`
 }
+
+// Values of NamespaceEntityConfig.Source (server v0.12.4+).
+const (
+	// EntityConfigSourceNamespace: the namespace's own setting.
+	EntityConfigSourceNamespace = "namespace"
+	// EntityConfigSourceServerDefault: the server default
+	// (DAKERA_DEFAULT_ENTITY_TYPES); the first PUT or PATCH makes the
+	// namespace's own setting hold, starting from what it ran.
+	EntityConfigSourceServerDefault = "server_default"
+)
 
 // ExtractorConfigResponse is returned by GET /v1/namespaces/{ns}/extractor.
 type ExtractorConfigResponse struct {
@@ -4092,11 +4667,19 @@ type SetQuotaRequest struct {
 }
 
 // SetQuotaResponse is returned by PUT /admin/quotas.
+//
+// Since server v0.12.4 the status says whether the change is stored: 200
+// stored; 202 applied on every node and logged, retried by the server until
+// stored (Pending is true); 409 a later change of the same quota took over
+// first (*ConflictError); 503 applied but not even logged (*ServerError).
 type SetQuotaResponse struct {
 	Success   bool        `json:"success"`
 	Namespace string      `json:"namespace"`
 	Config    QuotaConfig `json:"config"`
 	Message   string      `json:"message"`
+	// Pending is true when the server answered 202 Accepted: the change
+	// applies but is not stored yet (server v0.12.4+).
+	Pending bool `json:"-"`
 }
 
 // QuotaCheckRequest is the request body for POST /admin/quotas/{namespace}/check.
@@ -4159,10 +4742,15 @@ type CreateBackupResponse struct {
 
 // RestoreBackupRequest is the request body for POST /admin/backups/restore.
 type RestoreBackupRequest struct {
-	BackupID         string   `json:"backup_id"`
+	// BackupID is the backup to restore. Optional with PointInTime.
+	BackupID         string   `json:"backup_id,omitempty"`
 	TargetNamespaces []string `json:"target_namespaces,omitempty"`
 	Overwrite        *bool    `json:"overwrite,omitempty"`
-	PointInTime      *uint64  `json:"point_in_time,omitempty"`
+	// PointInTime (Unix seconds) restores the newest backup completed at or
+	// before it that holds TargetNamespaces (server v0.12.4+; older servers
+	// ignored it). With Overwrite the namespaces are exactly what they were
+	// then.
+	PointInTime *uint64 `json:"point_in_time,omitempty"`
 }
 
 // RestoreBackupResponse is returned by POST /admin/backups/restore.
@@ -4284,10 +4872,15 @@ type TtlCleanupRequest struct {
 
 // TtlCleanupResponse is returned by POST /admin/ttl/cleanup.
 type TtlCleanupResponse struct {
+	// Success is false when a namespace could not be swept (server
+	// v0.12.4+; see Failed).
 	Success           bool     `json:"success"`
 	VectorsRemoved    uint64   `json:"vectors_removed"`
 	NamespacesCleaned []string `json:"namespaces_cleaned"`
 	Message           string   `json:"message"`
+	// Failed lists each namespace whose sweep failed, with why (server
+	// v0.12.4+). nil when every namespace was swept.
+	Failed []UnavailableNamespace `json:"failed,omitempty"`
 }
 
 // RouteRequest is the request body for POST /v1/route.
@@ -4312,7 +4905,10 @@ type RouteResponse struct {
 	EmbeddingTimeMs uint64       `json:"embedding_time_ms"`
 }
 
-// ImportJobStatus is returned by GET /v1/import/{job_id}/status.
+// ImportJobStatus is an import job: the answer of POST /v1/import
+// (ImportMemoryFile) and of GET /v1/import/{job_id}/status. Status is
+// ImportStatusRunning, ImportStatusDone or ImportStatusFailed; Errors names at
+// most the first 20 refused items.
 type ImportJobStatus struct {
 	JobID      string   `json:"job_id"`
 	Status     string   `json:"status"`
@@ -4523,6 +5119,31 @@ type DerivationStatus struct {
 	Reconciler DerivationReconciler `json:"reconciler"`
 	// Counters are per-process counters since start.
 	Counters DerivationCounters `json:"counters"`
+	// EntityTagging is the background entity tagging of stored memories on
+	// this node (server v0.12.4+; Settled waits for it too). nil from older
+	// servers.
+	EntityTagging *EntityTaggingStatus `json:"entity_tagging,omitempty"`
+}
+
+// EntityTaggingStatus is DerivationStatus.EntityTagging (server v0.12.4+):
+// the model's entity tags owed after stores.
+type EntityTaggingStatus struct {
+	// Mode is "background" (the default) or "inline".
+	Mode string `json:"mode"`
+	// Pending are memories queued or being tagged.
+	Pending int64 `json:"pending"`
+	// SweepNamespaces are namespaces marked for a sweep.
+	SweepNamespaces []string `json:"sweep_namespaces"`
+	// Counters since start.
+	Tagged         int64 `json:"tagged"`
+	AlreadyTagged  int64 `json:"already_tagged"`
+	Superseded     int64 `json:"superseded"`
+	Retried        int64 `json:"retried"`
+	DroppedToSweep int64 `json:"dropped_to_sweep"`
+	Failed         int64 `json:"failed"`
+	// ExtractorGaveUp are memories left untagged because the store's LLM
+	// extractor failed 3 times on their text.
+	ExtractorGaveUp int64 `json:"extractor_gave_up"`
 }
 
 // DrainDerivationsRequest is the optional body of POST /admin/derivations/drain.

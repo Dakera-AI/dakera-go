@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - Unreleased
+
+Support for Dakera server **v0.12.4**. New request fields are omitted unless you set them and new
+response fields are optional, so the SDK keeps working against v0.12.0 – v0.12.3 servers; the
+features marked v0.12.4 below need a v0.12.4 server. `Version` is `0.12.4`.
+
+### Added
+
+- **Forget by meaning**: `ForgetMemories(ctx, ForgetMemoriesRequest)` sends every field of
+  `POST /v1/memory/forget`: the filters (`MemoryIDs`, `MemoryType`, `SessionID`, `Tags`,
+  `BelowImportance`) and, for v0.12.4, `About` (forget by description), `Request` (a user's request
+  to forget, as said, in any language), `Until`, `MinScore`, `Limit`, `Restorable` and `DryRun`.
+  `ForgetMemoriesResponse` has `DeletedCount`, `ForgottenIDs` and `Intent` (`ForgetIntent`:
+  `Probability`, `Threshold`, `IsRequest`, `Sentence`). `About` and `Request` together are refused
+  before sending (`*ValidationError`). A server older than v0.12.4 ignores the new fields but still
+  forgets what the ids and filters select, so when a v0.12.4 field (`About`, `Request`, `Until`,
+  `MinScore`, `Limit`, `Restorable`, `DryRun`) is combined with ids or a filter, `ForgetMemories`
+  first reads the server version from the (cached) capabilities and refuses the request with a
+  `*ValidationError`, sending nothing, when the server is older or its version cannot be
+  determined (no capabilities route, or an unreadable version).
+- `DetectForgetRequests(ctx, texts)` (`POST /v1/memory/forget/detect`): `ForgetDetectResponse` with
+  `Model`, `Threshold`, `SentenceThreshold` and one `ForgetDetectResult` per message.
+- `StoreMemoryResponse.ForgetRequest`; `BatchStoreMemoryResponse.ForgetRequests`
+  (`StoredForgetRequest`) and `Duplicates` (`BatchDuplicate`: items a store-time deduplicating
+  policy did not store).
+- Recall: `RecallRequest.RerankHead`; `RecallResponse.Instructions` (standing instructions,
+  `InstructionTag`, `RetrievalInstruction`) and `RecallResponse.Degraded`.
+- `EndSessionWithOptions(ctx, id, EndSessionRequest{Summary, AutoSummarize})`;
+  `SessionEndResponse.SummaryPending`.
+- Audit cursor pagination: `AuditListResponse.NextCursor`, sent back as `AuditQuery.Cursor`.
+- `GetMemoryWithProjection(ctx, agentID, id, days)` (`?projection_days=`): `MemoryWithProjection`
+  with `StrengthProjection` (`StrengthPoint{Day, Importance}`).
+- `DeduplicatedMemory.Content` and the trash kind `DeduplicatedKindDeletion` (a restorable forget).
+- `ImportMemoryFile(ctx, agentID, data, opts)` uploads an export file (multipart, as the server
+  reads it) and returns the `ImportJobStatus`; `ImportMemoriesOptions.Async` imports in the
+  background (202), followed with `ImportJobStatus` or the new `WaitForImportJob`
+  (`ImportStatusRunning` / `ImportStatusDone` / `ImportStatusFailed`). `ExportMemoryFile(ctx,
+  agentID, format)` returns the exported file (`MemoryExportFile`, with the skipped count).
+- `QueryOptions` and `BatchQuerySpec` gain `Consistency` (`ReadConsistencyEventual`, `Strong`,
+  `BoundedStaleness`) and `StalenessConfig`, which servers act on since v0.12.4.
+- Response fields: `NamespaceEntityConfig.Source` (`EntityConfigSourceNamespace` /
+  `EntityConfigSourceServerDefault`), `MemoryPolicy.Stored`, `GraphEdge.Label` and
+  `GraphLinkResponse.Label`, `EntityExtractionResponse.Count` / `Extractor` (`ExtractorGliner`,
+  `ExtractorRuleBased`) / `Warnings`, `DeduplicateResponse.GroupsFailed`
+  (`DuplicateGroupFailure`), `CrossAgentNetworkResponse.Unavailable` (`AgentUnavailable`),
+  `CompressResponse.DeprecationSkipped` / `DeprecationError`, `AnalyticsOverview.Period` /
+  `Namespace`.
+- Admin: `ConsolidationMode` (`off` / `report` / `merge`) on `AutoPilotConfig` and
+  `AutoPilotConfigRequest`; `Failures` on the AutoPilot status snapshots and trigger results, with
+  `ClustersFound` / `MemoriesInClusters` and the consolidation trigger's `Mode`;
+  `DecayStatsResponse.CyclesFailed` and `LastDecayCycleStats.Failures`; `TtlCleanupResponse.Failed`;
+  `WarmCacheRequest.QueryVector` / `MinScoreThreshold` / `RecentlyAccessedWithin` and the server's
+  `WarmCacheResponse` fields (`Success`, `EntriesSkipped`, `JobID`, `Message`, `TargetTier`,
+  `Priority`, ...); `HealthResponse.Degraded` / `ConfigWarnings` (`HealthComponent`);
+  `DerivationStatus.EntityTagging` (`EntityTaggingStatus`).
+- Changes the server answers as stored: `SetQuotaResponse.Pending` (`AdminSetQuota`,
+  `AdminSetDefaultQuota`) and `KeySuccessResponse.Pending` (`DeleteNamespaceKey`) are true for a
+  `202 Accepted` (applied, stored later by the server); a later change that took over first is a
+  `*ConflictError`. `DeleteKey` and `AdminDeleteQuota` document the same statuses.
+- `RestoreBackupRequest.BackupID` is omitted when empty, so a restore by `PointInTime` alone sends
+  no id.
+- `GetMemoryFeedbackHistoryForAgent` and `EvaluateTifForAgent` take the agent id the server requires.
+
+### Changed
+
+- **`RecallRequest.IncludeAssociated` is a `*bool`** (was `bool`, sent only when true). Server
+  v0.12.4 returns associated memories by default, so a pointer to `false` is the only way to turn
+  them off; code that set `IncludeAssociated: true` now passes a pointer. `ImportanceWeighted` is
+  documented with the new server default (`false`).
+- `MemoryPolicy` documents the v0.12.4 server defaults: no TTL by memory type (nil TTLs), store-time
+  dedup threshold `0.95`; `GetMemoryPolicy` describes what a namespace without a stored policy gets,
+  and `SetMemoryPolicy` never sends `Stored`.
+- `DedupModeReport` is the server's default dedup mode since v0.12.4 (docs).
+
+### Fixed
+
+- **`ImportMemories` and `ExportMemories` match the server**: the import is a multipart upload with
+  `agent_id` and `format` in the query (the SDK sent a JSON body, which the server cannot read), and
+  the export is the file itself (the SDK expected a JSON envelope). Both now go through
+  `ImportMemoryFile` / `ExportMemoryFile`; `MemoryImportResponse.Job` and
+  `MemoryExportResponse.Raw` / `Skipped` carry the full answers. Both are deprecated in favour of the
+  new methods.
+- **`SummarizeResponse`** reads the server's `{summary_memory, source_count}`: `SummaryMemory` is
+  new, and `Summary` / `NewMemoryID` are filled from it (they were always empty).
+  `SummarizeRequest.MemoryIDs` is always sent (the server requires it).
+- **`ConsolidateRequest`** gains `MemoryIDs` and `TargetType`, the fields the server reads.
+  `Consolidate` and `Summarize` refuse `DryRun` with a `*ValidationError` instead of sending it: the
+  server has no dry run and merged or summarized anyway. `MemoryType`, `DryRun` and `Config` on
+  `ConsolidateRequest` are deprecated (the server never read them).
+- `Query` and `BatchQuery` send `include_vectors` for `IncludeValues` (the server never read
+  `include_values`, so vectors were not returned).
+- `GetMemoryFeedbackHistory` and `EvaluateTif` are deprecated: the server answers them `400` without
+  an agent id; use the `ForAgent` variants.
+- The memory example passes the memory ids `Summarize` requires.
+
+
 ## [0.12.3] - 2026-10-22
 
 Support for Dakera server **v0.12.3** (Dakera-AI/dakera#917, #920, #921, #923, #926, #930, #932,
