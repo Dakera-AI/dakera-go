@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - Unreleased
+
 Support for Dakera server **v0.12.4**. New request fields are omitted unless you set them and new
 response fields are optional, so the SDK keeps working against v0.12.0 – v0.12.3 servers; the
 features marked v0.12.4 below need a v0.12.4 server. `Version` is `0.12.4`.
