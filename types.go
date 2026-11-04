@@ -3147,9 +3147,9 @@ type ForgetMemoriesRequest struct {
 	Restorable bool `json:"restorable,omitempty"`
 	// DryRun reports what would be forgotten in
 	// ForgetMemoriesResponse.ForgottenIDs and forgets nothing (server
-	// v0.12.4+). An older server does not know it: a request with ids or
-	// filters is carried out there, so check the server version first
-	// (Capabilities). Sent only when true.
+	// v0.12.4+). Combined with ids or a filter, ForgetMemories first checks
+	// that the server is v0.12.4+ (an older one would carry the request
+	// out) and refuses it otherwise. Sent only when true.
 	DryRun bool `json:"dry_run,omitempty"`
 }
 

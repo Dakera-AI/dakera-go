@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1167,9 +1168,24 @@ func (c *Client) Forget(ctx context.Context, agentID, memoryID string) error {
 // Request together are a *ValidationError, refused before any request is
 // sent. When the model either needs is unavailable the server answers 503
 // (*ServerError).
+//
+// A server older than v0.12.4 ignores the v0.12.4 fields (About, Request,
+// Until, MinScore, Limit, Restorable, DryRun) but still forgets what the ids
+// and filters select, so a request combining the two first checks the
+// server's version (Capabilities, cached on the client): an older server, or
+// one whose version cannot be determined, is a *ValidationError and nothing is
+// sent. About or Request without ids or a filter needs no check: an older
+// server refuses it (400).
 func (c *Client) ForgetMemories(ctx context.Context, req ForgetMemoriesRequest) (*ForgetMemoriesResponse, error) {
 	if req.About != "" && req.Request != "" {
 		return nil, NewValidationError("ForgetMemoriesRequest: set About or Request, not both", 0, nil, ErrorCodeInvalidRequest)
+	}
+	if fields := req.v0124Fields(); len(fields) > 0 && req.hasFilter() {
+		if err := c.requireServerVersion(ctx, [3]int{0, 12, 4},
+			"ForgetMemories("+strings.Join(fields, ", ")+") with ids or a filter",
+			"an older server ignores these fields and would forget every memory the ids and filters select"); err != nil {
+			return nil, err
+		}
 	}
 	respBody, err := c.request(ctx, "POST", "/v1/memory/forget", req)
 	if err != nil {
@@ -1180,6 +1196,97 @@ func (c *Client) ForgetMemories(ctx context.Context, req ForgetMemoriesRequest) 
 		return nil, fmt.Errorf("failed to parse forget response: %w", err)
 	}
 	return &result, nil
+}
+
+// v0124Fields names the fields of req that only servers v0.12.4+ read.
+func (req ForgetMemoriesRequest) v0124Fields() []string {
+	var fields []string
+	if req.About != "" {
+		fields = append(fields, "About")
+	}
+	if req.Request != "" {
+		fields = append(fields, "Request")
+	}
+	if req.Until != nil {
+		fields = append(fields, "Until")
+	}
+	if req.MinScore != nil {
+		fields = append(fields, "MinScore")
+	}
+	if req.Limit != nil {
+		fields = append(fields, "Limit")
+	}
+	if req.Restorable {
+		fields = append(fields, "Restorable")
+	}
+	if req.DryRun {
+		fields = append(fields, "DryRun")
+	}
+	return fields
+}
+
+// hasFilter reports whether req selects memories the way every server reads
+// (ids or a filter).
+func (req ForgetMemoriesRequest) hasFilter() bool {
+	return len(req.MemoryIDs) > 0 || req.MemoryType != "" || req.SessionID != "" ||
+		len(req.Tags) > 0 || req.BelowImportance != nil
+}
+
+// serverVersionPattern reads "0.12.4", "v0.12.4" or "0.12.4-rc1".
+var serverVersionPattern = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)`)
+
+// parseServerVersion returns the major, minor and patch of version, or false
+// when it is not a version.
+func parseServerVersion(version string) ([3]int, bool) {
+	m := serverVersionPattern.FindStringSubmatch(strings.TrimSpace(version))
+	if m == nil {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i := range out {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return [3]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+// requireServerVersion returns a *ValidationError unless the server reports a
+// version of at least min in its capabilities (Capabilities, cached). A server
+// without the capabilities route (404, older than v0.12), or one whose version
+// cannot be read, is treated as older: the caller's request is not sent. Any
+// other error reading the capabilities is returned as it is (nothing sent).
+func (c *Client) requireServerVersion(ctx context.Context, min [3]int, what, why string) error {
+	version := ""
+	caps, err := c.Capabilities(ctx)
+	if err != nil {
+		var notFound *NotFoundError
+		if !errors.As(err, &notFound) {
+			return err
+		}
+	} else {
+		version = caps.ServerVersion
+	}
+	if parsed, ok := parseServerVersion(version); ok {
+		atLeast := true
+		for i := range parsed {
+			if parsed[i] != min[i] {
+				atLeast = parsed[i] > min[i]
+				break
+			}
+		}
+		if atLeast {
+			return nil
+		}
+	}
+	shown := "unknown, before v0.12"
+	if version != "" {
+		shown = "v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+	}
+	return NewValidationError(fmt.Sprintf("%s needs Dakera server v%d.%d.%d+ (this server: %s); %s",
+		what, min[0], min[1], min[2], shown, why), 0, nil, ErrorCodeInvalidRequest)
 }
 
 // DetectForgetRequests says whether each message asks to forget something

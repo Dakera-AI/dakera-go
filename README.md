@@ -149,7 +149,9 @@ servers**: new request fields are omitted unless you set them and new response f
 server forgets by description (`About`: what was said) or by a user's request to forget, as said, in
 any language (`Request`; `Intent` says how the server read it). `DryRun` reports the ids without
 forgetting and `Restorable` keeps restorable copies (`ListDeduplicated` lists them with their
-`Content`, `RestoreDeduplicated` puts one back):
+`Content`, `RestoreDeduplicated` puts one back). Combined with ids or a filter, the new fields are
+sent only to a server that reports v0.12.4 or later: an older one would ignore them and forget what
+the filters select, so the SDK refuses the request (`*ValidationError`) instead:
 
 ```go
 resp, err := client.ForgetMemories(ctx, dakera.ForgetMemoriesRequest{

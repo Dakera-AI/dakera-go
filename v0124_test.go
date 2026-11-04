@@ -172,25 +172,152 @@ func TestV0124ForgetMemoriesByRequest(t *testing.T) {
 	assert.Equal(t, "Oublie mon adresse.", resp.Intent.Sentence)
 }
 
+// forgetVersionServer serves GET /v1/capabilities as a server of version
+// (capabilitiesStatus 404: a server without the route) and answers
+// POST /v1/memory/forget, counting both and recording the forget body.
+type forgetVersionServer struct {
+	client       *Client
+	capsCalls    int32
+	forgetCalls  int32
+	lastForget   map[string]interface{}
+	capabilities int
+}
+
+func newForgetVersionServer(t *testing.T, version string, capabilitiesStatus int) *forgetVersionServer {
+	t.Helper()
+	fs := &forgetVersionServer{capabilities: capabilitiesStatus}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/capabilities":
+			atomic.AddInt32(&fs.capsCalls, 1)
+			if fs.capabilities != http.StatusOK {
+				w.WriteHeader(fs.capabilities)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "nope", "code": "NOT_FOUND"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"capabilities_version": 2, "server_version": version})
+		case "/v1/memory/forget":
+			atomic.AddInt32(&fs.forgetCalls, 1)
+			fs.lastForget = nil
+			_ = json.NewDecoder(r.Body).Decode(&fs.lastForget)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"deleted_count": 2, "forgotten_ids": []string{"m9", "m4"}})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	fs.client = NewClient(server.URL)
+	fs.client.retryConfig.MaxRetries = 1
+	return fs
+}
+
 func TestV0124ForgetMemoriesByDescriptionAndFilters(t *testing.T) {
-	client, got := v0124Server(t, 200, map[string]interface{}{"deleted_count": 2, "forgotten_ids": []string{"m9", "m4"}})
+	fs := newForgetVersionServer(t, "0.12.4", http.StatusOK)
+	client := fs.client
 	minScore := float32(0.6)
 	resp, err := client.ForgetMemories(context.Background(), ForgetMemoriesRequest{
 		AgentID: "a1", About: "I love sushi", MinScore: &minScore, MemoryIDs: []string{"m9", "m4", "m5"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "I love sushi", got.Body["about"])
-	assert.InDelta(t, 0.6, got.Body["min_score"], 1e-6)
-	assert.NotContains(t, got.Body, "request")
-	assert.NotContains(t, got.Body, "dry_run")
-	assert.NotContains(t, got.Body, "restorable")
+	got := fs.lastForget
+	assert.Equal(t, "I love sushi", got["about"])
+	assert.InDelta(t, 0.6, got["min_score"], 1e-6)
+	assert.NotContains(t, got, "request")
+	assert.NotContains(t, got, "dry_run")
+	assert.NotContains(t, got, "restorable")
 	assert.Equal(t, 2, resp.DeletedCount)
 	assert.Nil(t, resp.Intent)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fs.capsCalls))
 
-	// The plain filter form sends only the filters (what older servers read).
+	// The plain filter form sends only the filters (what older servers read)
+	// and needs no version check.
+	_, err = client.RefreshCapabilities(context.Background())
+	require.NoError(t, err)
+	before := atomic.LoadInt32(&fs.capsCalls)
 	_, err = client.ForgetMemories(context.Background(), ForgetMemoriesRequest{AgentID: "a1", Tags: []string{"tmp"}})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]interface{}{"agent_id": "a1", "tags": []interface{}{"tmp"}}, got.Body)
+	assert.Equal(t, map[string]interface{}{"agent_id": "a1", "tags": []interface{}{"tmp"}}, fs.lastForget)
+	assert.Equal(t, before, atomic.LoadInt32(&fs.capsCalls))
+}
+
+func TestV0124ForgetMemoriesGuardsOlderServers(t *testing.T) {
+	limit := 3
+	cases := map[string]ForgetMemoriesRequest{
+		"DryRun with ids":       {AgentID: "a1", MemoryIDs: []string{"m1"}, DryRun: true},
+		"About with a session":  {AgentID: "a1", About: "sushi", SessionID: "s1"},
+		"Restorable with tags":  {AgentID: "a1", Tags: []string{"t"}, Restorable: true},
+		"Limit with a type":     {AgentID: "a1", MemoryType: "episodic", Limit: &limit},
+		"Request with an id":    {AgentID: "a1", Request: "forget that", MemoryIDs: []string{"m1"}},
+		"MinScore + importance": {AgentID: "a1", About: "x", MinScore: f32Ptr(0.5), BelowImportance: f32Ptr(0.2)},
+	}
+	for name, req := range cases {
+		t.Run(name+"/v0.12.4 server: sent", func(t *testing.T) {
+			fs := newForgetVersionServer(t, "v0.12.4-rc1", http.StatusOK)
+			_, err := fs.client.ForgetMemories(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, int32(1), atomic.LoadInt32(&fs.forgetCalls))
+		})
+		t.Run(name+"/v0.12.3 server: refused, nothing sent", func(t *testing.T) {
+			fs := newForgetVersionServer(t, "0.12.3", http.StatusOK)
+			_, err := fs.client.ForgetMemories(context.Background(), req)
+			var validation *ValidationError
+			require.True(t, errors.As(err, &validation))
+			assert.Contains(t, validation.Message, "v0.12.4+")
+			assert.Contains(t, validation.Message, "v0.12.3")
+			assert.Equal(t, int32(0), atomic.LoadInt32(&fs.forgetCalls))
+		})
+	}
+
+	// Newer servers pass.
+	fs := newForgetVersionServer(t, "0.13.0", http.StatusOK)
+	_, err := fs.client.ForgetMemories(context.Background(), cases["DryRun with ids"])
+	require.NoError(t, err)
+
+	// A server without the capabilities route (before v0.12), or whose
+	// version cannot be read, is treated as older.
+	for name, fs := range map[string]*forgetVersionServer{
+		"no capabilities route": newForgetVersionServer(t, "", http.StatusNotFound),
+		"empty version":         newForgetVersionServer(t, "", http.StatusOK),
+		"unreadable version":    newForgetVersionServer(t, "dev", http.StatusOK),
+	} {
+		_, err := fs.client.ForgetMemories(context.Background(), cases["DryRun with ids"])
+		var validation *ValidationError
+		require.True(t, errors.As(err, &validation), name)
+		assert.Equal(t, int32(0), atomic.LoadInt32(&fs.forgetCalls), name)
+	}
+
+	// Another error reading the capabilities is returned; nothing is sent.
+	fs = newForgetVersionServer(t, "", http.StatusInternalServerError)
+	_, err = fs.client.ForgetMemories(context.Background(), cases["DryRun with ids"])
+	var serverErr *ServerError
+	require.True(t, errors.As(err, &serverErr))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&fs.forgetCalls))
+
+	// The version is read once and cached.
+	fs = newForgetVersionServer(t, "0.12.4", http.StatusOK)
+	for i := 0; i < 3; i++ {
+		_, err = fs.client.ForgetMemories(context.Background(), cases["About with a session"])
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fs.capsCalls))
+	assert.Equal(t, int32(3), atomic.LoadInt32(&fs.forgetCalls))
+}
+
+func TestV0124ForgetMemoriesWithoutFilterNeedsNoVersionCheck(t *testing.T) {
+	// About / Request alone: an older server refuses it (400), so no check.
+	fs := newForgetVersionServer(t, "0.12.3", http.StatusOK)
+	until := int64(5)
+	for _, req := range []ForgetMemoriesRequest{
+		{AgentID: "a1", About: "sushi", DryRun: true},
+		{AgentID: "a1", Request: "forget my address", Until: &until, Restorable: true},
+		{AgentID: "a1", MemoryIDs: []string{"m1"}},
+	} {
+		_, err := fs.client.ForgetMemories(context.Background(), req)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(0), atomic.LoadInt32(&fs.capsCalls))
+	assert.Equal(t, int32(3), atomic.LoadInt32(&fs.forgetCalls))
 }
 
 func TestV0124ForgetMemoriesRefusesAboutAndRequest(t *testing.T) {

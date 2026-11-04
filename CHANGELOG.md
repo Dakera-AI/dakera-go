@@ -19,7 +19,12 @@ features marked v0.12.4 below need a v0.12.4 server. `Version` is `0.12.4`.
   to forget, as said, in any language), `Until`, `MinScore`, `Limit`, `Restorable` and `DryRun`.
   `ForgetMemoriesResponse` has `DeletedCount`, `ForgottenIDs` and `Intent` (`ForgetIntent`:
   `Probability`, `Threshold`, `IsRequest`, `Sentence`). `About` and `Request` together are refused
-  before sending (`*ValidationError`).
+  before sending (`*ValidationError`). A server older than v0.12.4 ignores the new fields but still
+  forgets what the ids and filters select, so when a v0.12.4 field (`About`, `Request`, `Until`,
+  `MinScore`, `Limit`, `Restorable`, `DryRun`) is combined with ids or a filter, `ForgetMemories`
+  first reads the server version from the (cached) capabilities and refuses the request with a
+  `*ValidationError`, sending nothing, when the server is older or its version cannot be
+  determined (no capabilities route, or an unreadable version).
 - `DetectForgetRequests(ctx, texts)` (`POST /v1/memory/forget/detect`): `ForgetDetectResponse` with
   `Model`, `Threshold`, `SentenceThreshold` and one `ForgetDetectResult` per message.
 - `StoreMemoryResponse.ForgetRequest`; `BatchStoreMemoryResponse.ForgetRequests`
